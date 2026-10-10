@@ -72,13 +72,13 @@ Older backups still restore: their fingerprint is checked against the stores the
 
 A transfer pairs automatically when there is an opposite amount in another own account within 4 days and one side reads like a transfer or points at the other.
 
-**D-23 Counterparts for accounts without statements.** When a row points at an account whose statements are not imported, Kassa creates the other side there, marked "Created by Kassa" (`isMirror`). The Revolut Compte flexible is the case in point. When that account's statement is imported later, the real row replaces the counterpart and keeps the pairing. When the account does have statements, Kassa suggests the transfer instead of creating it.
+**D-23 Counterparts for accounts without statements.** When a row points at an account whose statements are not imported, the app creates the other side there, marked "Created automatically" (`isMirror`). The Revolut Compte flexible is the case in point. When that account's statement is imported later, the real row replaces the counterpart and keeps the pairing. When the account does have statements, the app suggests the transfer instead of creating it.
 
 **D-24 Household members.** Settings holds the members (names only, encrypted). Accounts can belong to a member or be joint. The budget remains shared (D-01).
 
 **D-25 Card statements.** A Worldline statement records the amount and date of the coming debit and the paying account (by IBAN). That debit is paired as a transfer when it appears in the bank statement, within 5 days of the stated date. The card side is created, because Worldline statements do not list repayments. The card's spending counts once, on the card (PRD F6).
 
-**D-26 Statement checks and period lock.** For each imported statement, Kassa compares its own balance on the closing date with the printed closing balance. A period locks only when the two match and nothing in it is waiting in the inbox. Locked rows cannot be edited or reclassified, and re-imports skip them.
+**D-26 Statement checks and period lock.** For each imported statement, the app compares its own balance on the closing date with the printed closing balance. A period locks only when the two match and nothing in it is waiting in the inbox. Locked rows cannot be edited or reclassified, and re-imports skip them.
 
 **D-27 Revolut CSV.** The booking date is "Completed Date"; "Started Date" is kept as the value date. The fee is subtracted from the amount, which keeps the running balance exact. Each "Product" is a sub-account (Current, Deposit…) mapped to an account. Reverted, pending and non-EUR rows are skipped and listed in the report.
 
@@ -86,7 +86,7 @@ A transfer pairs automatically when there is an opposite amount in another own a
 
 **D-29 Loan repayments.** A consumer loan (for example Buy Way) is a `loan` account, off budget. Its monthly direct debit is recognised by the account's hint ("BUY WAY") and suggested as a repayment. It is never paired automatically, because it also needs a budget category. Confirming it does two things:
 - the debit counts as activity in the chosen category (suggested: "Loan repayments", in Fixed);
-- Kassa adds the loan side, so the loan balance goes down by the same amount.
+- The app adds the loan side, so the loan balance goes down by the same amount.
 
 Enter the amount still owed as the loan's negative opening balance. Interest is not split from principal: the whole instalment reduces the tracked balance, so align it with the lender's statement now and then.
 
@@ -94,3 +94,14 @@ Enter the amount still owed as the loan's negative opening balance. Interest is 
 
 - The build prompt lists OFX under import; the PRD makes OFX and PDF P1 and schedules them for M5. OFX stays in M5. PDF moved to M2 (D-19) because the household's bank and card statements are PDFs.
 - Fixtures for two CSV layouts (Revolut, and a French debit/credit card export), a CAMT.053 file and card statements ship in M2 under `fixtures/import/`.
+
+## Naming and design (October 2026)
+
+**D-30 Name.** The app is called **CasaresSan Finances** ("CasaresSan" where space is short). Internal identifiers keep the working name "kassa": the IndexedDB database and the backup and export format ids. Existing vaults and backups therefore keep working.
+
+**D-31 Minimal, modern UI.**
+- Neutral greys with one ink colour for actions. Green and red are used only for money states, and always with a word or symbol.
+- Hairline borders and no heavy shadows.
+- The Inter variable font, self-hosted, so the strict CSP stays `font-src 'self'`.
+- A sidebar on screens 960 px and wider. Below that, a bottom tab bar (Dashboard, Budget, Inbox, Transactions, More), where "More" holds Import, Accounts, Categories, Settings and Lock.
+- Dialogs become bottom sheets on phones. Light and dark themes follow the system.

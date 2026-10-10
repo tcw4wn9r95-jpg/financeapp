@@ -3,6 +3,8 @@
  * Placeholders use {name}. Keep keys stable; translations copy this file.
  */
 export const en = {
+  'app.name': 'CasaresSan Finances',
+  'app.short': 'CasaresSan',
   // common
   'common.save': 'Save',
   'common.cancel': 'Cancel',
@@ -23,6 +25,7 @@ export const en = {
   'nav.categories': 'Categories',
   'nav.settings': 'Settings',
   'nav.lock': 'Lock',
+  'nav.more': 'More',
 
   // months
   'month.1': 'January',
@@ -74,7 +77,7 @@ export const en = {
 
   // setup and lock
   'setup.title': 'Create your private vault',
-  'setup.intro': 'Kassa keeps your finances in this browser only, encrypted with a passphrase that never leaves this device.',
+  'setup.intro': 'Your finances stay in this browser only, encrypted with a passphrase that never leaves this device.',
   'setup.passphrase': 'Passphrase',
   'setup.passphraseHint': 'At least {n} characters. A few unrelated words work well.',
   'setup.confirm': 'Repeat passphrase',
@@ -92,7 +95,7 @@ export const en = {
   'start.demo': 'Explore with the demo household',
   'start.restore': 'Restore from a backup file',
   'start.empty': 'Start empty',
-  'lock.title': 'Unlock Kassa',
+  'lock.title': 'Unlock CasaresSan Finances',
   'lock.passphrase': 'Passphrase',
   'lock.unlock': 'Unlock',
   'lock.working': 'Working…',
@@ -105,7 +108,7 @@ export const en = {
   'lock.badPassphrase': 'That passphrase does not unlock this vault.',
   'lock.badRecoveryKey': 'That recovery key does not unlock this vault.',
   'lock.weakPassphrase': 'Use at least {n} characters.',
-  'lock.autoLockNote': 'Kassa locks itself after a period without activity. Unlocking takes a second: the key is stretched 600,000 times.',
+  'lock.autoLockNote': 'The app locks itself after a period without activity. Unlocking takes a second: the key is stretched 600,000 times.',
 
   // dashboard
   'dashboard.beforeStart': 'Your budget starts in {month}.',
@@ -304,20 +307,20 @@ export const en = {
   'restore.passphrase': 'Passphrase of this backup file',
   'restore.decrypt': 'Decrypt',
   'restore.hash': 'fingerprint {hash}…',
-  'restore.replaceWarning': 'Restoring replaces everything currently in Kassa.',
+  'restore.replaceWarning': 'Restoring replaces everything currently in the app.',
   'restore.replace': 'Replace all data with this backup',
   'restore.done': 'Restore complete.',
   'restore.verified': 'Restored and verified: data fingerprint {hash}… matches the file.',
   'restore.mismatch': 'Restored, but the data fingerprint does not match the file. Keep the file and report this.',
-  'restore.error.notBackup': 'This file is not a Kassa backup or export.',
+  'restore.error.notBackup': 'This file is not a CasaresSan Finances backup or export.',
   'restore.error.badPassphrase': 'Wrong passphrase, or the file is damaged.',
   'restore.error.hashMismatch': 'The file was changed after export (fingerprint mismatch).',
-  'restore.error.newerSchema': 'This file comes from a newer version of Kassa.',
+  'restore.error.newerSchema': 'This file comes from a newer version of the app.',
 
   // security
   'security.title': 'Security',
-  'security.persisted': 'This browser will keep Kassa data even when storage runs low.',
-  'security.notPersisted': 'This browser may clear Kassa data when storage runs low.',
+  'security.persisted': 'This browser will keep your data even when storage runs low.',
+  'security.notPersisted': 'This browser may clear your data when storage runs low.',
   'security.persistUnknown': 'Storage persistence unknown.',
   'security.requestPersist': 'Ask to keep data',
   'security.changeTitle': 'Change passphrase',
@@ -409,7 +412,7 @@ export const en = {
   'import.warn.balanceGap': 'The running balance jumps at line {line}. The file may be incomplete.',
   'import.warn.beforeStart': '{n} transactions are dated before your budget starts; they count in the first budget month. You can move the start month in',
   'import.warn.openingSet': 'Opening balance of {name} set from the statement:',
-  'import.error.unknownFormat': 'This file is not a statement Kassa recognises.',
+  'import.error.unknownFormat': 'This file is not a statement the app recognises.',
   'import.error.headersChanged': 'The bank changed its export layout. Missing columns: {detail}. Map the columns again.',
   'import.error.noRows': 'No transactions found in this file.',
   'import.error.badXml': 'This XML file is damaged.',
@@ -417,7 +420,7 @@ export const en = {
   'import.error.unreadable': 'This file could not be read.',
 
   // mapping
-  'mapping.intro': 'Kassa does not know this CSV layout yet. Tell it which column holds what; the layout is saved for next time.',
+  'mapping.intro': 'This CSV layout is new. Tell it which column holds what; the layout is saved for next time.',
   'mapping.name': 'Bank or card name',
   'mapping.nameHint': 'For example "BIL current account".',
   'mapping.untitled': 'Untitled layout',
@@ -486,7 +489,7 @@ export const en = {
   // statements
   'statements.none': 'No statements imported yet.',
   'statements.closing': 'Closing balance on the statement',
-  'statements.computed': 'Balance in Kassa on that date',
+  'statements.computed': 'Balance in the app on that date',
   'statements.status': 'Status',
   'statements.noClosing': 'The statement has no closing balance',
   'statements.matches': 'Matches the statement',
@@ -510,7 +513,7 @@ export const en = {
 
   // imported transactions
   'tx.importedTitle': 'Imported transaction',
-  'tx.autoCreated': 'Created by Kassa',
+  'tx.autoCreated': 'Created automatically',
   'tx.lockedTag': 'Locked',
   'tx.valueDate': 'Value date',
   'tx.counterpartyAccount': 'Other party\'s account',
@@ -518,5 +521,5 @@ export const en = {
   'tx.reclassify': 'Change classification',
   'tx.sendBack': 'Send back to the inbox',
   'tx.backToInbox': 'Back in the inbox.',
-  'tx.mirrorNote': 'Kassa created this as the other side of a transfer into an account whose statements you do not import. Change it from the transaction in the other account. If you import this account\'s statement later, the real row replaces it.',
+  'tx.mirrorNote': 'The app created this as the other side of a transfer into an account whose statements you do not import. Change it from the transaction in the other account. If you import this account\'s statement later, the real row replaces it.',
 } as const;

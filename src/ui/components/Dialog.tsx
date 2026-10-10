@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { t } from '../../i18n';
+import { Icon } from './Icon';
 
 /**
  * Modal built on <dialog>: the browser traps focus, Esc closes, and focus goes
@@ -40,7 +41,7 @@ export function Dialog({ open, title, onClose, children, wide = false }: {
           <header className="dialog-head">
             <h2 id={titleId}>{title}</h2>
             <button type="button" className="icon-button" onClick={onClose} aria-label={t('common.close')}>
-              ×
+              <Icon name="close" />
             </button>
           </header>
           <div className="dialog-body">{children}</div>

@@ -156,7 +156,7 @@ function BackupSection() {
     try {
       const plain = await toPlainExport(vault.snapshot());
       const file = await encryptBackup(plain, pass);
-      download(`kassa-backup-${todayIso()}.kassa.json`, JSON.stringify(file));
+      download(`casaressan-backup-${todayIso()}.json`, JSON.stringify(file));
       await saveSettings(vault, { lastBackupAt: new Date().toISOString() });
       setLastHash(plain.hash);
       setPass('');
@@ -169,7 +169,7 @@ function BackupSection() {
 
   async function plainExport() {
     const plain = await toPlainExport(vault.snapshot());
-    download(`kassa-export-${todayIso()}.json`, JSON.stringify(plain, null, 1));
+    download(`casaressan-export-${todayIso()}.json`, JSON.stringify(plain, null, 1));
     notify(t('backup.exportDone'));
   }
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { t } from '../i18n';
+import { t, type MessageKey } from '../i18n';
+import { Icon, type IconName } from './components/Icon';
 import { useSettings, useStore, useVault, useVaultVersion } from './hooks';
 import { href, useRoute } from './router';
 import { AccountsPage } from './pages/AccountsPage';
@@ -13,15 +14,18 @@ import { SettingsPage } from './pages/SettingsPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 
 const NAV = [
-  ['', 'nav.dashboard'],
-  ['budget', 'nav.budget'],
-  ['inbox', 'nav.inbox'],
-  ['import', 'nav.import'],
-  ['transactions', 'nav.transactions'],
-  ['accounts', 'nav.accounts'],
-  ['categories', 'nav.categories'],
-  ['settings', 'nav.settings'],
-] as const;
+  ['', 'nav.dashboard', 'home'],
+  ['budget', 'nav.budget', 'budget'],
+  ['inbox', 'nav.inbox', 'inbox'],
+  ['transactions', 'nav.transactions', 'list'],
+  ['import', 'nav.import', 'upload'],
+  ['accounts', 'nav.accounts', 'bank'],
+  ['categories', 'nav.categories', 'tag'],
+  ['settings', 'nav.settings', 'settings'],
+] as const satisfies readonly (readonly [string, MessageKey, IconName])[];
+
+/** On phones the first four sit in the bottom bar; the rest live under "More". */
+const PRIMARY = new Set(['', 'budget', 'inbox', 'transactions']);
 
 export function App() {
   const vault = useVault();
@@ -49,37 +53,92 @@ function Shell() {
     window.scrollTo(0, 0);
   }, [section]);
 
+  const badge = inboxCount > 0 && <span className="nav-count" aria-label={t('nav.inboxCount', { n: inboxCount })}>{inboxCount}</span>;
+  const moreActive = section === 'more' || !PRIMARY.has(section);
+
   return (
     <div className="shell">
       <a className="skip-link" href="#main" onClick={(e) => { e.preventDefault(); mainRef.current?.focus(); }}>
         {t('nav.skip')}
       </a>
+      <aside className="sidebar">
+        <a className="brand" href={href('')}>
+          <img src="./icon.svg" alt="" width="28" height="28" />
+          <span>{t('app.name')}</span>
+        </a>
+        <nav aria-label={t('nav.label')}>
+          <ul className="sidenav">
+            {NAV.map(([path, key, icon]) => (
+              <li key={path}>
+                <a href={href(path)} aria-current={section === path ? 'page' : undefined}>
+                  <Icon name={icon} />
+                  <span>{t(key)}</span>
+                  {path === 'inbox' && badge}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+        <button type="button" className="sidenav-lock" onClick={() => vault.lock()}>
+          <Icon name="lock" />
+          <span>{t('nav.lock')}</span>
+        </button>
+      </aside>
       <header className="topbar">
         <a className="brand" href={href('')}>
-          <img src="./icon.svg" alt="" width="24" height="24" />
-          <span>Kassa</span>
+          <img src="./icon.svg" alt="" width="26" height="26" />
+          <span>{t('app.short')}</span>
         </a>
-        <button type="button" className="button button-quiet" onClick={() => vault.lock()}>
-          <span aria-hidden="true">🔒 </span>
-          {t('nav.lock')}
+        <button type="button" className="icon-button" onClick={() => vault.lock()} aria-label={t('nav.lock')}>
+          <Icon name="lock" />
         </button>
       </header>
-      <nav className="mainnav" aria-label={t('nav.label')}>
-        <ul>
-          {NAV.map(([path, key]) => (
-            <li key={path}>
-              <a href={href(path)} aria-current={section === path ? 'page' : undefined}>
-                {t(key)}
-                {path === 'inbox' && inboxCount > 0 && <span className="nav-count" aria-label={t('nav.inboxCount', { n: inboxCount })}>{inboxCount}</span>}
-              </a>
-            </li>
-          ))}
-        </ul>
-      </nav>
       <main id="main" ref={mainRef} tabIndex={-1}>
-        <Page section={section} />
+        {section === 'more' ? <MorePage /> : <Page section={section} />}
       </main>
+      <nav className="tabbar" aria-label={t('nav.label')}>
+        {NAV.filter(([path]) => PRIMARY.has(path)).map(([path, key, icon]) => (
+          <a key={path} href={href(path)} aria-current={section === path ? 'page' : undefined}>
+            <span className="tab-icon">
+              <Icon name={icon} size={22} />
+              {path === 'inbox' && badge}
+            </span>
+            <span>{t(key)}</span>
+          </a>
+        ))}
+        <a href={href('more')} aria-current={moreActive ? 'page' : undefined}>
+          <span className="tab-icon"><Icon name="more" size={22} /></span>
+          <span>{t('nav.more')}</span>
+        </a>
+      </nav>
     </div>
+  );
+}
+
+/** Phone-only list of the sections that do not fit in the tab bar. */
+function MorePage() {
+  const vault = useVault();
+  return (
+    <>
+      <h1>{t('nav.more')}</h1>
+      <ul className="more-list">
+        {NAV.filter(([path]) => !PRIMARY.has(path)).map(([path, key, icon]) => (
+          <li key={path}>
+            <a href={href(path)}>
+              <Icon name={icon} />
+              <span>{t(key)}</span>
+              <Icon name="chevronRight" size={18} />
+            </a>
+          </li>
+        ))}
+        <li>
+          <button type="button" onClick={() => vault.lock()}>
+            <Icon name="lock" />
+            <span>{t('nav.lock')}</span>
+          </button>
+        </li>
+      </ul>
+    </>
   );
 }
 

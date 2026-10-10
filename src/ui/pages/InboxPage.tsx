@@ -185,7 +185,7 @@ function Statements() {
             </ul>
             <div className="row">
               {s.lockedAt ? (
-                <span className="badge">🔒 {t('statements.lockedOn', { date: formatDate(s.lockedAt.slice(0, 10)) })}</span>
+                <span className="badge">{t('statements.lockedOn', { date: formatDate(s.lockedAt.slice(0, 10)) })}</span>
               ) : (
                 <button type="button" className="button" disabled={!check.canLock} onClick={() => void lock(s)}>{t('statements.lock')}</button>
               )}

@@ -4,6 +4,7 @@ import { compareMonths } from '../domain/dates';
 import type { MonthKey, Settings, StoreName, StoreRecords } from '../domain/types';
 import type { Vault } from '../storage/vault';
 import { getSettings } from './actions';
+import { t } from '../i18n';
 
 export const VaultContext = createContext<Vault | null>(null);
 
@@ -64,6 +65,6 @@ export function useBudgetMonth(month: MonthKey): BudgetMonth | undefined {
 
 export function useDocumentTitle(title: string): void {
   useEffect(() => {
-    document.title = `${title} · Kassa`;
+    document.title = `${title} · ${t('app.name')}`;
   }, [title]);
 }

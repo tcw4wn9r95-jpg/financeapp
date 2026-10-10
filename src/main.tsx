@@ -5,6 +5,7 @@ import { Vault } from './storage/vault';
 import { App } from './ui/App';
 import { ToastProvider } from './ui/components/Toast';
 import { VaultContext } from './ui/hooks';
+import '@fontsource-variable/inter/wght.css';
 import './styles.css';
 
 setLanguage('en');

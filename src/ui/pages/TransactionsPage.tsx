@@ -101,7 +101,7 @@ export function TransactionsPage() {
                   <span className="tx-desc">{tx.descriptionRaw || t('tx.noDescription')}</span>
                   <span className="tx-meta">
                     {accountName.get(tx.accountId)} · {tx.status === 'new' || tx.status === 'suggested' ? <span className="badge badge-warn">⚠ {label(tx)}</span> : label(tx)}
-                    {tx.status === 'locked' && <span className="tag">🔒 {t('tx.lockedTag')}</span>}
+                    {tx.status === 'locked' && <span className="tag">{t('tx.lockedTag')}</span>}
                     {tx.isMirror && <span className="tag">{t('tx.autoCreated')}</span>}
                     {tx.originalCurrency && tx.originalAmount !== undefined && (
                       <> · {formatMoney(Math.abs(tx.originalAmount), { symbol: false })} {tx.originalCurrency}</>

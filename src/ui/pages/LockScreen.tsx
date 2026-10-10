@@ -13,7 +13,8 @@ export function LockScreen({ onCreated }: { onCreated: (recoveryKey: string) => 
     <div className="lock">
       <div className="lock-card">
         <h1 className="lock-title">
-          <img src="./icon.svg" alt="" width="40" height="40" /> Kassa
+          <img src="./icon.svg" alt="" width="44" height="44" />
+          <span>{t('app.name')}</span>
         </h1>
         {vault.status === 'empty' ? <CreateForm onCreated={onCreated} /> : <UnlockForm />}
       </div>
