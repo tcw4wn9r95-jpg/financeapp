@@ -5,7 +5,8 @@ import { parseMoney } from '../../domain/money';
 import { classify, mergeChanges, ReconcileError, similar, type Classification } from '../../domain/reconcile';
 import { CATEGORY_GROUPS, type Account, type Category, type Transaction } from '../../domain/types';
 import { t } from '../../i18n';
-import { applyChanges, ledgerView } from '../importActions';
+import { ledgerView } from '../importActions';
+import { applyUserChanges } from '../learnActions';
 import { useStore, useVault } from '../hooks';
 import { groupLabel } from '../labels';
 import { Money } from './Money';
@@ -101,7 +102,7 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
       const view = ledgerView(vault);
       const targets = bulk ? [tx, ...others] : [tx];
       const changes = mergeChanges(...targets.map((x) => classify(x, choice, view, systemClock)));
-      await applyChanges(vault, changes);
+      await applyUserChanges(vault, changes);
       notify(targets.length > 1 ? t('inbox.doneMany', { n: targets.length }) : t('inbox.done'));
       onDone?.();
     } catch (err) {
@@ -173,7 +174,7 @@ function SplitEditor({ tx, onClose, onDone }: { tx: Transaction; onClose: () => 
         kind: 'split',
         lines: parsed.map((l) => ({ kind: l.target!.kind as 'category' | 'income', categoryId: (l.target as { categoryId: string }).categoryId, amount: sign * Math.abs(l.cents!) })),
       };
-      await applyChanges(vault, classify(tx, how, ledgerView(vault), systemClock));
+      await applyUserChanges(vault, classify(tx, how, ledgerView(vault), systemClock));
       notify(t('inbox.done'));
       onClose();
       onDone?.();

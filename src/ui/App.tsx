@@ -10,6 +10,8 @@ import { DashboardPage } from './pages/DashboardPage';
 import { ImportPage } from './pages/ImportPage';
 import { InboxPage } from './pages/InboxPage';
 import { PlanPage } from './pages/PlanPage';
+import { RulesPage } from './pages/RulesPage';
+import { ScenariosTab } from './pages/ScenariosTab';
 import { LockScreen, RecoveryKeyStep } from './pages/LockScreen';
 import { SettingsPage } from './pages/SettingsPage';
 import { TransactionsPage } from './pages/TransactionsPage';
@@ -23,6 +25,7 @@ const NAV = [
   ['import', 'nav.import', 'upload'],
   ['accounts', 'nav.accounts', 'bank'],
   ['categories', 'nav.categories', 'tag'],
+  ['rules', 'nav.rules', 'rules'],
   ['settings', 'nav.settings', 'settings'],
 ] as const satisfies readonly (readonly [string, MessageKey, IconName])[];
 
@@ -130,7 +133,9 @@ function Page({ section }: { section: string }) {
     case 'inbox':
       return <InboxPage />;
     case 'plan':
-      return <PlanPage />;
+      return <PlanPage extraTabs={{ scenarios: <ScenariosTab /> }} />;
+    case 'rules':
+      return <RulesPage />;
     case 'import':
       return <ImportPage />;
     case 'accounts':

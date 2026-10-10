@@ -12,6 +12,8 @@ import { SelectField, TextField } from '../components/fields';
 import { Money } from '../components/Money';
 import { useToast } from '../components/Toast';
 import { useDocumentTitle, useStore, useVault } from '../hooks';
+import { learnContext, writeLearn } from '../learnActions';
+import { learnOnImport } from '../../domain/learn';
 import { applyImport, availableMappings, ledgerView, parseXml, readImportFile, saveMapping } from '../importActions';
 import { accountTypeLabel } from '../labels';
 import { href } from '../router';
@@ -137,7 +139,7 @@ function ReadyItem({ item, onChoice, onDone }: {
     setBusy(true);
     try {
       const assigned = assignAccounts(result, Object.fromEntries(Object.entries(choice).filter(([, v]) => v)));
-      const ch = planImport(
+      const planned = planImport(
         {
           fileName: item.file.name,
           format: result.format,
@@ -149,11 +151,15 @@ function ReadyItem({ item, onChoice, onDone }: {
         ledgerView(vault),
         systemClock,
       );
+      // Rules and past decisions classify what they recognise (M4).
+      const learned = learnOnImport(planned, learnContext(vault), systemClock);
+      const ch = learned.changes;
       if (item.mapping) {
         const saved = await saveMapping(vault, item.mapping, Object.fromEntries(Object.entries(choice).filter(([, v]) => v)));
         ch.batch.mappingId = saved.id;
       }
       await applyImport(vault, ch);
+      if (learned.rules.length) await writeLearn(vault, { transactions: [], allocations: [], rules: learned.rules, applied: 0, suggested: 0 });
       notify(t('import.done', { n: ch.batch.report.newCount }));
       onDone(ch.batch.report, ch.batch.accountIds, choice);
     } catch {
@@ -293,6 +299,7 @@ export function Report({ report }: { report: ImportReport }) {
         <li className="split-row"><span>{t('import.r.mirrors')}</span><strong>{report.mirrorsCreated}</strong></li>
         {report.mirrorsReplaced > 0 && <li className="split-row"><span>{t('import.r.replaced')}</span><strong>{report.mirrorsReplaced}</strong></li>}
         {report.cardSettlementsLinked > 0 && <li className="split-row"><span>{t('import.r.cards')}</span><strong>{report.cardSettlementsLinked}</strong></li>}
+        {(report.autoApplied ?? 0) > 0 && <li className="split-row"><span>{t('import.r.auto')}</span><strong>{report.autoApplied}</strong></li>}
         {report.suggestions > 0 && <li className="split-row"><span>{t('import.r.suggestions')}</span><strong>{report.suggestions}</strong></li>}
       </ul>
       {report.warnings.map((w) => <Warning key={w} code={w} />)}

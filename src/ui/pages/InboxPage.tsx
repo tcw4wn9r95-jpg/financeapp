@@ -1,14 +1,18 @@
 import { useMemo, useState } from 'react';
 import { formatDate } from '../../domain/dates';
 import { systemClock } from '../../domain/ledger';
-import { acceptSuggestion, checkStatement, inbox, lockStatement, undoImport } from '../../domain/reconcile';
+import { acceptSuggestion, checkStatement, inbox, lockStatement, unclassify, undoImport } from '../../domain/reconcile';
 import type { ImportBatch, Statement, Transaction } from '../../domain/types';
 import { t } from '../../i18n';
 import { ClassifyControl, errorMessage, TxSummary } from '../components/Classify';
 import { Money } from '../components/Money';
 import { useToast } from '../components/Toast';
-import { useDocumentTitle, useStore, useVault } from '../hooks';
+import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { applyChanges, ledgerView } from '../importActions';
+import { acceptProposal, applyUserChanges, askClaudeForInbox, claudeCandidates, dismissProposal, householdNames, learnInbox } from '../learnActions';
+import { autoApplied, redact, ruleProposals } from '../../domain/learn';
+import { ClaudeError } from '../../infra/claude';
+import { Dialog } from '../components/Dialog';
 import { href, navigate, useRoute } from '../router';
 
 const PAGE = 40;
@@ -54,7 +58,7 @@ function Review({ items }: { items: Transaction[] }) {
     try {
       for (const tx of list) {
         const fresh = vault.get('transactions', tx.id);
-        if (fresh?.suggestion) await applyChanges(vault, acceptSuggestion(fresh, ledgerView(vault), systemClock));
+        if (fresh?.suggestion) await applyUserChanges(vault, acceptSuggestion(fresh, ledgerView(vault), systemClock));
       }
       notify(t('inbox.doneMany', { n: list.length }));
     } catch (e) {
@@ -64,13 +68,18 @@ function Review({ items }: { items: Transaction[] }) {
 
   if (items.length === 0) {
     return (
-      <p className="notice">
-        ✓ {t('inbox.empty')} <a href={href('import')}>{t('inbox.importMore')}</a>
-      </p>
+      <>
+        <RuleProposalBanner />
+        <p className="notice">
+          ✓ {t('inbox.empty')} <a href={href('import')}>{t('inbox.importMore')}</a>
+        </p>
+      </>
     );
   }
   return (
     <>
+      <RuleProposalBanner />
+      <LearnBar />
       <div className="toolbar">
         <label className="visually-hidden" htmlFor="inbox-account">{t('tx.account')}</label>
         <select id="inbox-account" value={accountFilter} onChange={(e) => navigate('inbox', { tab: 'review', account: e.target.value || undefined })}>
@@ -120,6 +129,104 @@ function Review({ items }: { items: Transaction[] }) {
         <button type="button" className="button" onClick={() => setLimit(limit + PAGE)}>{t('inbox.showMore', { n: shown.length - limit })}</button>
       )}
     </>
+  );
+}
+
+/** "You filed X under Y three times — always do this?" (rule hardening). */
+function RuleProposalBanner() {
+  const vault = useVault();
+  const notify = useToast();
+  const examples = useStore('trainingExamples');
+  const rules = useStore('rules');
+  const categories = useStore('categories');
+  const accounts = useStore('accounts');
+  const settings = useSettings();
+  const p = useMemo(() => ruleProposals(examples, rules, settings.dismissedRuleProposals)[0], [examples, rules, settings.dismissedRuleProposals]);
+  if (!p) return null;
+  const target =
+    p.target.targetType === 'transfer' ? accounts.find((a) => a.id === p.target.targetId)?.name : categories.find((c) => c.id === p.target.targetId)?.name;
+  if (!target) return null;
+  return (
+    <div className="card proposal" role="status">
+      <p>{t('rules.proposal', { merchant: p.merchantNorm, target, n: p.count })}</p>
+      <div className="row">
+        <button
+          type="button"
+          className="button button-primary"
+          onClick={() => void acceptProposal(vault, p).then(() => notify(t('rules.created')))}
+        >
+          {t('rules.proposalYes')}
+        </button>
+        <button type="button" className="button button-quiet" onClick={() => void dismissProposal(vault, p.merchantNorm)}>{t('rules.proposalNo')}</button>
+      </div>
+    </div>
+  );
+}
+
+/** Re-run rules and history over the inbox; ask Claude about what is left. */
+function LearnBar() {
+  const vault = useVault();
+  const notify = useToast();
+  const settings = useSettings();
+  const transactions = useStore('transactions');
+  const rules = useStore('rules');
+  const examples = useStore('trainingExamples');
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState(false);
+  const candidates = useMemo(() => claudeCandidates(transactions), [transactions]);
+  const aiOn = !!settings.ai?.enabled && !!settings.ai.apiKey;
+  if (rules.length === 0 && examples.length === 0 && !aiOn) return null;
+
+  async function runRules() {
+    setBusy(true);
+    try {
+      const r = await learnInbox(vault);
+      notify(t('learn.ran', { a: r.applied, s: r.suggested }));
+    } catch (e) {
+      notify(errorMessage(e), 'error');
+    }
+    setBusy(false);
+  }
+
+  async function ask() {
+    setPreview(false);
+    setBusy(true);
+    try {
+      const r = await askClaudeForInbox(vault, candidates);
+      notify(t('learn.claudeDone', { a: r.applied, s: r.suggested }));
+    } catch (e) {
+      notify(e instanceof ClaudeError ? t(`learn.err.${e.code}`) : t('common.unexpectedError'), 'error');
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="row learn-bar">
+      {(rules.length > 0 || examples.length > 0) && (
+        <button type="button" className="button" disabled={busy} onClick={() => void runRules()}>{t('learn.run')}</button>
+      )}
+      {aiOn && candidates.length > 0 && (
+        <button type="button" className="button" disabled={busy} onClick={() => setPreview(true)}>
+          {busy ? t('learn.asking') : t('learn.ask', { n: candidates.length })}
+        </button>
+      )}
+      <Dialog open={preview} title={t('learn.previewTitle')} onClose={() => setPreview(false)}>
+        <p>{t('learn.previewIntro', { n: candidates.length })}</p>
+        <ul className="plain-list preview-list">
+          {redact(candidates, householdNames(vault)).map((x) => (
+            <li key={x.ref} className="split-row">
+              <span>{x.merchant}{x.country && ` · ${x.country}`}</span>
+              <span className="muted">{x.date} · {x.amount.toFixed(2).replace('.', ',')}</span>
+            </li>
+          ))}
+        </ul>
+        <p className="hint">{t('learn.previewHint')}</p>
+        <div className="row">
+          <button type="button" className="button button-primary" onClick={() => void ask()}>{t('learn.send')}</button>
+          <button type="button" className="button button-quiet" onClick={() => setPreview(false)}>{t('common.cancel')}</button>
+        </div>
+      </Dialog>
+    </div>
   );
 }
 
@@ -205,7 +312,7 @@ function History() {
   const accounts = useStore('accounts');
   const [confirm, setConfirm] = useState<string | null>(null);
   const sorted = [...batches].sort((a, b) => b.importedAt.localeCompare(a.importedAt));
-  if (sorted.length === 0) return <p className="notice">{t('history.none')}</p>;
+  if (sorted.length === 0) return <><AutoLog /><p className="notice">{t('history.none')}</p></>;
 
   async function undo(b: ImportBatch) {
     try {
@@ -218,6 +325,9 @@ function History() {
   }
 
   return (
+    <>
+    <AutoLog />
+    <h2 className="section-title">{t('history.imports')}</h2>
     <ul className="card-list">
       {sorted.map((b) => (
         <li key={b.id} className="card">
@@ -241,5 +351,55 @@ function History() {
         </li>
       ))}
     </ul>
+    </>
+  );
+}
+
+const LOG_PAGE = 30;
+
+/** Decisions made by rules, history or Claude, with undo (back to the inbox). */
+function AutoLog() {
+  const vault = useVault();
+  const notify = useToast();
+  const allocations = useStore('allocations');
+  const transactions = useStore('transactions');
+  const categories = useStore('categories');
+  const accounts = useStore('accounts');
+  const [limit, setLimit] = useState(LOG_PAGE);
+  const log = useMemo(() => autoApplied(allocations, transactions), [allocations, transactions]);
+  if (log.length === 0) return null;
+  const by = { rule: t('learn.by.rule'), history: t('learn.by.history'), ai: t('learn.by.ai'), user: '' };
+
+  async function undo(tx: Transaction) {
+    try {
+      await applyChanges(vault, unclassify(tx, ledgerView(vault), systemClock));
+      notify(t('learn.undone'));
+    } catch (e) {
+      notify(errorMessage(e), 'error');
+    }
+  }
+
+  return (
+    <>
+      <h2 className="section-title">{t('learn.logTitle')}</h2>
+      <ul className="rows">
+        {log.slice(0, limit).map(({ allocation: a, transaction: tx }) => (
+          <li key={a.id} className="row-item">
+            <span className="row-main">
+              <span className="row-title">{tx.descriptionRaw}</span>
+              <span className="row-sub">
+                {formatDate(tx.date)} · {accounts.find((x) => x.id === tx.accountId)?.name ?? '?'} → <strong>{categories.find((c) => c.id === a.targetId)?.name ?? '?'}</strong>
+              </span>
+              <span className="row-sub">{a.reason.startsWith(`${by[a.decidedBy]}:`) ? a.reason : `${by[a.decidedBy]} · ${a.reason}`} · {Math.round(a.confidence * 100)} %</span>
+            </span>
+            <span className="row-end">
+              <Money cents={tx.amount} plusSign />
+              <button type="button" className="button button-quiet button-small" onClick={() => void undo(tx)}>{t('learn.undo')}</button>
+            </span>
+          </li>
+        ))}
+      </ul>
+      {log.length > limit && <button type="button" className="button" onClick={() => setLimit(limit + LOG_PAGE)}>{t('inbox.showMore', { n: log.length - limit })}</button>}
+    </>
   );
 }

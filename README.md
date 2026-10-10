@@ -2,7 +2,7 @@
 
 A private, local-first household finance app for a Luxembourg household. It runs entirely in the browser and is hosted as a static site on GitHub Pages. There is no server, account or tracking. Data is stored in IndexedDB, encrypted with AES-GCM under a key derived from your passphrase. It also works offline as an installable PWA.
 
-**Status: milestones M1 and M2 done.**
+**Status: milestones M1 to M4 done.**
 
 - **M1, Foundations and budget:** encrypted storage, backup and restore; accounts, categories and manual entry; a monthly budget with defaults, month overrides and rollover; dashboard v0.
 - **M2, Import and reconciliation:**
@@ -14,7 +14,29 @@ A private, local-first household finance app for a Luxembourg household. It runs
   - statement balance checks and period locks;
   - undo of an import.
 
-Provisions, the forecast, learning reconciliation and Luxembourg tax follow in M3 to M5 (see the PRD roadmap).
+- **M3, Plan:** provisions for irregular bills with suggested monthly set-asides; trips and events with sub-budgets and closing; a 24-month forecast with a minimum-buffer warning and a per-account view.
+- **M4, Learning:**
+  - rules (merchant text or regular expression, amount, account) applied on import;
+  - every classification you make is remembered; past decisions for the same merchant file new rows automatically above a threshold you choose (default 92 %), otherwise they are suggested;
+  - after three consistent confirmations the inbox offers to turn them into a rule;
+  - an "Ask Claude" fallback for unknown merchants: off by default, uses your own API key, and shows exactly what will be sent first;
+  - a log of everything filed automatically, with undo;
+  - "What if" scenarios drawn against the forecast.
+
+The Luxembourg tax projection follows in M5 (see the PRD roadmap).
+
+## Automatic categorising and Claude
+
+Rules run first, then your history. Neither sends anything anywhere.
+
+Claude is optional. Turn it on in Settings → Automatic categorising and paste an Anthropic API key (stored encrypted in the vault like everything else). The inbox then shows **Ask Claude**, which first lists exactly what will leave the phone:
+
+- the merchant text with IBANs, card numbers, long references and your household's names removed;
+- transfers replaced by "PERSONAL TRANSFER";
+- amount, date and country;
+- your category names under short keys.
+
+No account names, balances or ids are sent. Answers at or above your threshold are filed (and appear in the log with undo); the rest wait in the inbox as suggestions. The request goes directly from your browser to `api.anthropic.com`, the only outside host the Content-Security-Policy allows.
 
 ## Run locally
 
@@ -47,7 +69,7 @@ Pull requests run the tests and build but do not deploy.
   - the same derivation from a recovery key shown once at setup.
 - IndexedDB contains only `{id, iv, ciphertext}` rows. Store names, dates and amounts are all inside the ciphertext.
 - The decrypted data and key live in memory only. The app locks after 15 minutes without activity (configurable from 1 to 60 minutes in Settings) and when you press **Lock**.
-- Content-Security-Policy (meta tag): scripts, styles, images and connections from the site itself only, plus `https://api.anthropic.com` for the optional AI classification planned in M4. There are no third-party scripts and no analytics.
+- Content-Security-Policy (meta tag): scripts, styles, images and connections from the site itself only, plus `https://api.anthropic.com` for the optional Claude fallback (off unless you turn it on). There are no third-party scripts and no analytics.
 - Statement files are read inside the browser. Only the last 4 characters of IBANs and card numbers are stored.
 - If you lose both the passphrase and the recovery key, the data cannot be recovered. Keep backups.
 
@@ -110,9 +132,9 @@ To update a year, copy the latest file, change the values from the official Admi
 ## Project layout
 
 ```
-src/domain/    pure TypeScript: money, dates, ledger, budget engine, reconcile (no React, no Dexie; a test enforces this)
+src/domain/    pure TypeScript: money, dates, ledger, budget engine, reconcile, plan, forecast, learn (no React, no Dexie; a test enforces this)
 src/domain/import/  parsers (Spuerkeess PDF, Worldline PDF, CSV mappings, CAMT.053) and the import engine
-src/infra/     pdf.js text extraction
+src/infra/     pdf.js text extraction; the optional Claude client
 src/storage/   WebCrypto, encrypted Dexie vault, backup and export format
 src/ui/        React pages and components
 src/i18n/en.ts every UI string (copy it to fr.ts / es.ts to translate)

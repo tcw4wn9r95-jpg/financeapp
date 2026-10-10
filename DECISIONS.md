@@ -143,3 +143,17 @@ The forecast is never stored.
 - touch and keyboard crosshair, and a table view.
 
 The palette is validated for colour blindness and contrast: blue for your plan, orange for scenarios.
+
+**D-37 Claude fallback is opt-in, direct and redacted.** The PRD allows a Claude call for transactions rules and history cannot place. Choices:
+- Off by default. The user brings their own Anthropic API key; it lives in the encrypted settings record and never leaves the device except in the request header to `api.anthropic.com`.
+- The browser calls the API directly (the SDK's `dangerouslyAllowBrowser`): there is no server to proxy through, and the key is the user's own.
+- Nothing is sent automatically. "Ask Claude" shows the exact redacted batch first (max 50 rows).
+- Redaction: IBANs, card numbers, digit runs of 6+ and household member names are removed; anything that reads like a transfer becomes "PERSONAL TRANSFER". Categories go under short keys (c1, c2…), transactions under row numbers, so no ids leave.
+- Structured output (JSON schema) with low effort; the API's default server-side fallback is enabled so a declined request is retried on Anthropic's recommended fallback model. A refusal or unreadable answer changes nothing.
+- Answers at or above the auto-apply threshold are filed (`decidedBy: ai`, shown in the log with undo); the rest become suggestions.
+
+**D-38 History matching.** One training example per transaction (re-deciding replaces it), recorded only when the user classifies or accepts a suggestion; automatic decisions are never fed back. For a new row: past examples with the same normalised merchant and direction, preferring the same amount band, latest 20. Confidence is the share that agree; a single example caps at 80 % (so it only suggests); examples from another amount band only count at 90 %. Transfers are suggested, never filed automatically, because pairing needs the other side.
+
+**D-39 Rule proposals.** When the latest three decisions for a merchant agree and no rule covers it, the inbox proposes a rule (`createdFrom: hardened`, pattern `^MERCHANT$`). "Not now" remembers the merchant so it is not asked again. Rules are tried in priority order (reorder with the arrows); a rule whose target was archived is skipped.
+
+**D-40 Scenarios.** A scenario is a named list of changes (monthly cost from the 1st, monthly income on the 25th, or a one-off) drawn on the forecast chart against the baseline, with the 24-month difference and the first month below the buffer.

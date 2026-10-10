@@ -271,6 +271,8 @@ export interface ImportReport {
   mirrorsReplaced: number;
   suggestions: number;
   cardSettlementsLinked: number;
+  /** Classified on import by a rule or by history (M4). */
+  autoApplied?: number;
   warnings: string[];
 }
 
@@ -331,6 +333,12 @@ export interface Settings {
   members?: Member[];
   /** Forecast: warn about the first month the cash total falls below this. */
   minimumBuffer?: Cents;
+  /** History matches at or above this confidence are applied without review (default 0.92). */
+  autoApplyThreshold?: number;
+  /** Merchants whose rule proposal was dismissed. */
+  dismissedRuleProposals?: string[];
+  /** Optional Claude fallback for transactions nothing else recognises (opt-in, D-37). */
+  ai?: { enabled: boolean; apiKey: string };
   updatedAt: string;
 }
 

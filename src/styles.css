@@ -67,6 +67,11 @@
   box-sizing: border-box;
 }
 
+html {
+  /* Keep focused and scrolled-to elements clear of the top bar and the tab bar. */
+  scroll-padding-top: 72px;
+  scroll-padding-bottom: 96px;
+}
 body {
   margin: 0;
   background: var(--bg);
@@ -1583,4 +1588,78 @@ details summary {
 }
 .chart svg:focus:not(:focus-visible) {
   outline: none;
+}
+
+/* ------------------------------------------------------------ M4 / scenarios */
+.row-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 60px;
+  padding: 0.6rem 1rem;
+}
+.rule-list > li {
+  display: flex;
+  align-items: center;
+}
+.rule-list .row-button {
+  flex: 1;
+  min-width: 0;
+}
+.rule-list code {
+  font-size: 0.85em;
+}
+.order-buttons {
+  flex-direction: row;
+  padding-right: 0.5rem;
+}
+.section-title {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.chips {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  margin-bottom: 0.75rem;
+  scrollbar-width: none;
+}
+a.chip {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+.chip[aria-current] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--ink-text);
+}
+.proposal {
+  border-color: var(--border-strong);
+}
+.proposal p {
+  margin-top: 0;
+}
+.learn-bar {
+  margin-bottom: 0.75rem;
+}
+.preview-list {
+  max-height: 45vh;
+  overflow-y: auto;
+  font-size: 0.85rem;
+}
+.preview-list li {
+  padding: 0.35rem 0;
+}
+.scenario-line {
+  padding: 0.75rem 1rem;
+  margin: 0 0 0.75rem;
+}
+.scenario-line legend {
+  font-weight: 600;
+  padding: 0 0.25rem;
 }

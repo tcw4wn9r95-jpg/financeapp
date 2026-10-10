@@ -17,7 +17,8 @@ import { download, loadDemo, restoreSnapshot, saveMembers, saveSettings } from '
 import { MoneyField, SelectField, TextField, useMoneyInput } from '../components/fields';
 import { useToast } from '../components/Toast';
 import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
-import { useRoute } from '../router';
+import { href, useRoute } from '../router';
+import { DEFAULT_THRESHOLD } from '../../domain/learn';
 
 /** January 2020 up to a year ahead, newest first. */
 export function startMonthOptions(): string[] {
@@ -31,18 +32,93 @@ export function SettingsPage() {
   const route = useRoute();
   const section = route.query.get('section');
   useEffect(() => {
-    if (section) document.getElementById(`settings-${section}`)?.scrollIntoView();
+    // After the shell's scroll-to-top on navigation.
+    if (!section) return;
+    const id = window.setTimeout(() => document.getElementById(`settings-${section}`)?.scrollIntoView(), 0);
+    return () => window.clearTimeout(id);
   }, [section]);
   return (
     <>
       <h1>{t('nav.settings')}</h1>
       <BudgetSettings />
       <HouseholdSection />
+      <LearningSection />
       <BackupSection />
       <RestoreSection />
       <SecuritySection />
       <DataSection />
     </>
+  );
+}
+
+const THRESHOLDS = [0.8, 0.85, 0.9, 0.92, 0.95, 0.99];
+
+/** Automatic categorising: threshold and the optional Claude fallback (M4, D-37). */
+function LearningSection() {
+  const vault = useVault();
+  const notify = useToast();
+  const settings = useSettings();
+  const [key, setKey] = useState(settings.ai?.apiKey ?? '');
+  const [show, setShow] = useState(false);
+  // Local state so the box ticks at once; the vault write follows.
+  const [enabled, setEnabled] = useState(!!settings.ai?.enabled);
+  const save = async (patch: Parameters<typeof saveSettings>[1]) => {
+    await saveSettings(vault, patch);
+    notify(t('settings.saved'));
+  };
+  return (
+    <section className="card" id="settings-learning" aria-labelledby="ln-h">
+      <h2 id="ln-h">{t('learnSettings.title')}</h2>
+      <SelectField
+        label={t('learnSettings.threshold')}
+        value={String(settings.autoApplyThreshold ?? DEFAULT_THRESHOLD)}
+        onChange={(e) => void save({ autoApplyThreshold: Number(e.target.value) })}
+        hint={t('learnSettings.thresholdHint')}
+      >
+        {THRESHOLDS.map((v) => <option key={v} value={v}>{Math.round(v * 100)} %</option>)}
+        <option value="1.01">{t('learnSettings.never')}</option>
+      </SelectField>
+      <p><a href={href('rules')}>{t('learnSettings.rulesLink')}</a></p>
+      <h3>{t('learnSettings.claude')}</h3>
+      <p className="hint">{t('learnSettings.claudeHint')}</p>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => {
+            setEnabled(e.target.checked);
+            void save({ ai: { enabled: e.target.checked, apiKey: settings.ai?.apiKey ?? '' } });
+          }}
+        />
+        {t('learnSettings.enable')}
+      </label>
+      {enabled && (
+        <form
+          className="inline-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save({ ai: { enabled: true, apiKey: key.trim() } });
+          }}
+        >
+          <TextField
+            label={t('learnSettings.key')}
+            type={show ? 'text' : 'password'}
+            autoComplete="off"
+            spellCheck={false}
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            hint={t('learnSettings.keyHint')}
+          />
+          <button type="button" className="button button-quiet" onClick={() => setShow(!show)}>{show ? t('learnSettings.hide') : t('learnSettings.show')}</button>
+          <button className="button">{t('common.save')}</button>
+        </form>
+      )}
+      {enabled && settings.ai?.apiKey && (
+        <button type="button" className="button button-quiet" onClick={() => { setKey(''); setEnabled(false); void save({ ai: { enabled: false, apiKey: '' } }); }}>
+          {t('learnSettings.forget')}
+        </button>
+      )}
+    </section>
   );
 }
 
