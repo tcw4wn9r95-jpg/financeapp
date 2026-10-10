@@ -42,6 +42,22 @@ export async function deriveKek(secret: string, salt: Uint8Array, iterations = P
   );
 }
 
+/**
+ * Key-encryption key from a passkey's PRF output (WebAuthn "prf" extension):
+ * 32 secret bytes the authenticator releases only after Face ID / Touch ID.
+ * PRF output is already uniformly random, so HKDF is enough (no stretching).
+ */
+export async function deriveKekFromPrf(prf: Uint8Array, salt: Uint8Array): Promise<CryptoKey> {
+  const material = await crypto.subtle.importKey('raw', buf(prf), 'HKDF', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: buf(salt), info: enc.encode('kassa-passkey-kek') },
+    material,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+
 export async function importDataKey(raw: Uint8Array): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', buf(raw), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
 }

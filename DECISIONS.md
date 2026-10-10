@@ -179,3 +179,12 @@ The palette is validated for colour blindness and contrast: blue for your plan, 
 - LEDGERBAL is the closing balance at DTASOF.
 - `<ORIGCURRENCY>` keeps the original amount (TRNAMT is already in EUR). `<CURRENCY>` converts TRNAMT with CURRATE.
 - Statements whose CURDEF is not EUR are skipped with the reason "currency".
+
+**D-44 Face ID unlock through a passkey (WebAuthn PRF).** A biometric check alone would only gate the screen. Instead, Face ID unlocks the key itself:
+- Turning it on (Settings → Face ID, which asks for the passphrase once) creates a platform passkey with the WebAuthn `prf` extension.
+- The authenticator returns a 32-byte secret for a random salt, and only after Face ID. HKDF turns it into a key that wraps the same data key as the passphrase and recovery slots.
+- The keyring stores only the credential id, the PRF salt and the wrapped key. Changing the passphrase keeps Face ID working, because the data key does not change.
+- No server: the challenge is random and no assertion is verified; a wrong secret simply fails to decrypt.
+- Face ID is offered automatically when the app is opened. After a manual "Lock" it waits for a tap, otherwise it would unlock at once.
+- Needs a browser with PRF for platform passkeys: iOS/iPadOS 18+, recent Chrome/Android. Elsewhere the setting explains that and the passphrase stays.
+- The passkey may sync through iCloud Keychain, but each device's vault has its own slot.

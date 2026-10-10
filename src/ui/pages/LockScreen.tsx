@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { evaluatePasskey, PasskeyError } from '../../infra/passkey';
 import { MIN_PASSPHRASE_LENGTH, VaultError } from '../../storage/vault';
 import { monthName, t } from '../../i18n';
 import { addSuggestedCategories, getSettings, loadDemo, saveSettings } from '../actions';
@@ -30,12 +31,15 @@ function errorText(e: unknown): string {
         return t('lock.badPassphrase');
       case 'badRecoveryKey':
         return t('lock.badRecoveryKey');
+      case 'badPasskey':
+        return t('faceid.bad');
       case 'weakPassphrase':
         return t('lock.weakPassphrase', { n: MIN_PASSPHRASE_LENGTH });
       default:
         return t('common.unexpectedError');
     }
   }
+  if (e instanceof PasskeyError) return t(`faceid.err.${e.code}`);
   return t('common.unexpectedError');
 }
 
@@ -154,6 +158,9 @@ export function RecoveryKeyStep({ recoveryKey, onDone }: { recoveryKey: string; 
   );
 }
 
+/** Once per page load. */
+let autoPrompted = false;
+
 function UnlockForm() {
   const vault = useVault();
   const [mode, setMode] = useState<'pass' | 'recover'>('pass');
@@ -162,6 +169,34 @@ function UnlockForm() {
   const [next, setNext] = useState('');
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  // null until known, so the passphrase box does not grab focus (and the keyboard) before Face ID is offered.
+  const [slots, setSlots] = useState<Awaited<ReturnType<typeof vault.passkeys>> | null>(null);
+
+  async function faceId(quiet = false) {
+    if (!slots?.length) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const r = await evaluatePasskey(slots);
+      await vault.unlockWithPasskey(r.credentialId, r.prf);
+    } catch (err) {
+      // An automatic prompt the browser refused (no tap yet) stays silent.
+      if (!(quiet && err instanceof PasskeyError && err.code === 'cancelled')) setError(errorText(err));
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    void vault.passkeys().then(setSlots);
+  }, [vault]);
+  // Offer Face ID straight away when the app is opened — not after "Lock",
+  // which would unlock again at once.
+  useEffect(() => {
+    if (slots?.length && !autoPrompted) {
+      autoPrompted = true;
+      void faceId(true);
+    }
+  });
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -176,9 +211,18 @@ function UnlockForm() {
     }
   }
 
+  if (slots === null) return null;
   return (
     <form onSubmit={submit} noValidate>
       <h2>{mode === 'pass' ? t('lock.title') : t('lock.recoverTitle')}</h2>
+      {mode === 'pass' && !!slots?.length && (
+        <>
+          <button type="button" className="button button-primary button-block faceid-button" disabled={busy} onClick={() => void faceId()}>
+            {t('faceid.unlock')}
+          </button>
+          <p className="or-divider"><span>{t('faceid.or')}</span></p>
+        </>
+      )}
       {mode === 'pass' ? (
         <TextField
           label={t('lock.passphrase')}
@@ -186,7 +230,7 @@ function UnlockForm() {
           autoComplete="current-password"
           value={pass}
           onChange={(e) => setPass(e.target.value)}
-          autoFocus
+          autoFocus={!slots?.length}
           required
         />
       ) : (
@@ -204,7 +248,7 @@ function UnlockForm() {
         </>
       )}
       {error && <p className="error" role="alert">⚠ {error}</p>}
-      <button className="button button-primary button-block" disabled={busy}>
+      <button className={`button button-block ${mode === 'pass' && slots?.length ? '' : 'button-primary'}`} disabled={busy}>
         {busy ? t('lock.working') : mode === 'pass' ? t('lock.unlock') : t('lock.recover')}
       </button>
       <button type="button" className="link-button" onClick={() => { setMode(mode === 'pass' ? 'recover' : 'pass'); setError(undefined); }}>

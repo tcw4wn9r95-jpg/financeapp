@@ -111,6 +111,36 @@ describe('Vault', () => {
   });
 });
 
+describe('Face ID passkey slots (D-44)', () => {
+  const prf = (n: number) => new Uint8Array(32).fill(n);
+  const cred = new Uint8Array([1, 2, 3, 4]);
+  it('unlocks with the passkey secret, not with a wrong one, and survives a passphrase change', async () => {
+    const v = newVault();
+    await v.init();
+    await v.create('correct horse battery');
+    await v.put('accounts', account('a1', 'Joint'));
+    await expect(v.addPasskey('wrong passphrase!', { credentialId: cred, prfSalt: prf(9), prf: prf(7), label: 'iPhone' })).rejects.toMatchObject({ code: 'badPassphrase' });
+    await v.addPasskey('correct horse battery', { credentialId: cred, prfSalt: prf(9), prf: prf(7), label: 'iPhone' });
+    v.lock();
+    const slots = await v.passkeys();
+    expect(slots).toEqual([expect.objectContaining({ label: 'iPhone', credentialId: cred, prfSalt: prf(9) })]);
+    expect(JSON.stringify(slots)).not.toContain('wrapped');
+    await expect(v.unlockWithPasskey(cred, prf(8))).rejects.toMatchObject({ code: 'badPasskey' });
+    await expect(v.unlockWithPasskey(new Uint8Array([9]), prf(7))).rejects.toMatchObject({ code: 'badPasskey' });
+    expect(v.status).toBe('locked');
+    await v.unlockWithPasskey(cred, prf(7));
+    expect(v.list('accounts').map((a) => a.name)).toEqual(['Joint']);
+    await v.changePassphrase('correct horse battery', 'another long passphrase');
+    v.lock();
+    await v.unlockWithPasskey(cred, prf(7));
+    expect(v.status).toBe('unlocked');
+    await v.removePasskey(cred);
+    v.lock();
+    expect(await v.passkeys()).toEqual([]);
+    await expect(v.unlockWithPasskey(cred, prf(7))).rejects.toBeInstanceOf(VaultError);
+  });
+});
+
 describe('F12 backup and restore', () => {
   const sample = (): StoreSnapshot => {
     const s = emptySnapshot();

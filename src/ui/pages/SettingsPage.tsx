@@ -18,6 +18,7 @@ import { MoneyField, SelectField, TextField, useMoneyInput } from '../components
 import { useToast } from '../components/Toast';
 import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { href, useRoute } from '../router';
+import { passkeysAvailable, PasskeyError, registerPasskey } from '../../infra/passkey';
 import { DEFAULT_THRESHOLD } from '../../domain/learn';
 
 /** January 2020 up to a year ahead, newest first. */
@@ -45,6 +46,7 @@ export function SettingsPage() {
       <LearningSection />
       <BackupSection />
       <RestoreSection />
+      <FaceIdSection />
       <SecuritySection />
       <DataSection />
     </>
@@ -446,6 +448,88 @@ function RestoreSection() {
       {result && <p role="status">✓ {result}</p>}
     </section>
   );
+}
+
+/** Unlock with Face ID / Touch ID through a passkey (D-44). */
+function FaceIdSection() {
+  const vault = useVault();
+  const notify = useToast();
+  const settings = useSettings();
+  const [available, setAvailable] = useState<boolean | null>(null);
+  const [slots, setSlots] = useState<Awaited<ReturnType<typeof vault.passkeys>>>([]);
+  const [pass, setPass] = useState('');
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const refresh = () => void vault.passkeys().then(setSlots);
+  useEffect(() => {
+    void passkeysAvailable().then(setAvailable);
+    refresh();
+  }, []);
+
+  async function enable(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(undefined);
+    try {
+      // Check the passphrase first so a typo does not leave an unused passkey behind.
+      if (!(await vault.verifyPassphrase(pass))) throw new VaultError('badPassphrase');
+      const name = settings.members?.length ? `${t('app.short')} · ${settings.members.map((m) => m.name).join(' & ')}` : t('app.name');
+      const r = await registerPasskey(name);
+      await vault.addPasskey(pass, { ...r, label: deviceLabel() });
+      setPass('');
+      refresh();
+      notify(t('faceid.enabled'));
+    } catch (err) {
+      setError(
+        err instanceof VaultError && err.code === 'badPassphrase' ? t('lock.badPassphrase')
+        : err instanceof PasskeyError ? t(`faceid.err.${err.code}`)
+        : t('common.unexpectedError'),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(id: Uint8Array) {
+    await vault.removePasskey(id);
+    refresh();
+    notify(t('faceid.removed'));
+  }
+
+  return (
+    <section className="card" id="settings-faceid" aria-labelledby="fid-h">
+      <h2 id="fid-h">{t('faceid.title')}</h2>
+      <p className="hint">{t('faceid.intro')}</p>
+      {slots.length > 0 && (
+        <ul className="plain-list">
+          {slots.map((s) => (
+            <li key={s.createdAt} className="split-row">
+              <span>✓ {s.label} <span className="muted">· {formatDate(s.createdAt.slice(0, 10))}</span></span>
+              <button type="button" className="button button-quiet" onClick={() => void remove(s.credentialId)}>{t('faceid.remove')}</button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {available === false ? (
+        <p className="notice">{t('faceid.unavailable')}</p>
+      ) : slots.length === 0 && (
+        <form onSubmit={enable} noValidate>
+          <TextField label={t('faceid.passphrase')} type="password" autoComplete="current-password" value={pass} onChange={(e) => setPass(e.target.value)} hint={t('faceid.passphraseHint')} />
+          {error && <p className="error" role="alert">⚠ {error}</p>}
+          <button className="button button-primary" disabled={busy || !pass}>{busy ? t('lock.working') : t('faceid.enable')}</button>
+        </form>
+      )}
+    </section>
+  );
+}
+
+function deviceLabel(): string {
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/iPad/.test(ua)) return 'iPad';
+  if (/Android/.test(ua)) return 'Android';
+  if (/Mac/.test(ua)) return 'Mac';
+  return t('faceid.thisDevice');
 }
 
 function SecuritySection() {

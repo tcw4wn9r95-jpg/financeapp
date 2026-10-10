@@ -78,6 +78,10 @@ Pull requests run the tests and build but do not deploy.
 - Statement files are read inside the browser. Only the last 4 characters of IBANs and card numbers are stored.
 - If you lose both the passphrase and the recovery key, the data cannot be recovered. Keep backups.
 
+### Face ID
+
+Settings → Face ID → enter the passphrase once → **Turn on Face ID**. From then on the app asks for Face ID when it opens. Face ID unlocks the encryption key itself through a passkey (WebAuthn PRF). The passphrase and the recovery key keep working, and **Turn off** removes the slot. Needs iOS 18 or later on iPhone. Set it up on each phone.
+
 ## Backup and restore
 
 - **Make a backup:** open **Settings → Backup**, choose a backup passphrase (reusing the vault passphrase is fine), then **Download encrypted backup**. The file `kassa-backup-YYYY-MM-DD.kassa.json` is useless without that passphrase. The dashboard reminds you when the last backup is more than 7 days old.

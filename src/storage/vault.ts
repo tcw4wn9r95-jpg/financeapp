@@ -3,6 +3,7 @@ import { STORE_NAMES, type StoreName, type StoreRecords, type StoreSnapshot } fr
 import { emptySnapshot } from './backup';
 import {
   deriveKek,
+  deriveKekFromPrf,
   generateRecoveryKey,
   importDataKey,
   normaliseRecoveryKey,
@@ -37,12 +38,26 @@ interface WrappedKey {
   data: Uint8Array;
 }
 
+/**
+ * A passkey slot (D-44): the data key wrapped under a key derived from the
+ * passkey's PRF output for `prfSalt`. Only the credential id and salts are
+ * stored; the secret comes from the authenticator after Face ID.
+ */
+export interface PasskeySlot {
+  credentialId: Uint8Array;
+  prfSalt: Uint8Array;
+  wrapped: WrappedKey;
+  label: string;
+  createdAt: string;
+}
+
 interface Keyring {
   id: 'keyring';
   version: 1;
   iterations: number;
   passphrase: WrappedKey;
   recovery: WrappedKey;
+  passkeys?: PasskeySlot[];
   createdAt: string;
 }
 
@@ -63,12 +78,16 @@ class KassaDb extends Dexie {
 export type VaultStatus = 'empty' | 'locked' | 'unlocked';
 
 export class VaultError extends Error {
-  constructor(public readonly code: 'badPassphrase' | 'badRecoveryKey' | 'locked' | 'exists' | 'weakPassphrase') {
+  constructor(public readonly code: 'badPassphrase' | 'badRecoveryKey' | 'badPasskey' | 'locked' | 'exists' | 'weakPassphrase') {
     super(code);
   }
 }
 
 export const MIN_PASSPHRASE_LENGTH = 10;
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
 
 export interface VaultOptions {
   dbName?: string;
@@ -155,6 +174,52 @@ export class Vault {
     const keyring = (await this.db.meta.get('keyring'))!;
     await this.db.meta.put({ ...keyring, passphrase: await this.wrap(raw, next, keyring.iterations) });
     raw.fill(0);
+  }
+
+  // ------------------------------------------------------------- passkeys
+
+  /** Passkeys that can unlock this vault (readable while locked: ids and salts only). */
+  async passkeys(): Promise<Pick<PasskeySlot, 'credentialId' | 'prfSalt' | 'label' | 'createdAt'>[]> {
+    const keyring = await this.db.meta.get('keyring');
+    return (keyring?.passkeys ?? []).map(({ credentialId, prfSalt, label, createdAt }) => ({ credentialId, prfSalt, label, createdAt }));
+  }
+
+  /** Add a passkey slot. Needs the passphrase: the data key is never kept in extractable form. */
+  async addPasskey(passphrase: string, slot: { credentialId: Uint8Array; prfSalt: Uint8Array; prf: Uint8Array; label: string }): Promise<void> {
+    const raw = await this.unwrapWith('passphrase', passphrase);
+    try {
+      const salt = randomBytes(16);
+      const kek = await deriveKekFromPrf(slot.prf, salt);
+      const sealed = await seal(kek, raw, 'kassa-dek');
+      const keyring = (await this.db.meta.get('keyring'))!;
+      const others = (keyring.passkeys ?? []).filter((p) => !sameBytes(p.credentialId, slot.credentialId));
+      const record: PasskeySlot = { credentialId: slot.credentialId, prfSalt: slot.prfSalt, wrapped: { salt, ...sealed }, label: slot.label, createdAt: new Date().toISOString() };
+      await this.db.meta.put({ ...keyring, passkeys: [...others, record] });
+    } finally {
+      raw.fill(0);
+    }
+  }
+
+  async removePasskey(credentialId: Uint8Array): Promise<void> {
+    const keyring = await this.db.meta.get('keyring');
+    if (!keyring) return;
+    await this.db.meta.put({ ...keyring, passkeys: (keyring.passkeys ?? []).filter((p) => !sameBytes(p.credentialId, credentialId)) });
+    this.emit();
+  }
+
+  /** Unlock with the PRF output the authenticator returned for this credential. */
+  async unlockWithPasskey(credentialId: Uint8Array, prf: Uint8Array): Promise<void> {
+    const keyring = await this.db.meta.get('keyring');
+    const slot = keyring?.passkeys?.find((p) => sameBytes(p.credentialId, credentialId));
+    if (!slot) throw new VaultError('badPasskey');
+    let raw: Uint8Array;
+    try {
+      const kek = await deriveKekFromPrf(prf, slot.wrapped.salt);
+      raw = await open(kek, { iv: slot.wrapped.iv, data: slot.wrapped.data }, 'kassa-dek');
+    } catch {
+      throw new VaultError('badPasskey');
+    }
+    await this.load(raw);
   }
 
   /** Check a passphrase without changing state (used before exports). */

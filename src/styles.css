@@ -1663,3 +1663,22 @@ a.chip {
   font-weight: 600;
   padding: 0 0.25rem;
 }
+
+/* ------------------------------------------------------------------ Face ID */
+.faceid-button {
+  margin-bottom: 0.25rem;
+}
+.or-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.or-divider::before,
+.or-divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
