@@ -61,29 +61,6 @@ function Shell() {
       <a className="skip-link" href="#main" onClick={(e) => { e.preventDefault(); mainRef.current?.focus(); }}>
         {t('nav.skip')}
       </a>
-      <aside className="sidebar">
-        <a className="brand" href={href('')}>
-          <img src="./icon.svg" alt="" width="28" height="28" />
-          <span>{t('app.name')}</span>
-        </a>
-        <nav aria-label={t('nav.label')}>
-          <ul className="sidenav">
-            {NAV.map(([path, key, icon]) => (
-              <li key={path}>
-                <a href={href(path)} aria-current={section === path ? 'page' : undefined}>
-                  <Icon name={icon} />
-                  <span>{t(key)}</span>
-                  {path === 'inbox' && badge}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </nav>
-        <button type="button" className="sidenav-lock" onClick={() => vault.lock()}>
-          <Icon name="lock" />
-          <span>{t('nav.lock')}</span>
-        </button>
-      </aside>
       <header className="topbar">
         <a className="brand" href={href('')}>
           <img src="./icon.svg" alt="" width="26" height="26" />

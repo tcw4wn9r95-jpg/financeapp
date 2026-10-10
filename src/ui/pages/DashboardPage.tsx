@@ -8,6 +8,7 @@ import { ReadyToAssign } from '../components/ReadyToAssign';
 import { useBudgetMonth, useDocumentTitle, useSettings, useStore } from '../hooks';
 import { href } from '../router';
 import { groupLabel } from '../labels';
+import { Icon } from '../components/Icon';
 
 const BACKUP_NAG_DAYS = 7;
 
@@ -58,97 +59,95 @@ export function DashboardPage() {
 
   return (
     <>
-      <h1>{t('nav.dashboard')}</h1>
-      {backupDue && (
-        <p className="notice notice-warn">
-          <span aria-hidden="true">⚠ </span>
-          {lastBackup ? t('dashboard.backupOld', { days: BACKUP_NAG_DAYS }) : t('dashboard.backupNever')}{' '}
-          <a href={href('settings', { section: 'backup' })}>{t('dashboard.backupNow')}</a>
-        </p>
+      <h1 className="visually-hidden">{t('nav.dashboard')}</h1>
+      {budget && (
+        <a className="hero-link" href={href(`budget/${month}`)} aria-label={t('dashboard.openBudget')}>
+          <ReadyToAssign month={budget} />
+        </a>
       )}
-      <div className="grid">
-        {budget && (
-          <div className="card card-span">
-            <ReadyToAssign month={budget} />
-            <a className="button" href={href(`budget/${month}`)}>{t('dashboard.openBudget')}</a>
-          </div>
-        )}
 
-        <section className="card" aria-labelledby="inbox-h">
-          <h2 id="inbox-h">{t('dashboard.inbox')}</h2>
-          <p className="big-number">{inbox}</p>
-          <p>{inbox === 0 ? t('dashboard.inboxEmpty') : t('dashboard.inboxCount', { n: inbox })}</p>
-          {inbox > 0 ? <a href={href('inbox')}>{t('dashboard.inboxReview')}</a> : <a href={href('import')}>{t('dashboard.importStatements')}</a>}
-        </section>
+      {inbox > 0 && (
+        <a className="action-row" href={href('inbox')}>
+          <span className="nav-count">{inbox}</span>
+          <span>{t('dashboard.inboxCount', { n: inbox })}</span>
+          <Icon name="chevronRight" size={18} />
+        </a>
+      )}
+      {backupDue && (
+        <a className="action-row action-row-warn" href={href('settings', { section: 'backup' })}>
+          <span aria-hidden="true">⚠</span>
+          <span>{lastBackup ? t('dashboard.backupOld', { days: BACKUP_NAG_DAYS }) : t('dashboard.backupNever')}</span>
+          <Icon name="chevronRight" size={18} />
+        </a>
+      )}
 
-        <section className="card" aria-labelledby="cash-h">
+      <section className="group" aria-labelledby="cash-h">
+        <div className="group-head">
           <h2 id="cash-h">{t('dashboard.accounts')}</h2>
-          <ul className="plain-list">
+          <span className="muted"><Money cents={cash} /></span>
+        </div>
+        {open.length === 0 ? (
+          <p className="muted"><a href={href('accounts')}>{t('dashboard.addAccount')}</a></p>
+        ) : (
+          <ul className="rows">
             {open.map((a) => (
-              <li key={a.id} className="split-row">
-                <span>
-                  {a.name}
-                  {!isOnBudget(a) && <span className="tag">{t('accounts.offBudget')}</span>}
-                </span>
-                <Money cents={balances.get(a.id) ?? 0} />
+              <li key={a.id}>
+                <a className="row-button" href={href('transactions', { account: a.id })}>
+                  <span className="row-main">
+                    <span className="row-title">{a.name}</span>
+                    {!isOnBudget(a) && <span className="row-sub">{t('accounts.offBudget')}</span>}
+                  </span>
+                  <span className="row-end"><Money cents={balances.get(a.id) ?? 0} className="row-amount" /></span>
+                </a>
               </li>
             ))}
           </ul>
-          <p className="split-row total">
-            <span>{t('dashboard.cashTotal')}</span>
-            <Money cents={cash} />
-          </p>
-          {open.length === 0 && <a href={href('accounts')}>{t('dashboard.addAccount')}</a>}
-        </section>
+        )}
+      </section>
 
-        {budget && (
-          <section className="card card-span" aria-labelledby="bva-h">
+      {budget && byGroup.size > 0 && (
+        <section className="group" aria-labelledby="bva-h">
+          <div className="group-head">
             <h2 id="bva-h">{t('dashboard.budgetVsActual', { month: monthName(month) })}</h2>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th scope="col">{t('budget.group')}</th>
-                  <th scope="col" className="num">{t('budget.assigned')}</th>
-                  <th scope="col" className="num">{t('budget.spent')}</th>
-                  <th scope="col" className="hide-narrow">{t('budget.progress')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {CATEGORY_GROUPS.filter((g) => byGroup.has(g)).map((g) => {
-                  const r = byGroup.get(g)!;
-                  const pct = r.assigned > 0 ? Math.round((r.spent / r.assigned) * 100) : r.spent > 0 ? 100 : 0;
-                  return (
-                    <tr key={g}>
-                      <th scope="row">{groupLabel(g)}</th>
-                      <td className="num"><Money cents={r.assigned} /></td>
-                      <td className="num"><Money cents={r.spent} /></td>
-                      <td className="hide-narrow">
-                        <Meter percent={pct} label={t('budget.percentSpent', { pct })} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </section>
-        )}
-
-        {budget && funds.length > 0 && (
-          <section className="card card-span" aria-labelledby="funds-h">
-            <h2 id="funds-h">{t('dashboard.funds')}</h2>
-            <ul className="plain-list">
-              {funds.map((c) => (
-                <li key={c.id} className="split-row">
-                  <span>
-                    {c.name} <span className="tag">{groupLabel(c.groupId)}</span>
+          </div>
+          <ul className="rows">
+            {CATEGORY_GROUPS.filter((g) => byGroup.has(g)).map((g) => {
+              const r = byGroup.get(g)!;
+              const pct = r.assigned > 0 ? Math.round((r.spent / r.assigned) * 100) : r.spent > 0 ? 100 : 0;
+              return (
+                <li key={g} className="row-static">
+                  <span className="row-main">
+                    <span className="row-title">{groupLabel(g)}</span>
+                    <span className="row-sub">
+                      <Money cents={r.spent} /> {t('dashboard.of')} <Money cents={r.assigned} />
+                    </span>
+                    <Meter percent={pct} label={t('budget.percentSpent', { pct })} />
                   </span>
-                  <Money cents={budget.categories.get(c.id)?.available ?? 0} />
                 </li>
-              ))}
-            </ul>
-          </section>
-        )}
-      </div>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+
+      {budget && funds.length > 0 && (
+        <section className="group" aria-labelledby="funds-h">
+          <div className="group-head">
+            <h2 id="funds-h">{t('dashboard.funds')}</h2>
+          </div>
+          <ul className="rows">
+            {funds.map((c) => (
+              <li key={c.id} className="row-static">
+                <span className="row-main">
+                  <span className="row-title">{c.name}</span>
+                  <span className="row-sub">{groupLabel(c.groupId)}</span>
+                </span>
+                <span className="row-end"><Money cents={budget.categories.get(c.id)?.available ?? 0} className="row-amount" /></span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </>
   );
 }

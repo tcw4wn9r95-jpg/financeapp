@@ -99,9 +99,9 @@ Enter the amount still owed as the loan's negative opening balance. Interest is 
 
 **D-30 Name.** The app is called **CasaresSan Finances** ("CasaresSan" where space is short). Internal identifiers keep the working name "kassa": the IndexedDB database and the backup and export format ids. Existing vaults and backups therefore keep working.
 
-**D-31 Minimal, modern UI.**
-- Neutral greys with one ink colour for actions. Green and red are used only for money states, and always with a word or symbol.
-- Hairline borders and no heavy shadows.
-- The Inter variable font, self-hosted, so the strict CSP stays `font-src 'self'`.
-- A sidebar on screens 960 px and wider. Below that, a bottom tab bar (Dashboard, Budget, Inbox, Transactions, More), where "More" holds Import, Accounts, Categories, Settings and Lock.
-- Dialogs become bottom sheets on phones. Light and dark themes follow the system.
+**D-31 Minimal, modern, phone-first UI.** The household uses the app on phones only.
+- Every screen width gets the phone layout: a top bar, and a bottom tab bar with Dashboard, Budget, Inbox, Transactions and More. More holds Import, Accounts, Categories, Settings and Lock. On a large screen the layout simply stays a centred 600 px column.
+- Lists replace tables. Budget rows show the category, "assigned · spent", what is available and a thin progress bar, and open a bottom sheet to change the amount. Transactions are grouped under date headers.
+- Form fields use 16 px text, so iOS does not zoom on focus. There is no tap highlight flash, and installed to the home screen it runs full screen.
+- Spending amounts in lists use plain text with their minus sign; only incoming money is tinted green. Red is kept for overspending and negative balances.
+- Neutral greys, one ink colour for actions, hairline borders, and the self-hosted Inter variable font, so the CSP stays `font-src 'self'`. Light and dark themes follow the phone.

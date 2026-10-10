@@ -5,7 +5,6 @@ import { acceptSuggestion, checkStatement, inbox, lockStatement, undoImport } fr
 import type { ImportBatch, Statement, Transaction } from '../../domain/types';
 import { t } from '../../i18n';
 import { ClassifyControl, errorMessage, TxSummary } from '../components/Classify';
-import { SelectField } from '../components/fields';
 import { Money } from '../components/Money';
 import { useToast } from '../components/Toast';
 import { useDocumentTitle, useStore, useVault } from '../hooks';
@@ -72,15 +71,16 @@ function Review({ items }: { items: Transaction[] }) {
   }
   return (
     <>
-      <div className="filters">
-        <SelectField label={t('tx.account')} value={accountFilter} onChange={(e) => navigate('inbox', { tab: 'review', account: e.target.value || undefined })}>
+      <div className="toolbar">
+        <label className="visually-hidden" htmlFor="inbox-account">{t('tx.account')}</label>
+        <select id="inbox-account" value={accountFilter} onChange={(e) => navigate('inbox', { tab: 'review', account: e.target.value || undefined })}>
           <option value="">{t('tx.allAccounts')}</option>
           {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </SelectField>
-        {suggested.length > 1 && (
-          <button type="button" className="button" onClick={() => void accept(suggested)}>{t('inbox.acceptAll', { n: suggested.length })}</button>
-        )}
+        </select>
       </div>
+      {suggested.length > 1 && (
+        <button type="button" className="button button-block accept-all" onClick={() => void accept(suggested)}>{t('inbox.acceptAll', { n: suggested.length })}</button>
+      )}
       <p className="summary-line">{t('inbox.count', { n: shown.length })}</p>
       <ul className="inbox-list">
         {shown.slice(0, limit).map((tx) => (

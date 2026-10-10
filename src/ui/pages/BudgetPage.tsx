@@ -51,33 +51,20 @@ export function BudgetPage() {
             const cats = expense.filter((c) => c.groupId === g).sort((a, b) => a.sortOrder - b.sortOrder);
             if (cats.length === 0) return null;
             const rows = cats.map((c) => [c, budget.categories.get(c.id)!] as const);
-            const sum = (k: 'assigned' | 'activity' | 'available') => rows.reduce((s, [, m]) => s + m[k], 0);
+            const available = rows.reduce((s, [, m]) => s + m.available, 0);
             return (
-              <section key={g} className="budget-group" aria-labelledby={`g-${g}`}>
-                <table className="table budget-table">
-                  <caption id={`g-${g}`}>{groupLabel(g)}</caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">{t('budget.category')}</th>
-                      <th scope="col" className="num">{t('budget.assigned')}</th>
-                      <th scope="col" className="num hide-narrow">{t('budget.activity')}</th>
-                      <th scope="col" className="num">{t('budget.available')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map(([c, m]) => (
-                      <BudgetRow key={c.id} category={c} m={m} onEdit={() => setEditing(c)} />
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <th scope="row">{t('budget.total')}</th>
-                      <td className="num"><Money cents={sum('assigned')} /></td>
-                      <td className="num hide-narrow"><Money cents={sum('activity')} /></td>
-                      <td className="num"><Money cents={sum('available')} /></td>
-                    </tr>
-                  </tfoot>
-                </table>
+              <section key={g} className="group" aria-labelledby={`g-${g}`}>
+                <div className="group-head">
+                  <h2 id={`g-${g}`}>{groupLabel(g)}</h2>
+                  <span className="muted">
+                    {t('budget.available')} <Money cents={available} />
+                  </span>
+                </div>
+                <ul className="rows">
+                  {rows.map(([c, m]) => (
+                    <BudgetRow key={c.id} category={c} m={m} onEdit={() => setEditing(c)} />
+                  ))}
+                </ul>
               </section>
             );
           })}
@@ -119,39 +106,38 @@ export function BudgetPage() {
   );
 }
 
+/** One category: tap to change what is assigned. The bar shows how much of the money has been used. */
 function BudgetRow({ category, m, onEdit }: { category: Category; m: CategoryMonth; onEdit: () => void }) {
   const over = m.available < 0;
+  const funds = m.carryIn + m.assigned;
+  const used = funds > 0 ? Math.min(100, Math.max(0, Math.round((-m.activity / funds) * 100))) : m.activity < 0 ? 100 : 0;
   return (
-    <tr className={over ? 'row-over' : ''}>
-      <th scope="row">
-        <span className="cat-name">{category.name}</span>
-        <span className="cat-meta">
-          {rolloverLabel(category.rolloverMode)}
-          {m.carryIn !== 0 && (
-            <>
-              {' · '}
-              {t('budget.carryIn')} <Money cents={m.carryIn} />
-            </>
-          )}
+    <li>
+      <button type="button" className="row-button" onClick={onEdit} aria-label={t('budget.editAssigned', { name: category.name })}>
+        <span className="row-main">
+          <span className="row-title">
+            {category.name}
+            {m.overrideId && <span className="badge">{t('budget.overrideBadge')}</span>}
+          </span>
+          <span className="row-sub">
+            {t('budget.assigned')} <Money cents={m.assigned} />
+            {m.activity !== 0 && (
+              <>
+                {' · '}
+                {t('budget.spent')} <Money cents={-m.activity} />
+              </>
+            )}
+          </span>
+          <span className={`row-bar ${over ? 'row-bar-over' : ''}`} aria-hidden="true">
+            <span style={{ width: `${over ? 100 : used}%` }} />
+          </span>
         </span>
-        <span className="cat-meta show-narrow">
-          {t('budget.activity')}: <Money cents={m.activity} />
+        <span className="row-end">
+          <Money cents={m.available} className="row-amount" />
+          {over && <span className="badge badge-warn">⚠ {t('budget.overspent')}</span>}
         </span>
-      </th>
-      <td className="num">
-        <button type="button" className="amount-button" onClick={onEdit} aria-label={t('budget.editAssigned', { name: category.name })}>
-          <Money cents={m.assigned} />
-          {m.overrideId && <span className="badge">{t('budget.overrideBadge')}</span>}
-        </button>
-      </td>
-      <td className="num hide-narrow">
-        <Money cents={m.activity} />
-      </td>
-      <td className="num">
-        <Money cents={m.available} />
-        {over && <span className="badge badge-warn">⚠ {t('budget.overspent')}</span>}
-      </td>
-    </tr>
+      </button>
+    </li>
   );
 }
 
@@ -186,15 +172,13 @@ function AssignDialog({ category, month, m, onClose }: { category: Category; mon
   return (
     <Dialog open title={t('budget.assignTitle', { name: category.name, month: monthName(month) })} onClose={onClose}>
       <form onSubmit={submitOverride} noValidate>
-        <p>
-          {t('budget.defaultIs')} <Money cents={m.defaultAmount} />
-          {m.overrideId && (
-            <>
-              {' · '}
-              <span className="badge">{t('budget.overrideBadge')}</span>
-            </>
-          )}
-        </p>
+        <ul className="plain-list facts">
+          <li className="split-row"><span>{t('budget.defaultIs')}</span><Money cents={m.defaultAmount} /></li>
+          {m.carryIn !== 0 && <li className="split-row"><span>{t('budget.carryIn')}</span><Money cents={m.carryIn} /></li>}
+          <li className="split-row"><span>{t('budget.activity')}</span><Money cents={m.activity} /></li>
+          <li className="split-row"><span>{t('budget.available')}</span><strong><Money cents={m.available} /></strong></li>
+          <li className="split-row"><span>{t('categories.rollover')}</span><span>{rolloverLabel(category.rolloverMode)}</span></li>
+        </ul>
         <MoneyField label={t('budget.amountFor', { month: monthName(month) })} state={amount} error={cents !== null && cents < 0 ? t('budget.negativeAssign') : undefined} autoFocus />
         <TextField label={t('budget.note')} value={note} onChange={(e) => setNote(e.target.value)} hint={t('budget.noteHint')} />
         <div className="stack">

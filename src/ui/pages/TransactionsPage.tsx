@@ -9,6 +9,7 @@ import { CATEGORY_GROUPS, type Id, type Transaction } from '../../domain/types';
 import { t } from '../../i18n';
 import { deleteEntry, saveEntry } from '../actions';
 import { Dialog } from '../components/Dialog';
+import { Icon } from '../components/Icon';
 import { DateField, MoneyField, SelectField, TextField, useDateInput, useMoneyInput } from '../components/fields';
 import { Money } from '../components/Money';
 import { MonthNav } from '../components/MonthNav';
@@ -18,6 +19,13 @@ import { groupLabel } from '../labels';
 import { navigate, useRoute } from '../router';
 
 type Kind = 'expense' | 'income' | 'transfer';
+
+/** Rows are already sorted newest first; keep that order within each day. */
+function groupByDate(rows: Transaction[]): [string, Transaction[]][] {
+  const out = new Map<string, Transaction[]>();
+  for (const r of rows) out.set(r.date, [...(out.get(r.date) ?? []), r]);
+  return [...out.entries()];
+}
 
 export function TransactionsPage() {
   useDocumentTitle(t('nav.transactions'));
@@ -68,23 +76,29 @@ export function TransactionsPage() {
     <>
       <div className="page-head">
         <h1>{t('nav.transactions')}</h1>
-        <button type="button" className="button button-primary" onClick={() => setEditing('new')} disabled={accounts.length === 0}>
-          + {t('tx.add')}
+        <button type="button" className="button button-primary button-small" onClick={() => setEditing('new')} disabled={accounts.length === 0}>
+          <Icon name="plus" size={18} />
+          {t('tx.add')}
         </button>
       </div>
       {accounts.length === 0 && <p className="notice">{t('tx.needAccount')}</p>}
       {!onlyNew && <MonthNav month={month} onChange={(m) => setQuery({ month: m })} />}
-      <div className="filters">
-        <SelectField label={t('tx.account')} value={accountFilter} onChange={(e) => setQuery({ account: e.target.value || undefined })}>
+      <div className="toolbar">
+        <label className="visually-hidden" htmlFor="tx-account">{t('tx.account')}</label>
+        <select id="tx-account" value={accountFilter} onChange={(e) => setQuery({ account: e.target.value || undefined })}>
           <option value="">{t('tx.allAccounts')}</option>
           {accounts.map((a) => (
             <option key={a.id} value={a.id}>{a.name}</option>
           ))}
-        </SelectField>
-        <label className="check">
-          <input type="checkbox" checked={onlyNew} onChange={(e) => setQuery({ filter: e.target.checked ? 'new' : undefined })} />
-          {t('tx.onlyUncategorised')}
-        </label>
+        </select>
+        <button
+          type="button"
+          className={`chip ${onlyNew ? 'chip-on' : ''}`}
+          aria-pressed={onlyNew}
+          onClick={() => setQuery({ filter: onlyNew ? undefined : 'new' })}
+        >
+          {t('tx.onlyUncategorisedShort')}
+        </button>
       </div>
       <p className="summary-line">
         {t('tx.count', { n: rows.length })} · {t('tx.in')} <Money cents={inflow} /> · {t('tx.out')} <Money cents={outflow} />
@@ -92,27 +106,37 @@ export function TransactionsPage() {
       {rows.length === 0 ? (
         <p className="notice">{onlyNew ? t('tx.noneUncategorised') : t('tx.none')}</p>
       ) : (
-        <ul className="tx-list">
-          {rows.map((tx) => (
-            <li key={tx.id}>
-              <button type="button" className="tx-row" onClick={() => setEditing(tx)}>
-                <span className="tx-date">{formatDate(tx.date)}</span>
-                <span className="tx-main">
-                  <span className="tx-desc">{tx.descriptionRaw || t('tx.noDescription')}</span>
-                  <span className="tx-meta">
-                    {accountName.get(tx.accountId)} · {tx.status === 'new' || tx.status === 'suggested' ? <span className="badge badge-warn">⚠ {label(tx)}</span> : label(tx)}
-                    {tx.status === 'locked' && <span className="tag">{t('tx.lockedTag')}</span>}
-                    {tx.isMirror && <span className="tag">{t('tx.autoCreated')}</span>}
-                    {tx.originalCurrency && tx.originalAmount !== undefined && (
-                      <> · {formatMoney(Math.abs(tx.originalAmount), { symbol: false })} {tx.originalCurrency}</>
-                    )}
-                  </span>
-                </span>
-                <Money cents={tx.amount} plusSign className="tx-amount" />
-              </button>
-            </li>
+        <div className="day-groups">
+          {groupByDate(rows).map(([date, list]) => (
+            <section key={date} className="group" aria-label={formatDate(date)}>
+              <h2 className="day-head">{formatDate(date)}</h2>
+              <ul className="rows">
+                {list.map((tx) => (
+                  <li key={tx.id}>
+                    <button type="button" className="row-button tx-row" onClick={() => setEditing(tx)}>
+                      <span className="row-main">
+                        <span className="row-title tx-desc">{tx.descriptionRaw || t('tx.noDescription')}</span>
+                        <span className="row-sub">
+                          {tx.status === 'new' || tx.status === 'suggested' ? <span className="badge badge-warn tag-first">⚠ {label(tx)}</span> : label(tx)}
+                          {' · '}
+                          {accountName.get(tx.accountId)}
+                          {tx.status === 'locked' && <span className="tag">{t('tx.lockedTag')}</span>}
+                          {tx.isMirror && <span className="tag">{t('tx.autoCreated')}</span>}
+                          {tx.originalCurrency && tx.originalAmount !== undefined && (
+                            <> · {formatMoney(Math.abs(tx.originalAmount), { symbol: false })} {tx.originalCurrency}</>
+                          )}
+                        </span>
+                      </span>
+                      <span className="row-end">
+                        <Money cents={tx.amount} plusSign className="row-amount tx-amount" />
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
           ))}
-        </ul>
+        </div>
       )}
       {editing && editing !== 'new' && (editing.importBatchId || editing.isMirror) ? (
         <ImportedDialog tx={editing} label={label(editing)} accountName={accountName.get(editing.accountId) ?? '?'} onClose={() => setEditing(null)} />
