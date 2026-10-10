@@ -2,7 +2,7 @@
 
 A private, local-first household finance app for a Luxembourg household. It runs entirely in the browser and is hosted as a static site on GitHub Pages. There is no server, account or tracking. Data is stored in IndexedDB, encrypted with AES-GCM under a key derived from your passphrase. It also works offline as an installable PWA.
 
-**Status: milestones M1 to M4 done.**
+**Status: milestones M1 to M5 done.**
 
 - **M1, Foundations and budget:** encrypted storage, backup and restore; accounts, categories and manual entry; a monthly budget with defaults, month overrides and rollover; dashboard v0.
 - **M2, Import and reconciliation:**
@@ -23,7 +23,12 @@ A private, local-first household finance app for a Luxembourg household. It runs
   - a log of everything filed automatically, with undo;
   - "What if" scenarios drawn against the forecast.
 
-The Luxembourg tax projection follows in M5 (see the PRD roadmap).
+- **M5, Tax and sharing:**
+  - a Luxembourg income-tax projection for classes 1, 1a and 2 (2025 and 2026 parameters, with sources), showing the expected refund or payment against payroll withholding, optionally posted into the forecast; every parameter can be overridden;
+  - OFX/QFX import;
+  - sharing the encrypted backup through the phone's share sheet (Files, iCloud Drive, AirDrop to the other phone).
+
+The tax projection is not tax advice. Its test vectors were computed by hand from the law text; they have not been compared with the ACD's own simulator.
 
 ## Automatic categorising and Claude
 
@@ -121,19 +126,20 @@ The import fixtures are synthetic, for a fictional couple Jane and John Doe. The
 
 ## Updating a tax year file
 
-The Luxembourg tax engine arrives in M5. It will read one JSON file per tax year, `/tax/lu/YYYY.json`, holding:
+The tax projection reads one JSON file per tax year, `/tax/lu/YYYY.json`, holding:
 
-- bracket thresholds and rates;
-- surcharge thresholds;
-- deduction ceilings and credit amounts;
-- a `sources` array of official URLs and the date each value was verified.
+- the art. 118 bracket table (lower bound in euros, marginal rate) and the class 1a rule;
+- the employment-fund surcharge rates and thresholds;
+- employee social-security rates and the yearly contribution ceiling;
+- deduction lump sums and ceilings, and the credit formulas (CIS including the CO2 credit, CIM);
+- a `sources` array with the official URL behind the values and the date they were checked.
 
-To update a year, copy the latest file, change the values from the official Administration des contributions directes publication, update `sources` and the verification date, and run the tax test vectors (`npm test`). Rates are never hard-coded.
+To add a year: copy the latest file, change the values from the consolidated LIR text published by the Administration des contributions directes (impotsdirects.public.lu → Législation → LIR) and the CCSS notices, update `sources`, add test vectors in `src/domain/tax/lu.test.ts`, and run `npm test`. Rates are never hard-coded. If bill 8676 (single tax class) is voted, it applies from tax year 2028 and needs its own tariff types (U/T).
 
 ## Project layout
 
 ```
-src/domain/    pure TypeScript: money, dates, ledger, budget engine, reconcile, plan, forecast, learn (no React, no Dexie; a test enforces this)
+src/domain/    pure TypeScript: money, dates, ledger, budget engine, reconcile, plan, forecast, learn, tax (no React, no Dexie; a test enforces this)
 src/domain/import/  parsers (Spuerkeess PDF, Worldline PDF, CSV mappings, CAMT.053, OFX) and the import engine
 src/infra/     pdf.js text extraction; the optional Claude client
 src/storage/   WebCrypto, encrypted Dexie vault, backup and export format

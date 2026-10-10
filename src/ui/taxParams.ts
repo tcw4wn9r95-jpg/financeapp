@@ -14,6 +14,7 @@ export function taxYears(): number[] {
 export function inputOf(profile: TaxProfile): TaxInput {
   return {
     class: (['1', '1a', '2'].includes(profile.regime) ? profile.regime : '1') as TaxClass,
+    ...(profile.singleParent ? { singleParent: true } : {}),
     persons: profile.persons,
     householdMembers: profile.householdMembers,
     insurance: profile.insurance,

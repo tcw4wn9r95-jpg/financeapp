@@ -25,6 +25,8 @@ describe('architecture', () => {
     for (const spec of imports) {
       if (file.endsWith('.test.ts') && spec === 'vitest') continue;
       if (ALLOWED_PACKAGES.has(spec)) continue;
+      // Tax parameter files are data, kept at /tax/lu/YYYY.json as the PRD asks.
+      if (/\.json$/.test(spec) && join(root, file, '..', spec).startsWith(join(process.cwd(), 'tax', 'lu'))) continue;
       expect(spec, `${file} imports ${spec}`).toMatch(/^\.\.?\//);
       const resolved = join(root, file, '..', spec);
       expect(resolved.startsWith(root), `${file} reaches outside domain via ${spec}`).toBe(true);

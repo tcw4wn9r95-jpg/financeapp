@@ -28,6 +28,7 @@ interface Draft {
   otherIncome: string;
   settleMonth: string;
   inForecast: boolean;
+  singleParent: boolean;
   overrides: Record<string, string>;
 }
 
@@ -51,6 +52,7 @@ function draftOf(p: TaxProfile | undefined, names: string[], year: number): Draf
     otherIncome: money(p?.otherIncome),
     settleMonth: p?.settleMonth ?? `${year + 1}-06`,
     inForecast: p?.inForecast ?? false,
+    singleParent: p?.singleParent ?? false,
     overrides: Object.fromEntries(Object.entries(p?.overrides ?? {}).map(([k, v]) => [k, String(v)])),
   };
 }
@@ -87,6 +89,7 @@ function profileOf(d: Draft, year: number, existing: TaxProfile | undefined): Ta
     overrides,
     settleMonth: d.settleMonth,
     inForecast: d.inForecast,
+    ...(d.regime === '1a' && d.singleParent ? { singleParent: true } : {}),
   };
 }
 
@@ -140,6 +143,12 @@ function TaxForm({ year, params, existing }: { year: number; params: TaxParams; 
       <SelectField label={t('tax.class')} value={d.regime} onChange={(e) => set({ regime: e.target.value as TaxClass, persons: e.target.value === '2' || d.persons.length < 2 ? d.persons : d.persons.slice(0, 1) })} hint={t('tax.classHint')}>
         {CLASSES.map((c) => <option key={c} value={c}>{t(`tax.class.${c}` as 'tax.class.1')}</option>)}
       </SelectField>
+      {d.regime === '1a' && (
+        <label className="check">
+          <input type="checkbox" checked={d.singleParent} onChange={(e) => set({ singleParent: e.target.checked })} />
+          {t('tax.singleParent')}
+        </label>
+      )}
       {d.persons.map((x, i) => (
         <fieldset key={i} className="card">
           <legend>{x.name}</legend>
@@ -147,7 +156,7 @@ function TaxForm({ year, params, existing }: { year: number; params: TaxParams; 
           <TextField label={t('tax.withheld')} hint={t('tax.withheldHint')} inputMode="decimal" value={x.withheld} onChange={(e) => setPerson(i, { withheld: e.target.value })} />
           <details>
             <summary>{t('tax.more')}</summary>
-            <TextField label={t('tax.travel')} hint={t('tax.travelHint', { min: params.deductions.travelMin })} inputMode="decimal" value={x.travel} onChange={(e) => setPerson(i, { travel: e.target.value })} />
+            <TextField label={t('tax.travel')} hint={t('tax.travelHint', { max: params.deductions.travelMax })} inputMode="decimal" value={x.travel} onChange={(e) => setPerson(i, { travel: e.target.value })} />
             <TextField label={t('tax.pension')} hint={t('tax.pensionHint', { max: params.deductions.pensionSavings })} inputMode="decimal" value={x.pensionSavings} onChange={(e) => setPerson(i, { pensionSavings: e.target.value })} />
           </details>
         </fieldset>
@@ -225,7 +234,7 @@ function Overrides({ params, values, onChange }: { params: TaxParams; values: Re
     ['employmentFund.rate', t('tax.p.fund'), params.employmentFund.rate],
     ['employmentFund.highRate', t('tax.p.fundHigh'), params.employmentFund.highRate],
     ['deductions.professionalLump', t('tax.p.professional'), params.deductions.professionalLump],
-    ['deductions.travelMin', t('tax.p.travel'), params.deductions.travelMin],
+    ['deductions.travelMax', t('tax.p.travel'), params.deductions.travelMax],
     ['deductions.specialLump', t('tax.p.special'), params.deductions.specialLump],
     ['deductions.insurancePerPerson', t('tax.p.insurance'), params.deductions.insurancePerPerson],
     ['deductions.pensionSavings', t('tax.p.pension'), params.deductions.pensionSavings],

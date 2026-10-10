@@ -39,9 +39,13 @@ export interface TaxParams {
   status: 'law' | 'draft';
   note?: string;
   scale: Bracket[];
-  /** Class 1a: the class 1 scale on income above `from` uses `rate` instead (art. 120 LIR) — see engine. */
-  class1a: { brackets: Bracket[] };
+  /**
+   * Class 1a (art. 120bis LIR): the scale is applied to R − factor × (base − R);
+   * from `capFrom` the marginal rate is limited by `capBrackets`.
+   */
+  class1a: { base: number; factor: number; capFrom: number; capBrackets: Bracket[] };
   roundTaxableTo: number;
+  /** Employment fund surcharge: `rate` of the tax; `highRate` on the tax for income above the threshold (D-41). */
   employmentFund: { rate: number; highRate: number; threshold: Record<TaxClass, number> };
   social: {
     /** Employee rates on gross salary, capped at `ceiling` (except dependence). */
@@ -56,8 +60,8 @@ export interface TaxParams {
   deductions: {
     /** Lump sum for professional expenses (frais d'obtention), per employee. */
     professionalLump: number;
-    /** Minimum travel-expense deduction (frais de déplacement), per employee. */
-    travelMin: number;
+    /** Ceiling of the commuting deduction (frais de déplacement), per employee. */
+    travelMax: number;
     /** Lump sum for special expenses when no more is claimed, per taxpayer. */
     specialLump: number;
     /** Ceiling for insurance premiums and personal loan interest, per household member. */
@@ -66,10 +70,11 @@ export interface TaxParams {
     pensionSavings: number;
   };
   credits: {
-    /** Crédit d'impôt salarié by gross salary; 0 outside the steps. */
+    /** Crédit d'impôt salarié plus the CO2 credit, by gross salary; 0 below the first step. */
     employee: CreditStep[];
+    /** No employee credit from this gross salary. */
     employeeMaxSalary: number;
-    /** Crédit d'impôt monoparental (class 1a with a child in the household). */
+    /** Crédit d'impôt monoparental, by adjusted taxable income (class 1a with a child). */
     singleParent: CreditStep[];
   };
   sources: TaxSource[];
@@ -81,7 +86,7 @@ export interface TaxPerson {
   grossSalary: Cents;
   /** Tax withheld (or expected to be withheld) on this salary for the year, cents. */
   withheld: Cents;
-  /** Travel expenses deduction claimed, cents (0 = the minimum). */
+  /** Commuting deduction (99 € per distance unit beyond the first 4), cents. */
   travel?: Cents;
   /** Old-age pension savings contract premiums paid, cents. */
   pensionSavings?: Cents;
@@ -89,6 +94,8 @@ export interface TaxPerson {
 
 export interface TaxInput {
   class: TaxClass;
+  /** Class 1a because of a child in the household (single-parent credit). */
+  singleParent?: boolean;
   persons: TaxPerson[];
   /** Household members counted for the insurance ceiling (taxpayers + children). */
   householdMembers: number;
@@ -145,8 +152,21 @@ export function marginal(income: number, brackets: readonly Bracket[]): number {
 /** Income tax in euros (before the employment-fund surcharge) for a class. */
 export function classTax(taxable: number, cls: TaxClass, p: TaxParams): number {
   if (cls === '2') return 2 * scaleTax(taxable / 2, p.scale); // splitting
-  if (cls === '1a') return scaleTax(taxable, p.class1a.brackets);
+  if (cls === '1a') return class1aTax(taxable, p);
   return scaleTax(taxable, p.scale);
+}
+
+export function class1aTax(taxable: number, p: TaxParams): number {
+  const a = p.class1a;
+  const reduced = (r: number) => scaleTax(Math.max(0, r - a.factor * (a.base - r)), p.scale);
+  if (taxable <= a.capFrom) return reduced(taxable);
+  return reduced(a.capFrom) + scaleTax(taxable, a.capBrackets) - scaleTax(a.capFrom, a.capBrackets);
+}
+
+function class1aMarginal(taxable: number, p: TaxParams): number {
+  const a = p.class1a;
+  if (taxable > a.capFrom) return marginal(taxable, a.capBrackets);
+  return marginal(Math.max(0, taxable - a.factor * (a.base - taxable)), p.scale) * (1 + a.factor);
 }
 
 export function stepCredit(salary: number, steps: readonly CreditStep[]): number {
@@ -168,11 +188,11 @@ export function computeTax(input: TaxInput, p: TaxParams): TaxResult {
     const gross = euro(person.grossSalary);
     if (gross <= 0) continue;
     const social = socialContributions(gross, p);
-    const travel = Math.max(p.deductions.travelMin, euro(person.travel ?? 0));
+    const travel = Math.min(p.deductions.travelMax, euro(person.travel ?? 0));
     net += gross - social - p.deductions.professionalLump - travel;
     deductions.push({ label: `social:${person.name}`, amount: cents(social) });
     deductions.push({ label: `professional:${person.name}`, amount: cents(p.deductions.professionalLump) });
-    deductions.push({ label: `travel:${person.name}`, amount: cents(travel) });
+    if (travel > 0) deductions.push({ label: `travel:${person.name}`, amount: cents(travel) });
   }
   const taxpayers = input.class === '2' ? 2 : 1;
   const insurance = Math.min(euro(input.insurance), p.deductions.insurancePerPerson * Math.max(1, input.householdMembers));
@@ -185,20 +205,22 @@ export function computeTax(input: TaxInput, p: TaxParams): TaxResult {
   const before = net - special - pension - euro(input.otherDeductions);
   const taxable = Math.max(0, Math.floor(before / p.roundTaxableTo) * p.roundTaxableTo);
   const incomeTax = Math.floor(classTax(taxable, input.class, p));
-  const fund = taxable > p.employmentFund.threshold[input.class] ? p.employmentFund.highRate : p.employmentFund.rate;
-  const surcharge = Math.floor(incomeTax * fund);
+  // The higher rate applies to the tax on the part of income above the threshold.
+  const threshold = p.employmentFund.threshold[input.class];
+  const fund = taxable > threshold ? p.employmentFund.highRate : p.employmentFund.rate;
+  const above = taxable > threshold ? classTax(taxable, input.class, p) - classTax(threshold, input.class, p) : 0;
+  const surcharge = Math.floor(incomeTax * p.employmentFund.rate + above * (p.employmentFund.highRate - p.employmentFund.rate));
 
   const credits: TaxLine[] = [];
   for (const person of input.persons) {
     const gross = euro(person.grossSalary);
-    if (gross > 0 && gross <= p.credits.employeeMaxSalary) {
+    if (gross > 0 && gross < p.credits.employeeMaxSalary) {
       const c = stepCredit(gross, p.credits.employee);
       if (c > 0) credits.push({ label: `employee:${person.name}`, amount: cents(c) });
     }
   }
-  if (input.class === '1a') {
-    const income = input.persons.reduce((s, x) => s + euro(x.grossSalary), 0);
-    const c = stepCredit(income, p.credits.singleParent);
+  if (input.class === '1a' && input.singleParent) {
+    const c = stepCredit(taxable, p.credits.singleParent);
     if (c > 0) credits.push({ label: 'singleParent', amount: cents(c) });
   }
   const creditTotal = credits.reduce((s, c) => s + c.amount, 0);
@@ -217,7 +239,7 @@ export function computeTax(input: TaxInput, p: TaxParams): TaxResult {
     liability,
     withheld,
     balance: withheld - liability,
-    marginalRate: marginal(effectiveIncome, input.class === '1a' ? p.class1a.brackets : p.scale) * (1 + fund),
+    marginalRate: (input.class === '1a' ? class1aMarginal(taxable, p) : marginal(effectiveIncome, p.scale)) * (1 + fund),
   };
 }
 

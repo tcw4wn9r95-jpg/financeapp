@@ -157,3 +157,25 @@ The palette is validated for colour blindness and contrast: blue for your plan, 
 **D-39 Rule proposals.** When the latest three decisions for a merchant agree and no rule covers it, the inbox proposes a rule (`createdFrom: hardened`, pattern `^MERCHANT$`). "Not now" remembers the merchant so it is not asked again. Rules are tried in priority order (reorder with the arrows); a rule whose target was archived is skipped.
 
 **D-40 Scenarios.** A scenario is a named list of changes (monthly cost from the 1st, monthly income on the 25th, or a one-off) drawn on the forecast chart against the baseline, with the 24-month difference and the first month below the buffer.
+
+**D-41 Luxembourg tax projection.** Scope: salaried households in classes 1, 1a and 2. Choices:
+- Parameters live in `/tax/lu/YYYY.json`. 2025 and 2026 were taken from the ACD's consolidated LIR texts in force on 1 January of each year. Social rates and ceilings come from CCSS notices; for 2025 and the mid-year ceilings, they come from secondary sheets (noted in `sources`).
+- The yearly social ceiling is the month-weighted average over the year's index changes.
+- Social contributions are estimated from gross salary: pension, health 2.8% + 0.25% and dependence 1.4% after the allowance.
+- Net income is gross minus contributions, minus the 540 € professional lump sum per employee, minus commuting as entered (capped at 2,574 €).
+- Special expenses are the larger of the 480 € lump sum per taxpayer and the insurance premiums entered (672 € per household member). Pension savings are capped per person. Other deductions and income are typed by the user.
+- Taxable income is rounded down to 50 €, and tax down to the euro.
+- **Classes:** class 2 is tax = 2 × tax(R/2). Class 1a follows art. 120bis: the scale applied to R − ¼ × (79,380 − R), with the marginal rate capped at 39% from 51,804 €.
+- **Employment fund:** 7% of the tax, plus 2 points on the tax for income above 150,000 € (classes 1/1a) or 300,000 € (class 2). The "part above the threshold" reading comes from the law's wording and was not confirmed against an ACD computation. The rate can be overridden.
+- **Credits:** CIS plus the CO2 credit (216 € in 2026, 192 € in 2025), and CIM (only when the 1a box is ticked; the reduction for the child's own allowances is not modelled). CISSM, CIP and the 2024-only CIB are not modelled.
+- The refund or payment (withheld − liability) can be posted into the forecast on the 15th of a chosen month (default June of the next year).
+- Not modelled: married couples taxed in class 1 by option (individualisation), non-residents, self-employment, capital gains, and the actual payroll withholding tables. The user types withholding from payslips.
+- Bill 8676 (single tax class) is not voted as of October 2026 and would apply from 2028; it is not modelled.
+
+**D-42 Backup sharing.** The PRD's optional GitHub sync would need a token and `api.github.com` in the CSP. Instead, the encrypted backup can be handed to the phone's share sheet (Web Share API with files): save it to Files or iCloud Drive, or AirDrop it to the other person's phone and restore it there. Because encryption takes a moment and browsers open the share sheet only straight after a tap, sharing takes two taps: prepare, then share.
+
+**D-43 OFX/QFX.** Both forms are read: SGML (OFX 1.x, open tags) and XML (OFX 2.x).
+- Each statement (bank or card) becomes a sub-account, keyed by the last 4 characters of ACCTID.
+- LEDGERBAL is the closing balance at DTASOF.
+- `<ORIGCURRENCY>` keeps the original amount (TRNAMT is already in EUR). `<CURRENCY>` converts TRNAMT with CURRATE.
+- Statements whose CURDEF is not EUR are skipped with the reason "currency".

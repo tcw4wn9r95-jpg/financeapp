@@ -261,6 +261,8 @@ export interface TaxProfile extends BaseRecord {
   /** When the refund or payment is expected (for the forecast). */
   settleMonth?: MonthKey;
   inForecast?: boolean;
+  /** Class 1a with a child in the household (single-parent credit). */
+  singleParent?: boolean;
 }
 
 // ------------------------------------------------- import and reconcile
