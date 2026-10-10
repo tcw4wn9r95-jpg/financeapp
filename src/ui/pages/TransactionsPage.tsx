@@ -1,7 +1,10 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { currentMonth, formatDate, isMonthKey, todayIso } from '../../domain/dates';
 import { formatMoney } from '../../domain/money';
-import { LedgerError, transferCounterpartId, type EntryTarget, type ManualEntry } from '../../domain/ledger';
+import { LedgerError, systemClock, transferCounterpartId, type EntryTarget, type ManualEntry } from '../../domain/ledger';
+import { unclassify } from '../../domain/reconcile';
+import { ClassifyControl, errorMessage, TxSummary } from '../components/Classify';
+import { applyChanges, ledgerView } from '../importActions';
 import { CATEGORY_GROUPS, type Id, type Transaction } from '../../domain/types';
 import { t } from '../../i18n';
 import { deleteEntry, saveEntry } from '../actions';
@@ -41,7 +44,7 @@ export function TransactionsPage() {
   }, [allocations]);
 
   const rows = transactions
-    .filter((tx) => (onlyNew ? tx.status === 'new' : tx.date.startsWith(month)))
+    .filter((tx) => (onlyNew ? tx.status === 'new' || tx.status === 'suggested' : tx.date.startsWith(month)))
     .filter((tx) => !accountFilter || tx.accountId === accountFilter)
     .sort((a, b) => (a.date === b.date ? b.createdAt.localeCompare(a.createdAt) : b.date.localeCompare(a.date)));
 
@@ -97,7 +100,9 @@ export function TransactionsPage() {
                 <span className="tx-main">
                   <span className="tx-desc">{tx.descriptionRaw || t('tx.noDescription')}</span>
                   <span className="tx-meta">
-                    {accountName.get(tx.accountId)} · {tx.status === 'new' ? <span className="badge badge-warn">⚠ {label(tx)}</span> : label(tx)}
+                    {accountName.get(tx.accountId)} · {tx.status === 'new' || tx.status === 'suggested' ? <span className="badge badge-warn">⚠ {label(tx)}</span> : label(tx)}
+                    {tx.status === 'locked' && <span className="tag">🔒 {t('tx.lockedTag')}</span>}
+                    {tx.isMirror && <span className="tag">{t('tx.autoCreated')}</span>}
                     {tx.originalCurrency && tx.originalAmount !== undefined && (
                       <> · {formatMoney(Math.abs(tx.originalAmount), { symbol: false })} {tx.originalCurrency}</>
                     )}
@@ -109,7 +114,11 @@ export function TransactionsPage() {
           ))}
         </ul>
       )}
-      {editing && <EntryDialog existing={editing === 'new' ? undefined : editing} defaultAccount={accountFilter} onClose={() => setEditing(null)} />}
+      {editing && editing !== 'new' && (editing.importBatchId || editing.isMirror) ? (
+        <ImportedDialog tx={editing} label={label(editing)} accountName={accountName.get(editing.accountId) ?? '?'} onClose={() => setEditing(null)} />
+      ) : (
+        editing && <EntryDialog existing={editing === 'new' ? undefined : editing} defaultAccount={accountFilter} onClose={() => setEditing(null)} />
+      )}
     </>
   );
 }
@@ -274,6 +283,49 @@ function EntryDialog({ existing, defaultAccount, onClose }: { existing: Transact
           </p>
         )}
       </form>
+    </Dialog>
+  );
+}
+
+/** Imported rows keep their bank data; only their classification changes here. */
+function ImportedDialog({ tx, label, accountName, onClose }: { tx: Transaction; label: string; accountName: string; onClose: () => void }) {
+  const vault = useVault();
+  const notify = useToast();
+  const locked = tx.status === 'locked';
+  async function back() {
+    try {
+      await applyChanges(vault, unclassify(tx, ledgerView(vault), systemClock));
+      notify(t('tx.backToInbox'));
+      onClose();
+    } catch (e) {
+      notify(errorMessage(e), 'error');
+    }
+  }
+  return (
+    <Dialog open title={t('tx.importedTitle')} onClose={onClose} wide>
+      <div className="split-row">
+        <TxSummary tx={tx} accountName={accountName} />
+        <Money cents={tx.amount} plusSign className="tx-amount" />
+      </div>
+      <ul className="plain-list detail-list">
+        {tx.valueDate && <li>{t('tx.valueDate')}: {formatDate(tx.valueDate)}</li>}
+        {tx.originalCurrency && tx.originalAmount !== undefined && <li>{t('tx.originalAmount')}: {formatMoney(Math.abs(tx.originalAmount), { symbol: false })} {tx.originalCurrency}</li>}
+        {tx.counterpartyIbanLast4 && <li>{t('tx.counterpartyAccount')}: ••{tx.counterpartyIbanLast4}</li>}
+        <li>{t('tx.classification')}: <strong>{label}</strong></li>
+      </ul>
+      {tx.isMirror ? (
+        <p className="notice">{t('tx.mirrorNote')}</p>
+      ) : locked ? (
+        <p className="notice">{t('tx.lockedNote')}</p>
+      ) : (
+        <>
+          <h3>{t('tx.reclassify')}</h3>
+          <ClassifyControl tx={tx} onDone={onClose} />
+          {tx.status === 'reconciled' && (
+            <button type="button" className="button button-quiet" onClick={() => void back()}>{t('tx.sendBack')}</button>
+          )}
+        </>
+      )}
     </Dialog>
   );
 }

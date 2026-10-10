@@ -4,7 +4,7 @@ Choices made where the PRD and build prompt leave room. Newest last. Each one sa
 
 ## M1, Foundations and budget (October 2026)
 
-**D-01 One shared household budget.** One budget covers the whole household (answer to the PRD open question). Accounts and income categories can carry a person's name ("Salary (Alex)") without a data-model change. A per-person layer would add an `ownerId` to accounts, categories and budgetDefaults later.
+**D-01 One shared household budget.** One budget covers the whole household (answer to the PRD open question). Since M2, accounts carry an `owner` (joint, or a member from Settings → Household; see D-24); budgets stay shared.
 
 **D-02 Stack.** Vite 8, React 19, TypeScript strict (plus `noUncheckedIndexedAccess`), Dexie 4, Vitest. There is no router library: hash routing is about 40 lines (`src/ui/router.ts`). The service worker is a handwritten generator in `vite.config.ts`, not a plugin, so the CSP and caching stay easy to read.
 
@@ -50,7 +50,41 @@ Changing the passphrase rewraps the data key; it never re-encrypts the data. The
 
 **D-18 Locale.** The UI is English. Every string lives in `src/i18n/en.ts`. Amounts are shown as `1.234,56 €` and dates as dd/mm/yyyy, typed into a text field (native date inputs follow the browser locale). Weeks start on Monday (`startOfWeek`).
 
+## M2, Import and reconciliation (October 2026)
+
+Built from real sample exports supplied by the household: one month each of a joint Spuerkeess current account (PDF), a Worldline Visa statement (PDF) and a Revolut account (CSV). Those files never enter the repository; the fixtures in `fixtures/import/` are synthetic copies of the layouts.
+
+**D-19 PDF statements are in M2, not M5.** The PRD makes PDF import P1, but the household's main bank (Spuerkeess) and card issuer (Worldline) are read from PDFs, so the M2 gate ("a real month matches the bank closing balance") needs them now. Text is extracted with pdf.js (legacy build, eval disabled, loaded only when a PDF is imported) and parsed by layout rules. Nothing is rendered or executed. OFX stays in M5.
+
+**D-20 Three stores beyond the PRD's twelve.**
+- `statements`: one per account and period, with opening and closing balances, the card settlement, and the lock.
+- `importBatches`: file name, format and the import report, so an import can be undone.
+- `bankMappings`: saved CSV layouts (PRD F5).
+
+Older backups still restore: their fingerprint is checked against the stores they contain.
+
+**D-21 Deduplication.** The hash covers account, booking date, amount in cents, the normalised description, and an occurrence number. Two identical payments on one day stay two rows, and re-importing or overlapping files never duplicate. Import one format per account: a PDF and a CAMT export of the same account describe rows differently, so they would not match.
+
+**D-22 Recognising your own accounts.** A row points at one of your accounts when:
+- the statement shows that account's IBAN (only the last 4 characters are kept);
+- it contains that card's masked number (`••4321`);
+- or it contains one of that account's "Recognise in other statements" hints (for example "Compte flexible").
+
+A transfer pairs automatically when there is an opposite amount in another own account within 4 days and one side reads like a transfer or points at the other.
+
+**D-23 Counterparts for accounts without statements.** When a row points at an account whose statements are not imported, Kassa creates the other side there, marked "Created by Kassa" (`isMirror`). The Revolut Compte flexible is the case in point. When that account's statement is imported later, the real row replaces the counterpart and keeps the pairing. When the account does have statements, Kassa suggests the transfer instead of creating it.
+
+**D-24 Household members.** Settings holds the members (names only, encrypted). Accounts can belong to a member or be joint. The budget remains shared (D-01).
+
+**D-25 Card statements.** A Worldline statement records the amount and date of the coming debit and the paying account (by IBAN). That debit is paired as a transfer when it appears in the bank statement, within 5 days of the stated date. The card side is created, because Worldline statements do not list repayments. The card's spending counts once, on the card (PRD F6).
+
+**D-26 Statement checks and period lock.** For each imported statement, Kassa compares its own balance on the closing date with the printed closing balance. A period locks only when the two match and nothing in it is waiting in the inbox. Locked rows cannot be edited or reclassified, and re-imports skip them.
+
+**D-27 Revolut CSV.** The booking date is "Completed Date"; "Started Date" is kept as the value date. The fee is subtracted from the amount, which keeps the running balance exact. Each "Product" is a sub-account (Current, Deposit…) mapped to an account. Reverted, pending and non-EUR rows are skipped and listed in the report.
+
+**D-28 Imported rows are not edited, only classified.** The bank data (date, amount, description) stays as imported. The transaction dialog for an imported row offers classification, splits and "send back to the inbox". Full-text manual edits remain for manual entries.
+
 ## Differences from the build prompt
 
-- The build prompt lists OFX under import; the PRD makes OFX and PDF P1 and schedules them for M5. I followed the PRD.
-- The build prompt asks for fixtures covering two CSV layouts, a CAMT.053 file and a card statement. Import is M2, so M1 ships the 6-month household fixture only. The bank-format fixtures come with the M2 importers they exercise.
+- The build prompt lists OFX under import; the PRD makes OFX and PDF P1 and schedules them for M5. OFX stays in M5. PDF moved to M2 (D-19) because the household's bank and card statements are PDFs.
+- Fixtures for two CSV layouts (Revolut, and a French debit/credit card export), a CAMT.053 file and card statements ship in M2 under `fixtures/import/`.

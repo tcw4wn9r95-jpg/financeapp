@@ -3,7 +3,7 @@ import { accountBalances, isOnBudget } from '../../domain/budget';
 import { todayIso } from '../../domain/dates';
 import type { Account, AccountType } from '../../domain/types';
 import { monthName, t } from '../../i18n';
-import { accountInUse, deleteAccount, saveAccount } from '../actions';
+import { accountInUse, deleteAccount, ownerName, saveAccount } from '../actions';
 import { Dialog } from '../components/Dialog';
 import { MoneyField, SelectField, TextField, useMoneyInput } from '../components/fields';
 import { Money } from '../components/Money';
@@ -16,6 +16,8 @@ const TYPES: AccountType[] = ['current', 'savings', 'card', 'cash', 'loan'];
 
 export function AccountsPage() {
   useDocumentTitle(t('nav.accounts'));
+  const vault = useVault();
+  useStore('settings');
   const accounts = useStore('accounts');
   const transactions = useStore('transactions');
   const [editing, setEditing] = useState<Account | 'new' | null>(null);
@@ -33,6 +35,7 @@ export function AccountsPage() {
             <Money cents={balances.get(a.id) ?? 0} className="big" />
           </div>
           <p className="muted">
+            {ownerName(vault, a.owner) && <span className="tag tag-first">{ownerName(vault, a.owner)}</span>}
             {accountTypeLabel(a.type)}
             {a.institution && ` · ${a.institution}`}
             {a.ibanLast4 && ` · ••${a.ibanLast4}`}
@@ -73,14 +76,21 @@ export function AccountsPage() {
   );
 }
 
-function AccountDialog({ existing, onClose }: { existing: Account | undefined; onClose: () => void }) {
+export function AccountDialog({ existing, initial, onClose }: {
+  existing: Account | undefined;
+  initial?: Partial<Pick<Account, 'type' | 'ibanLast4' | 'institution' | 'name'>>;
+  onClose: (savedId?: string) => void;
+}) {
   const vault = useVault();
   const notify = useToast();
   const settings = useSettings();
-  const [name, setName] = useState(existing?.name ?? '');
-  const [type, setType] = useState<AccountType>(existing?.type ?? 'current');
-  const [institution, setInstitution] = useState(existing?.institution ?? '');
-  const [last4, setLast4] = useState(existing?.ibanLast4 ?? '');
+  const members = settings.members ?? [];
+  const [name, setName] = useState(existing?.name ?? initial?.name ?? '');
+  const [type, setType] = useState<AccountType>(existing?.type ?? initial?.type ?? 'current');
+  const [institution, setInstitution] = useState(existing?.institution ?? initial?.institution ?? '');
+  const [last4, setLast4] = useState(existing?.ibanLast4 ?? initial?.ibanLast4 ?? '');
+  const [owner, setOwner] = useState(existing?.owner ?? '');
+  const [hints, setHints] = useState((existing?.matchHints ?? []).join(', '));
   const opening = useMoneyInput(existing?.openingBalance ?? 0);
   const [settlement, setSettlement] = useState(existing?.settlementAccountId ?? '');
   const [closed, setClosed] = useState(!!existing?.closedAt);
@@ -93,15 +103,17 @@ function AccountDialog({ existing, onClose }: { existing: Account | undefined; o
     e.preventDefault();
     if (!name.trim()) return setError(t('accounts.nameRequired'));
     if (opening.cents === null) return setError(t('field.moneyInvalid'));
-    if (last4 && !/^\d{4}$/.test(last4)) return setError(t('accounts.last4Invalid'));
+    if (last4 && !/^[A-Za-z0-9]{4}$/.test(last4)) return setError(t('accounts.last4Invalid'));
     setBusy(true);
     try {
-      await saveAccount(vault, {
+      const id = await saveAccount(vault, {
         name: name.trim(), type, institution: institution.trim(), ibanLast4: last4, openingBalance: opening.cents,
         ...(type === 'card' && settlement ? { settlementAccountId: settlement } : {}), closed,
+        ...(owner ? { owner } : {}),
+        matchHints: hints.split(',').map((h) => h.trim()).filter(Boolean),
       }, existing);
       notify(t('accounts.saved', { name: name.trim() }));
-      onClose();
+      onClose(id);
     } catch {
       setBusy(false);
       setError(t('common.unexpectedError'));
@@ -116,7 +128,7 @@ function AccountDialog({ existing, onClose }: { existing: Account | undefined; o
   }
 
   return (
-    <Dialog open title={existing ? t('accounts.editTitle') : t('accounts.addTitle')} onClose={onClose}>
+    <Dialog open title={existing ? t('accounts.editTitle') : t('accounts.addTitle')} onClose={() => onClose()}>
       <form onSubmit={submit} noValidate>
         <TextField label={t('accounts.name')} value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
         <SelectField label={t('accounts.type')} value={type} onChange={(e) => setType(e.target.value as AccountType)} hint={type === 'loan' ? t('accounts.loanHint') : undefined}>
@@ -128,8 +140,14 @@ function AccountDialog({ existing, onClose }: { existing: Account | undefined; o
             {others.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </SelectField>
         )}
+        <SelectField label={t('accounts.owner')} value={owner} onChange={(e) => setOwner(e.target.value)} hint={members.length === 0 ? t('accounts.ownerHint') : undefined}>
+          <option value="">{t('common.none')}</option>
+          <option value="joint">{t('accounts.joint')}</option>
+          {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </SelectField>
         <TextField label={t('accounts.institution')} value={institution} onChange={(e) => setInstitution(e.target.value)} />
-        <TextField label={t('accounts.last4')} value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" hint={t('accounts.last4Hint')} />
+        <TextField label={t('accounts.last4')} value={last4} onChange={(e) => setLast4(e.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase())} hint={t('accounts.last4Hint')} autoComplete="off" />
+        <TextField label={t('accounts.hints')} value={hints} onChange={(e) => setHints(e.target.value)} hint={t('accounts.hintsHint')} autoComplete="off" />
         <MoneyField label={t('accounts.opening')} state={opening} hint={t('accounts.openingHint', { month: monthName(settings.budgetStartMonth) })} />
         {existing && (
           <label className="check">
@@ -140,7 +158,7 @@ function AccountDialog({ existing, onClose }: { existing: Account | undefined; o
         {error && <p className="error" role="alert">⚠ {error}</p>}
         <div className="row">
           <button className="button button-primary" disabled={busy}>{t('common.save')}</button>
-          <button type="button" className="button button-quiet" onClick={onClose}>{t('common.cancel')}</button>
+          <button type="button" className="button button-quiet" onClick={() => onClose()}>{t('common.cancel')}</button>
           {existing && (
             <button type="button" className="button button-danger push-right" disabled={inUse} onClick={() => void remove()} title={inUse ? t('accounts.cannotDelete') : undefined}>
               {t('common.delete')}

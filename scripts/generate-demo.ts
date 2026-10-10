@@ -36,15 +36,22 @@ const meta = () => ({ id: uuid(), createdAt: STAMP, updatedAt: STAMP, source: 'd
 const snap = emptySnapshot();
 
 // ---------------------------------------------------------------- accounts
-const acc = (name: string, type: Account['type'], institution: string, last4: string, opening: Cents, settlementAccountId?: string): string => {
-  const a: Account = { ...meta(), name, type, institution, ibanLast4: last4, openingBalance: opening, ...(settlementAccountId ? { settlementAccountId } : {}) };
+// Two people, like a typical Luxembourg couple: a joint current account,
+// one credit card each (paid from the joint account), one Revolut each, and a
+// Revolut "Compte flexible" that holds the savings and provisions money.
+const ALEX = uuid();
+const SAM = uuid();
+const acc = (name: string, type: Account['type'], institution: string, last4: string, opening: Cents, owner: string, extra: Partial<Account> = {}): string => {
+  const a: Account = { ...meta(), name, type, institution, ibanLast4: last4, openingBalance: opening, owner, ...extra };
   snap.accounts.push(a);
   return a.id;
 };
-const current = acc('Joint current account', 'current', 'Example Bank A', '0421', 745000);
-const savings = acc('Savings account', 'savings', 'Example Bank B', '9183', 1500000);
-const card = acc('Visa credit card', 'card', 'Example Bank A', '7710', 0, current);
-const cash = acc('Cash wallet', 'cash', '', '', 12000);
+const current = acc('Joint current account', 'current', 'Spuerkeess', '0421', 745000, 'joint');
+const alexRevolut = acc('Alex Revolut', 'current', 'Revolut', '7731', 12000, ALEX);
+const savings = acc('Compte flexible', 'savings', 'Revolut', '', 1500000, ALEX, { matchHints: ['Compte flexible'] });
+const card = acc('Alex Visa', 'card', 'Spuerkeess (Worldline)', '7710', 0, ALEX, { settlementAccountId: current });
+const samCard = acc('Sam Visa', 'card', 'Spuerkeess (Worldline)', '5502', 0, SAM, { settlementAccountId: current });
+const cash = acc('Sam Revolut', 'current', 'Revolut', '3388', 0, SAM);
 
 // -------------------------------------------------------------- categories
 let order = 0;
@@ -97,7 +104,14 @@ ovr(C.fun, '2026-09', 0, 'Paused for back to school');
 // April also assigns the opening balances (except one month of income kept ahead).
 ovr(C.carInsurance, '2026-04', 90000, 'Already saved before using Kassa');
 
-const settings: Settings = { id: 'settings', budgetStartMonth: START, sweepTargetCategoryId: C.emergency, autoLockMinutes: 15, updatedAt: STAMP };
+const settings: Settings = {
+  id: 'settings',
+  budgetStartMonth: START,
+  sweepTargetCategoryId: C.emergency,
+  autoLockMinutes: 15,
+  members: [{ id: ALEX, name: 'Alex' }, { id: SAM, name: 'Sam' }],
+  updatedAt: STAMP,
+};
 snap.settings.push(settings);
 
 // ------------------------------------------------------------ transactions
@@ -120,9 +134,10 @@ const fun = ['KINEPOLIS KIRCHBERG', 'LIBRAIRIE ERNSTER', 'PHILHARMONIE LUXEMBOUR
 const months = ['2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'];
 const cardTotals = new Map<string, Cents>();
 const onCard = (month: string, amount: Cents) => cardTotals.set(month, (cardTotals.get(month) ?? 0) + amount);
+const samCardTotals = new Map<string, Cents>();
 
 /** Spend `total` across several shops with random weights; the parts sum exactly to `total`. */
-function spread(month: string, categoryId: string, total: Cents, count: number, shops: string[], cardShare = 0.5) {
+function spread(month: string, categoryId: string, total: Cents, count: number, shops: string[], cardShare = 0.5, other = current) {
   const weights = Array.from({ length: count }, () => 0.5 + rand());
   const sum = weights.reduce((a, b) => a + b, 0);
   let left = total;
@@ -131,7 +146,7 @@ function spread(month: string, categoryId: string, total: Cents, count: number, 
     left -= amount;
     if (amount <= 0) continue;
     const useCard = rand() < cardShare;
-    spend(useCard ? card : current, d(month, 2 + Math.floor((26 * i) / count)), amount, pick(shops), categoryId);
+    spend(useCard ? card : other, d(month, 2 + Math.floor((26 * i) / count)), amount, pick(shops), categoryId);
     if (useCard) onCard(month, amount);
   }
 }
@@ -141,16 +156,20 @@ for (const [i, month] of months.entries()) {
   spend(current, d(month, 2), 30000, 'SEPA DD PENSION PLAN INSURER', C.pension);
   spend(current, d(month, 6), between(150, 200), 'SEPA DD ENERGY SUPPLIER', C.energy);
   spend(current, d(month, 10), 8990, 'SEPA DD TELECOM OPERATOR', C.phone);
-  add(current, d(month, 3), -(INCOME - planned), 'STANDING ORDER TO SAVINGS', { kind: 'transfer', toAccountId: savings });
+  add(current, d(month, 3), -(INCOME - planned), 'STANDING ORDER IN FAVOUR OF ALEX — Provisions', { kind: 'transfer', toAccountId: alexRevolut });
+  add(alexRevolut, d(month, 3), -(INCOME - planned), 'To EUR Compte flexible', { kind: 'transfer', toAccountId: savings });
   spread(month, C.groceries, between(590, 660), 9, groceryShops);
   spread(month, C.eatingOut, between(200, 290), 4, restaurants, 0.7);
   spread(month, C.fuel, between(170, 230), 3, fuel, 0.3);
-  if (month !== '2026-09') spread(month, C.fun, between(90, 150), 2, fun, 0.6);
-  spend(current, d(month, 14), between(25, 110), 'PHARMACIE DU CENTRE', C.health);
+  if (month !== '2026-09') spread(month, C.fun, between(90, 150), 2, fun, 0, alexRevolut);
+  spend(current, d(month, 14), between(5, 30), 'MEDI-MARKET', C.health);
   if (i % 2 === 1 || month === '2026-09') spread(month, C.clothing, month === '2026-09' ? 25000 : between(150, 260), 2, ['ZARA ROYAL HAMILTON', 'DECATHLON BERTRANGE', 'C&A CLOCHE D OR'], 0.8);
-  // ATM and a market visit paid in cash
-  add(current, d(month, 12), -10000, 'ATM WITHDRAWAL LUXEMBOURG GARE', { kind: 'transfer', toAccountId: cash });
-  spend(cash, d(month, 13), between(25, 60), 'MARCHE GLACIS', C.groceries);
+  // Pocket money to each Revolut; small spending happens there.
+  add(current, d(month, 2), -15000, 'STANDING ORDER IN FAVOUR OF ALEX', { kind: 'transfer', toAccountId: alexRevolut });
+  add(current, d(month, 12), -10000, 'STANDING ORDER IN FAVOUR OF SAM', { kind: 'transfer', toAccountId: cash });
+  spend(cash, d(month, 13), between(25, 60), 'Marché Glacis', C.groceries);
+  spend(samCard, d(month, 16), between(30, 70), 'PHARMACIE DU CENTRE', C.health);
+  samCardTotals.set(month, (samCardTotals.get(month) ?? 0) + (snap.transactions.at(-1)!.amount * -1));
   // Salaries: one month ahead, they fund next month's budget.
   add(current, d(month, 25), 360000, 'SALARY EMPLOYER A', { kind: 'income', categoryId: salaryA });
   add(current, d(month, 26), 235000, 'SALARY EMPLOYER B', { kind: 'income', categoryId: salaryB });
@@ -178,13 +197,16 @@ for (const [day, amount, desc, ccy, orig] of trip) {
 for (const month of months) {
   const total = cardTotals.get(month) ?? 0;
   const next = month === '2026-09' ? '2026-10' : months[months.indexOf(month) + 1]!;
-  if (total > 0) add(current, d(next, 5), -total, 'VISA CARD STATEMENT SETTLEMENT', { kind: 'transfer', toAccountId: card });
+  if (total > 0) add(current, d(next, 7), -total, 'DIRECT DEBIT ••7710 CARTE VISA', { kind: 'transfer', toAccountId: card });
+  const samTotal = samCardTotals.get(month) ?? 0;
+  if (samTotal > 0) add(current, d(next, 7), -samTotal, 'DIRECT DEBIT ••5502 CARTE VISA', { kind: 'transfer', toAccountId: samCard });
 }
 
 // October 1 to 10: the month in progress.
 spend(current, '2026-10-01', 195000, 'SEPA TRANSFER RENT LANDLORD', C.rent);
 spend(current, '2026-10-02', 30000, 'SEPA DD PENSION PLAN INSURER', C.pension);
-add(current, '2026-10-03', -(INCOME - planned), 'STANDING ORDER TO SAVINGS', { kind: 'transfer', toAccountId: savings });
+add(current, '2026-10-03', -(INCOME - planned), 'STANDING ORDER IN FAVOUR OF ALEX — Provisions', { kind: 'transfer', toAccountId: alexRevolut });
+add(alexRevolut, '2026-10-03', -(INCOME - planned), 'To EUR Compte flexible', { kind: 'transfer', toAccountId: savings });
 spend(current, '2026-10-06', 17640, 'SEPA DD ENERGY SUPPLIER', C.energy);
 spend(card, '2026-10-04', 8735, 'CACTUS BERELDANGE', C.groceries);
 spend(card, '2026-10-08', 6212, 'DELHAIZE LUXEMBOURG GARE', C.groceries);

@@ -13,7 +13,7 @@ import {
   type PlainExport,
 } from '../../storage/backup';
 import { MIN_PASSPHRASE_LENGTH, VaultError } from '../../storage/vault';
-import { download, loadDemo, restoreSnapshot, saveSettings } from '../actions';
+import { download, loadDemo, restoreSnapshot, saveMembers, saveSettings } from '../actions';
 import { SelectField, TextField } from '../components/fields';
 import { useToast } from '../components/Toast';
 import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
@@ -30,6 +30,7 @@ export function SettingsPage() {
     <>
       <h1>{t('nav.settings')}</h1>
       <BudgetSettings />
+      <HouseholdSection />
       <BackupSection />
       <RestoreSection />
       <SecuritySection />
@@ -87,6 +88,52 @@ function BudgetSettings() {
           error={lockMinutes && (Number(lockMinutes) < 1 || Number(lockMinutes) > 60) ? t('settings.autoLockRange') : undefined}
         />
         <button className="button">{t('common.save')}</button>
+      </form>
+    </section>
+  );
+}
+
+function HouseholdSection() {
+  const vault = useVault();
+  const notify = useToast();
+  const settings = useSettings();
+  const [members, setMembers] = useState(settings.members ?? []);
+  const [newName, setNewName] = useState('');
+  const save = async (next: typeof members) => {
+    setMembers(next);
+    await saveMembers(vault, next);
+    notify(t('settings.saved'));
+  };
+  return (
+    <section className="card" id="settings-household" aria-labelledby="hh-h">
+      <h2 id="hh-h">{t('household.title')}</h2>
+      <p>{t('household.intro')}</p>
+      <ul className="plain-list">
+        {members.map((m, i) => (
+          <li key={m.id} className="inline-form">
+            <TextField
+              label={t('household.memberName', { n: i + 1 })}
+              value={m.name}
+              onChange={(e) => setMembers(members.map((x) => (x.id === m.id ? { ...x, name: e.target.value } : x)))}
+              onBlur={() => void save(members)}
+            />
+            <button type="button" className="button button-quiet" onClick={() => void save(members.filter((x) => x.id !== m.id))} aria-label={t('household.removeNamed', { name: m.name })}>
+              {t('household.remove')}
+            </button>
+          </li>
+        ))}
+      </ul>
+      <form
+        className="inline-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!newName.trim()) return;
+          void save([...members, { id: crypto.randomUUID(), name: newName.trim() }]);
+          setNewName('');
+        }}
+      >
+        <TextField label={t('household.add')} value={newName} onChange={(e) => setNewName(e.target.value)} autoComplete="off" />
+        <button className="button" disabled={!newName.trim()}>{t('household.addButton')}</button>
       </form>
     </section>
   );

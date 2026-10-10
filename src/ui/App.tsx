@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { t } from '../i18n';
-import { useSettings, useVault, useVaultVersion } from './hooks';
+import { useSettings, useStore, useVault, useVaultVersion } from './hooks';
 import { href, useRoute } from './router';
 import { AccountsPage } from './pages/AccountsPage';
 import { BudgetPage } from './pages/BudgetPage';
 import { CategoriesPage } from './pages/CategoriesPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { ImportPage } from './pages/ImportPage';
+import { InboxPage } from './pages/InboxPage';
 import { LockScreen, RecoveryKeyStep } from './pages/LockScreen';
 import { SettingsPage } from './pages/SettingsPage';
 import { TransactionsPage } from './pages/TransactionsPage';
@@ -13,6 +15,8 @@ import { TransactionsPage } from './pages/TransactionsPage';
 const NAV = [
   ['', 'nav.dashboard'],
   ['budget', 'nav.budget'],
+  ['inbox', 'nav.inbox'],
+  ['import', 'nav.import'],
   ['transactions', 'nav.transactions'],
   ['accounts', 'nav.accounts'],
   ['categories', 'nav.categories'],
@@ -35,6 +39,7 @@ function Shell() {
   const vault = useVault();
   const route = useRoute();
   const section = route.path[0] ?? '';
+  const inboxCount = useStore('transactions').filter((x) => x.status === 'new' || x.status === 'suggested').length;
   useAutoLock();
   const mainRef = useRef<HTMLElement>(null);
 
@@ -65,6 +70,7 @@ function Shell() {
             <li key={path}>
               <a href={href(path)} aria-current={section === path ? 'page' : undefined}>
                 {t(key)}
+                {path === 'inbox' && inboxCount > 0 && <span className="nav-count" aria-label={t('nav.inboxCount', { n: inboxCount })}>{inboxCount}</span>}
               </a>
             </li>
           ))}
@@ -83,6 +89,10 @@ function Page({ section }: { section: string }) {
       return <BudgetPage />;
     case 'transactions':
       return <TransactionsPage />;
+    case 'inbox':
+      return <InboxPage />;
+    case 'import':
+      return <ImportPage />;
     case 'accounts':
       return <AccountsPage />;
     case 'categories':

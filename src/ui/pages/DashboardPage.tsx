@@ -19,7 +19,7 @@ export function DashboardPage() {
   const accounts = useStore('accounts');
   const categories = useStore('categories');
   const transactions = useStore('transactions');
-  const inbox = transactions.filter((tx) => tx.status === 'new').length;
+  const inbox = transactions.filter((tx) => tx.status === 'new' || tx.status === 'suggested').length;
   const balances = useMemo(() => accountBalances(accounts, transactions, todayIso()), [accounts, transactions]);
   const open = accounts.filter((a) => !a.closedAt);
   const cash = open.filter(isOnBudget).reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
@@ -78,7 +78,7 @@ export function DashboardPage() {
           <h2 id="inbox-h">{t('dashboard.inbox')}</h2>
           <p className="big-number">{inbox}</p>
           <p>{inbox === 0 ? t('dashboard.inboxEmpty') : t('dashboard.inboxCount', { n: inbox })}</p>
-          {inbox > 0 && <a href={href('transactions', { filter: 'new' })}>{t('dashboard.inboxReview')}</a>}
+          {inbox > 0 ? <a href={href('inbox')}>{t('dashboard.inboxReview')}</a> : <a href={href('import')}>{t('dashboard.importStatements')}</a>}
         </section>
 
         <section className="card" aria-labelledby="cash-h">

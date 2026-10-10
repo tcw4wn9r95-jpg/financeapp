@@ -39,6 +39,13 @@ export interface Account extends BaseRecord {
   /** Card accounts: the current account that pays the monthly statement. */
   settlementAccountId?: Id;
   closedAt?: string;
+  /** 'joint' or a household member id (Settings.members). */
+  owner?: Id;
+  /**
+   * Text that identifies this account in other accounts' statements, e.g.
+   * "Compte flexible". Used to recognise transfers (DECISIONS.md D-22).
+   */
+  matchHints?: string[];
 }
 
 // ------------------------------------------------------------ transactions
@@ -61,6 +68,25 @@ export interface Transaction extends BaseRecord {
   importBatchId?: Id;
   dedupeHash?: string;
   status: TransactionStatus;
+  /** Last 4 characters of the other party's IBAN, when the statement shows it. */
+  counterpartyIbanLast4?: string;
+  /**
+   * Created by Kassa as the other side of a transfer into an account whose own
+   * statements are not imported (e.g. a savings pocket). Replaced by the real
+   * row if that account's statement is imported later (D-23).
+   */
+  isMirror?: boolean;
+  /** A proposed classification waiting in the inbox (status 'suggested'). */
+  suggestion?: Suggestion;
+}
+
+export interface Suggestion {
+  targetType: TargetType;
+  /** category/income: category id; transfer: the other account's id. */
+  targetId: Id;
+  confidence: number;
+  decidedBy: DecidedBy;
+  reason: string;
 }
 
 // ------------------------------------------------------------- allocations
@@ -207,7 +233,79 @@ export interface TaxProfile extends BaseRecord {
   paramsVersion: string;
 }
 
+// ------------------------------------------------- import and reconcile
+
+export type ImportFormat = 'csv' | 'camt053' | 'pdf-spuerkeess' | 'pdf-worldline';
+
+/** One statement period of one account, as read from a file (PRD F5, F7). */
+export interface Statement extends BaseRecord {
+  accountId: Id;
+  periodStart: IsoDate;
+  periodEnd: IsoDate;
+  openingBalance?: Cents;
+  closingBalance?: Cents;
+  importBatchId?: Id;
+  /** Card statements: the amount the bank account will be debited, and when. */
+  settlement?: { amount: Cents; date: IsoDate; fromAccountId?: Id; transactionId?: Id };
+  lockedAt?: string;
+}
+
+export interface ImportReport {
+  newCount: number;
+  duplicateCount: number;
+  skipped: { line: number; reason: string; text: string }[];
+  transfersPaired: number;
+  mirrorsCreated: number;
+  mirrorsReplaced: number;
+  suggestions: number;
+  cardSettlementsLinked: number;
+  warnings: string[];
+}
+
+export interface ImportBatch extends BaseRecord {
+  fileName: string;
+  format: ImportFormat;
+  mappingId?: Id;
+  accountIds: Id[];
+  importedAt: string;
+  report: ImportReport;
+}
+
+/** Saved CSV column mapping for one bank or card export layout (PRD F5). */
+export interface BankMapping extends BaseRecord {
+  name: string;
+  /** Header row the layout must have; checked on every import. */
+  headers: string[];
+  delimiter: string; // '' = detect
+  columns: {
+    date: string;
+    valueDate?: string;
+    description: string;
+    amount?: string;
+    debit?: string;
+    credit?: string;
+    fee?: string;
+    currency?: string;
+    state?: string;
+    balance?: string;
+    accountKey?: string;
+    counterparty?: string;
+  };
+  dateFormat: 'auto' | 'dmy' | 'ymd' | 'mdy';
+  decimal: 'comma' | 'dot';
+  /** Rows whose state column holds another value are skipped and reported. */
+  okStates: string[];
+  /** Account chosen last time for each sub-account key (e.g. Revolut "Product"). */
+  lastAccounts: Record<string, Id>;
+  builtIn?: boolean;
+}
+
 // ---------------------------------------------------------------- settings
+
+export interface Member {
+  id: Id;
+  name: string;
+}
 
 /** Household settings: one record, stored encrypted like the rest (DECISIONS.md D-05). */
 export interface Settings {
@@ -217,6 +315,8 @@ export interface Settings {
   sweepTargetCategoryId?: Id;
   autoLockMinutes: number;
   lastBackupAt?: string;
+  /** People in the household; accounts can belong to one of them or be joint. */
+  members?: Member[];
   updatedAt: string;
 }
 
@@ -235,12 +335,15 @@ export interface StoreRecords {
   trainingExamples: TrainingExample;
   scenarios: Scenario;
   taxProfiles: TaxProfile;
+  statements: Statement;
+  importBatches: ImportBatch;
+  bankMappings: BankMapping;
   settings: Settings;
 }
 
 export type StoreName = keyof StoreRecords;
 
-/** The twelve PRD stores plus the single settings record. */
+/** The twelve PRD stores, three import stores (D-20) and the settings record. */
 export const STORE_NAMES: readonly StoreName[] = [
   'accounts',
   'transactions',
@@ -254,6 +357,9 @@ export const STORE_NAMES: readonly StoreName[] = [
   'trainingExamples',
   'scenarios',
   'taxProfiles',
+  'statements',
+  'importBatches',
+  'bankMappings',
   'settings',
 ];
 

@@ -41,10 +41,14 @@ export function emptySnapshot(): StoreSnapshot {
   return Object.fromEntries(STORE_NAMES.map((n) => [n, []])) as unknown as StoreSnapshot;
 }
 
-/** JSON with object keys sorted and each store sorted by id: same data, same text. */
-export function canonicalJson(snapshot: StoreSnapshot): string {
+/**
+ * JSON with object keys sorted and each store sorted by id: same data, same
+ * text. `names` limits it to some stores, so a file written by an older
+ * version (with fewer stores) still verifies against its own hash.
+ */
+export function canonicalJson(snapshot: StoreSnapshot, names: readonly StoreName[] = STORE_NAMES): string {
   const sorted: Record<string, unknown[]> = {};
-  for (const name of [...STORE_NAMES].sort()) {
+  for (const name of [...names].sort()) {
     const rows = [...((snapshot[name] ?? []) as { id: string }[])].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     sorted[name] = rows;
   }
@@ -55,8 +59,8 @@ export function canonicalJson(snapshot: StoreSnapshot): string {
   );
 }
 
-export async function snapshotHash(snapshot: StoreSnapshot): Promise<string> {
-  return sha256Hex(canonicalJson(snapshot));
+export async function snapshotHash(snapshot: StoreSnapshot, names?: readonly StoreName[]): Promise<string> {
+  return sha256Hex(canonicalJson(snapshot, names));
 }
 
 export async function toPlainExport(snapshot: StoreSnapshot, now = new Date()): Promise<PlainExport> {
@@ -82,8 +86,10 @@ export async function readPlainExport(value: unknown): Promise<PlainExport> {
     if (rows !== undefined && !Array.isArray(rows)) throw new BackupError('notBackup');
     (stores as Record<StoreName, unknown[]>)[name] = structuredClone((rows as unknown[] | undefined) ?? []);
   }
+  // Verify against the stores the file itself contains (older versions had fewer).
+  const present = STORE_NAMES.filter((n) => n in (v.stores as object));
+  if (v.hash && v.hash !== (await snapshotHash(stores, present))) throw new BackupError('hashMismatch');
   const hash = await snapshotHash(stores);
-  if (v.hash && v.hash !== hash) throw new BackupError('hashMismatch');
   return { format: 'kassa-export', schemaVersion: v.schemaVersion ?? SCHEMA_VERSION, exportedAt: v.exportedAt ?? '', hash, stores };
 }
 

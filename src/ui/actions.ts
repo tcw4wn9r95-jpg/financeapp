@@ -9,12 +9,14 @@ import type {
   CategoryGroup,
   Cents,
   Id,
+  Member,
   MonthKey,
   RolloverMode,
   Settings,
   StoreSnapshot,
 } from '../domain/types';
 import { readPlainExport } from '../storage/backup';
+import { t } from '../i18n';
 import type { Vault, WriteOp } from '../storage/vault';
 
 /**
@@ -40,11 +42,14 @@ export async function saveSettings(vault: Vault, patch: Partial<Omit<Settings, '
 export type AccountDraft = Pick<Account, 'name' | 'type' | 'institution' | 'ibanLast4' | 'openingBalance'> & {
   settlementAccountId?: Id;
   closed?: boolean;
+  owner?: Id;
+  matchHints?: string[];
 };
 
-export async function saveAccount(vault: Vault, draft: AccountDraft, existing?: Account): Promise<void> {
+/** Create or update an account; returns its id. */
+export async function saveAccount(vault: Vault, draft: AccountDraft, existing?: Account): Promise<Id> {
   const base = existing ?? (stamp(systemClock, 'manual') as Account);
-  const { closed, settlementAccountId, ...fields } = draft;
+  const { closed, settlementAccountId, owner, matchHints, ...fields } = draft;
   const record: Account = {
     ...base,
     ...fields,
@@ -54,7 +59,25 @@ export async function saveAccount(vault: Vault, draft: AccountDraft, existing?: 
   else delete record.settlementAccountId;
   if (closed) record.closedAt = existing?.closedAt ?? new Date().toISOString();
   else delete record.closedAt;
+  if (owner) record.owner = owner;
+  else delete record.owner;
+  const hints = (matchHints ?? []).map((h) => h.trim()).filter((h) => h.length >= 3);
+  if (hints.length) record.matchHints = hints;
+  else delete record.matchHints;
   await vault.put('accounts', record);
+  return record.id;
+}
+
+// ----------------------------------------------------------------- members
+
+export async function saveMembers(vault: Vault, members: Member[]): Promise<void> {
+  await saveSettings(vault, { members: members.filter((m) => m.name.trim()).map((m) => ({ ...m, name: m.name.trim() })) });
+}
+
+export function ownerName(vault: Vault, owner: Id | undefined): string | undefined {
+  if (!owner) return undefined;
+  if (owner === 'joint') return t('accounts.joint');
+  return getSettings(vault).members?.find((m) => m.id === owner)?.name;
 }
 
 export function accountInUse(vault: Vault, id: Id): boolean {

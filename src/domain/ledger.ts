@@ -54,8 +54,12 @@ export class LedgerError extends Error {}
  * dates, long digit runs and terminal ids stripped. Good enough for manual
  * entry; M4 extends it with country extraction.
  */
+const BANK_PREFIXES =
+  /^(?:INSTANT CREDIT TRANSFER S-NET : [\d-]+ IN FAVOUR OF|CREDIT TRANSFER (?:IN FAVOUR OF|FROM)|STANDING ORDER(?: \d{2}\.\d{2}\.\d{4})? IN FAVOUR OF|DIRECT DEBIT|DEBIT TPV|DEBIT|CARD PAYMENT|PAYMENT FROM|TRANSFER TO|TRANSFER FROM)\s+/i;
+
 export function normaliseMerchant(description: string): string {
   return description
+    .replace(BANK_PREFIXES, '')
     .toUpperCase()
     .replace(/\b[\dX*]{4}(?:[ -]?[\dX*]{2,4}){2,3}\b/g, ' ') // card numbers, masked or not
     .replace(/\b\d{1,2}[./-]\d{1,2}([./-]\d{2,4})?\b/g, ' ') // dates

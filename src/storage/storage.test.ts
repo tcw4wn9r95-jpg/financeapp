@@ -160,3 +160,16 @@ describe('F12 backup and restore', () => {
     await expect(readPlainExport({ hello: 'world' })).rejects.toEqual(new BackupError('notBackup'));
   });
 });
+
+describe('backups from older versions', () => {
+  it('a backup written before new stores existed still verifies and restores', async () => {
+    const s = emptySnapshot();
+    s.accounts.push(account('a'));
+    const oldStores = Object.fromEntries(Object.entries(s).filter(([k]) => !['statements', 'importBatches', 'bankMappings'].includes(k)));
+    const oldHash = await snapshotHash(s, Object.keys(oldStores) as never);
+    const restored = await readPlainExport({ format: 'kassa-export', schemaVersion: 1, exportedAt: '', hash: oldHash, stores: oldStores });
+    expect(restored.stores.statements).toEqual([]);
+    expect(restored.stores.accounts).toHaveLength(1);
+    expect(restored.hash).toBe(await snapshotHash(restored.stores));
+  });
+});
