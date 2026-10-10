@@ -262,10 +262,19 @@ export function planImport(input: ImportInput, ledger: Ledger, clock: Clock): Le
     };
     statements.push(statement);
 
-    // First import into an account: take its opening balance from the statement.
-    const hadTransactions = ledger.transactions.some((t) => t.accountId === account.id && !t.isMirror);
-    if (!hadTransactions && account.openingBalance === 0 && info.openingBalance !== undefined && info.openingBalance !== 0) {
-      accountsOut.push({ ...account, openingBalance: info.openingBalance, updatedAt: clock.now() });
+    // The opening balance comes from the earliest statement: on the first import,
+    // and again when an older statement is imported later (retroactive upload),
+    // unless the user typed the opening balance by hand (D-32).
+    const own = ledger.transactions.filter((t) => t.accountId === account.id && !t.isMirror);
+    const earliest = own.reduce<string | undefined>((m, t) => (m === undefined || t.date < m ? t.date : m), undefined);
+    const current = accountsOut.find((a) => a.id === account.id) ?? account;
+    const first = own.length === 0 && current.openingBalance === 0;
+    const older = current.openingFromStatement === true && earliest !== undefined && periodStart <= earliest;
+    if (info.openingBalance !== undefined && (first || older) && info.openingBalance !== current.openingBalance) {
+      const updated = { ...current, openingBalance: info.openingBalance, openingFromStatement: true, updatedAt: clock.now() };
+      const i = accountsOut.findIndex((a) => a.id === account.id);
+      if (i >= 0) accountsOut[i] = updated;
+      else accountsOut.push(updated);
       report.warnings.push(`openingSet:${account.id}:${info.openingBalance}`);
     }
   }

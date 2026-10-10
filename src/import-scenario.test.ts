@@ -169,6 +169,24 @@ describe('import scenario: a household month across six files', () => {
     expect(L.transactions.filter((t) => t.isMirror).map((t) => t.accountId).sort()).toEqual(['flex', 'flex', 'visa']);
   });
 
+  it('retroactive upload: an older statement moves the opening balance back (D-32)', async () => {
+    await L.import('revolut-john-2026-09-part2.csv', REVOLUT);
+    const later = L.accounts.find((a) => a.id === 'johnRev')!;
+    expect(later.openingFromStatement).toBe(true);
+    await L.import('revolut-john-2026-09-part1.csv', REVOLUT);
+    expect(L.accounts.find((a) => a.id === 'johnRev')!.openingBalance).toBe(41250);
+    for (const s of L.statements.filter((x) => x.accountId === 'johnRev')) {
+      expect(checkStatement(s, L.view()).difference).toBe(0);
+    }
+  });
+
+  it('a typed opening balance is never replaced by a statement', async () => {
+    L.accounts = L.accounts.map((a) => (a.id === 'joint' ? { ...a, openingBalance: 100 } : a));
+    const r = await L.import('spuerkeess-joint-2026-09.pdf');
+    expect(r.warnings.some((w) => w.startsWith('openingSet'))).toBe(false);
+    expect(L.accounts.find((a) => a.id === 'joint')!.openingBalance).toBe(100);
+  });
+
   it('pairs transfers when the other statement was imported first', async () => {
     await L.import('revolut-john-2026-09.csv', REVOLUT);
     const spk = await L.import('spuerkeess-joint-2026-09.pdf');

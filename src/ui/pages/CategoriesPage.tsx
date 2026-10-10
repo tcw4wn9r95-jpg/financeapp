@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { defaultFor } from '../../domain/budget';
 import { CATEGORY_GROUPS, type Category, type CategoryGroup, type RolloverMode } from '../../domain/types';
 import { monthName, t } from '../../i18n';
-import { addSuggestedCategories, categoryInUse, defaultStartMonth, deleteCategory, saveCategory } from '../actions';
+import { addSuggestedCategories, categoryInUse, defaultStartMonth, deleteCategory, saveCategory, suggestedFromMonth } from '../actions';
 import { Dialog } from '../components/Dialog';
 import { MoneyField, SelectField, TextField, useMoneyInput } from '../components/fields';
 import { Money } from '../components/Money';
@@ -100,8 +100,9 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
   const vault = useVault();
   const notify = useToast();
   const settings = useSettings();
-  const month = defaultStartMonth(vault);
-  const current = existing ? defaultFor(vault.list('budgetDefaults'), existing.id, month)?.monthlyAmount : undefined;
+  const [fromMonth, setFromMonth] = useState(() => suggestedFromMonth(vault));
+  const thisMonth = defaultStartMonth(vault);
+  const current = existing ? defaultFor(vault.list('budgetDefaults'), existing.id, fromMonth)?.monthlyAmount : undefined;
   const [name, setName] = useState(existing?.name ?? '');
   const [isIncome] = useState(existing?.isIncome ?? preset.isIncome);
   const [groupId, setGroupId] = useState<CategoryGroup>(existing?.groupId ?? preset.groupId);
@@ -114,13 +115,13 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) return setError(t('categories.nameRequired'));
-    if (!isIncome && amount.text.trim() !== '' && (amount.cents === null || amount.cents < 0)) return setError(t('field.moneyInvalid'));
+    if (amount.text.trim() !== '' && (amount.cents === null || amount.cents < 0)) return setError(t('field.moneyInvalid'));
     setBusy(true);
-    const changedDefault = !isIncome && amount.cents !== null && amount.cents !== current;
+    const changedDefault = amount.cents !== null && amount.cents !== current && !(current === undefined && amount.cents === 0);
     try {
       await saveCategory(vault, {
         name: name.trim(), groupId, rolloverMode: isIncome ? 'reset' : mode, isIncome,
-        ...(changedDefault ? { monthlyDefault: amount.cents! } : {}),
+        ...(changedDefault ? { monthlyDefault: amount.cents!, fromMonth } : {}),
       }, existing);
       notify(t('categories.saved', { name: name.trim() }));
       onClose();
@@ -158,9 +159,14 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
               ))}
             </fieldset>
             {mode === 'sweep' && !settings.sweepTargetCategoryId && <p className="notice notice-warn">⚠ {t('categories.noSweepTarget')}</p>}
-            <MoneyField label={t('categories.default', { month: monthName(month) })} state={amount} hint={t('categories.defaultHint')} />
           </>
         )}
+        <MoneyField label={isIncome ? t('categories.expectedIncome') : t('categories.defaultAmount')} state={amount} hint={isIncome ? t('categories.expectedIncomeHint') : t('categories.defaultHint')} />
+        <SelectField label={t('categories.appliesFrom')} value={fromMonth} onChange={(e) => setFromMonth(e.target.value)}>
+          {[...new Set([settings.budgetStartMonth, thisMonth])].map((m) => (
+            <option key={m} value={m}>{m === settings.budgetStartMonth ? t('categories.fromStart', { month: monthName(m) }) : monthName(m)}</option>
+          ))}
+        </SelectField>
         {error && <p className="error" role="alert">⚠ {error}</p>}
         <div className="row">
           <button className="button button-primary" disabled={busy}>{t('common.save')}</button>

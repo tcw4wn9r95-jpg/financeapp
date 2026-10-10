@@ -25,7 +25,8 @@ import type { Vault, WriteOp } from '../storage/vault';
  */
 
 export function defaultSettings(now = new Date()): Settings {
-  return { id: 'settings', budgetStartMonth: currentMonth(now), autoLockMinutes: 15, updatedAt: now.toISOString() };
+  // January of this year, so earlier statements of the year can be imported (D-32).
+  return { id: 'settings', budgetStartMonth: `${now.getFullYear()}-01`, autoLockMinutes: 15, updatedAt: now.toISOString() };
 }
 
 export function getSettings(vault: Vault): Settings {
@@ -57,6 +58,8 @@ export async function saveAccount(vault: Vault, draft: AccountDraft, existing?: 
   };
   if (draft.type === 'card' && settlementAccountId) record.settlementAccountId = settlementAccountId;
   else delete record.settlementAccountId;
+  // A typed opening balance is the user's: later statements no longer replace it.
+  if (existing && draft.openingBalance !== existing.openingBalance) delete record.openingFromStatement;
   if (closed) record.closedAt = existing?.closedAt ?? new Date().toISOString();
   else delete record.closedAt;
   if (owner) record.owner = owner;
@@ -97,8 +100,9 @@ export interface CategoryDraft {
   groupId: CategoryGroup;
   rolloverMode: RolloverMode;
   isIncome: boolean;
-  /** Expense categories: monthly default from `fromMonth` on. */
+  /** Monthly default (expense) or expected monthly income (income) from `fromMonth` on. */
   monthlyDefault?: Cents;
+  fromMonth?: MonthKey;
 }
 
 /** The month a new default should start: this month, but never before the budget starts. */
@@ -108,8 +112,18 @@ export function defaultStartMonth(vault: Vault): MonthKey {
   return compareMonths(now, start) < 0 ? start : now;
 }
 
+/**
+ * While setting up (no amounts saved after the budget start yet), new amounts
+ * apply from the budget start so past months are budgeted too (D-32).
+ */
+export function suggestedFromMonth(vault: Vault): MonthKey {
+  const start = getSettings(vault).budgetStartMonth;
+  const settingUp = vault.list('budgetDefaults').every((d) => d.effectiveFrom === start);
+  return settingUp ? start : defaultStartMonth(vault);
+}
+
 export async function saveCategory(vault: Vault, draft: CategoryDraft, existing?: Category): Promise<void> {
-  const { monthlyDefault, ...fields } = draft;
+  const { monthlyDefault, fromMonth, ...fields } = draft;
   const sortOrder = existing?.sortOrder ?? Math.max(-1, ...vault.list('categories').map((c) => c.sortOrder)) + 1;
   const record: Category = {
     ...(existing ?? (stamp(systemClock, 'manual') as Category)),
@@ -118,8 +132,8 @@ export async function saveCategory(vault: Vault, draft: CategoryDraft, existing?
     updatedAt: new Date().toISOString(),
   };
   const ops: WriteOp[] = [{ type: 'put', store: 'categories', record }];
-  if (!draft.isIncome && monthlyDefault !== undefined) {
-    ops.push(...defaultOps(vault, record.id, monthlyDefault, defaultStartMonth(vault)));
+  if (monthlyDefault !== undefined) {
+    ops.push(...defaultOps(vault, record.id, monthlyDefault, fromMonth ?? defaultStartMonth(vault)));
   }
   await vault.write(ops);
 }

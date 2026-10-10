@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { MIN_PASSPHRASE_LENGTH, VaultError } from '../../storage/vault';
-import { t } from '../../i18n';
-import { addSuggestedCategories, loadDemo, saveSettings } from '../actions';
-import { TextField } from '../components/fields';
+import { monthName, t } from '../../i18n';
+import { addSuggestedCategories, getSettings, loadDemo, saveSettings } from '../actions';
+import { startMonthOptions } from './SettingsPage';
+import { SelectField, TextField } from '../components/fields';
 import { useVault } from '../hooks';
 import { navigate } from '../router';
 
@@ -101,8 +102,10 @@ export function RecoveryKeyStep({ recoveryKey, onDone }: { recoveryKey: string; 
   const vault = useVault();
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [startMonth, setStartMonth] = useState(getSettings(vault).budgetStartMonth);
   const start = async (how: 'empty' | 'suggested' | 'demo' | 'restore') => {
     setBusy(true);
+    await saveSettings(vault, { budgetStartMonth: startMonth });
     if (how === 'suggested') await addSuggestedCategories(vault);
     if (how === 'demo') await loadDemo(vault);
     navigate(how === 'restore' ? 'settings' : how === 'suggested' ? 'categories' : '', how === 'restore' ? { section: 'restore' } : undefined);
@@ -129,6 +132,9 @@ export function RecoveryKeyStep({ recoveryKey, onDone }: { recoveryKey: string; 
           {t('recovery.confirm')}
         </label>
         <h2>{t('start.title')}</h2>
+        <SelectField label={t('settings.startMonth')} value={startMonth} onChange={(e) => setStartMonth(e.target.value)} hint={t('start.monthHint')}>
+          {startMonthOptions().map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
+        </SelectField>
         <div className="stack">
           <button type="button" className="button button-primary" disabled={!saved || busy} onClick={() => void start('suggested')}>
             {t('start.suggested')}

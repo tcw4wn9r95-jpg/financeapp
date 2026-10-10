@@ -19,6 +19,13 @@ import { useToast } from '../components/Toast';
 import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { useRoute } from '../router';
 
+/** January 2020 up to a year ahead, newest first. */
+export function startMonthOptions(): string[] {
+  const out: string[] = [];
+  for (let m = addMonths(currentMonth(), 12); m >= '2020-01'; m = addMonths(m, -1)) out.push(m);
+  return out;
+}
+
 export function SettingsPage() {
   useDocumentTitle(t('nav.settings'));
   const route = useRoute();
@@ -44,7 +51,7 @@ function BudgetSettings() {
   const notify = useToast();
   const settings = useSettings();
   const categories = useStore('categories');
-  const months = Array.from({ length: 37 }, (_, i) => addMonths(currentMonth(), i - 24));
+  const months = startMonthOptions();
   if (!months.includes(settings.budgetStartMonth)) months.unshift(settings.budgetStartMonth);
   const [lockMinutes, setLockMinutes] = useState(String(settings.autoLockMinutes));
   const save = async (patch: Parameters<typeof saveSettings>[1]) => {

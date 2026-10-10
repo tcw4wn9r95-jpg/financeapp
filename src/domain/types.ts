@@ -41,6 +41,8 @@ export interface Account extends BaseRecord {
   closedAt?: string;
   /** 'joint' or a household member id (Settings.members). */
   owner?: Id;
+  /** True while the opening balance comes from the earliest imported statement (not typed by hand). */
+  openingFromStatement?: boolean;
   /**
    * Text that identifies this account in other accounts' statements, e.g.
    * "Compte flexible". Used to recognise transfers (DECISIONS.md D-22).
