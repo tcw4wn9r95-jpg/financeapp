@@ -9,6 +9,7 @@ import { CategoriesPage } from './pages/CategoriesPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ImportPage } from './pages/ImportPage';
 import { InboxPage } from './pages/InboxPage';
+import { PlanPage } from './pages/PlanPage';
 import { LockScreen, RecoveryKeyStep } from './pages/LockScreen';
 import { SettingsPage } from './pages/SettingsPage';
 import { TransactionsPage } from './pages/TransactionsPage';
@@ -17,6 +18,7 @@ const NAV = [
   ['', 'nav.dashboard', 'home'],
   ['budget', 'nav.budget', 'budget'],
   ['inbox', 'nav.inbox', 'inbox'],
+  ['plan', 'nav.plan', 'chart'],
   ['transactions', 'nav.transactions', 'list'],
   ['import', 'nav.import', 'upload'],
   ['accounts', 'nav.accounts', 'bank'],
@@ -25,7 +27,7 @@ const NAV = [
 ] as const satisfies readonly (readonly [string, MessageKey, IconName])[];
 
 /** On phones the first four sit in the bottom bar; the rest live under "More". */
-const PRIMARY = new Set(['', 'budget', 'inbox', 'transactions']);
+const PRIMARY = new Set(['', 'budget', 'inbox', 'plan']);
 
 export function App() {
   const vault = useVault();
@@ -127,6 +129,8 @@ function Page({ section }: { section: string }) {
       return <TransactionsPage />;
     case 'inbox':
       return <InboxPage />;
+    case 'plan':
+      return <PlanPage />;
     case 'import':
       return <ImportPage />;
     case 'accounts':

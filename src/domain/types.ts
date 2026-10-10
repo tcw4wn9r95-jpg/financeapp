@@ -114,6 +114,8 @@ export interface Allocation extends BaseRecord {
   confidence: number;
   decidedBy: DecidedBy;
   reason: string;
+  /** Event spending: which sub-budget (flights, lodging…) it belongs to. */
+  subBudget?: string;
 }
 
 // -------------------------------------------------------------- categories
@@ -137,6 +139,8 @@ export interface Category extends BaseRecord {
   isIncome: boolean;
   /** Display order inside its group. */
   sortOrder: number;
+  /** Hidden from the budget once its event is closed and nothing is left in it. */
+  archivedAt?: string;
 }
 
 // ------------------------------------------------------------------ budget
@@ -161,10 +165,13 @@ export interface Provision extends BaseRecord {
   name: string;
   amount: Cents;
   dueDate: IsoDate;
-  /** RFC 5545 RRULE, e.g. "FREQ=YEARLY". Empty = one-off. */
+  /** RFC 5545 RRULE subset: "FREQ=MONTHLY;INTERVAL=n" or "FREQ=YEARLY;INTERVAL=n". Empty = one-off. */
   recurrence: string;
+  /** Cached for display; the truth is the linked category's available amount. */
   fundedBalance: Cents;
   monthlyContribution: Cents;
+  /** The budget category (group Provisions) that holds the money set aside (D-33). */
+  categoryId: Id;
 }
 
 export interface SubBudget {
@@ -182,6 +189,9 @@ export interface EventFund extends BaseRecord {
   fundedBalance: Cents;
   status: EventStatus;
   closeDisposition?: { targetType: TargetType; targetId: Id; amount: Cents };
+  /** The budget category (group Events) that saves for and pays the event (D-34). */
+  categoryId: Id;
+  closedAt?: string;
 }
 
 export interface RuleConditions {
@@ -319,6 +329,8 @@ export interface Settings {
   lastBackupAt?: string;
   /** People in the household; accounts can belong to one of them or be joint. */
   members?: Member[];
+  /** Forecast: warn about the first month the cash total falls below this. */
+  minimumBuffer?: Cents;
   updatedAt: string;
 }
 

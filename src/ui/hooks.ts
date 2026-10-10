@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { computeBudget, type BudgetInput, type BudgetMonth } from '../domain/budget';
-import { compareMonths } from '../domain/dates';
-import type { MonthKey, Settings, StoreName, StoreRecords } from '../domain/types';
+import { compareMonths, todayIso } from '../domain/dates';
+import { forecast, type CashItem, type ForecastResult } from '../domain/forecast';
+import type { MonthKey, ScenarioChange, Settings, StoreName, StoreRecords } from '../domain/types';
 import type { Vault } from '../storage/vault';
 import { getSettings } from './actions';
 import { t } from '../i18n';
@@ -67,4 +68,15 @@ export function useDocumentTitle(title: string): void {
   useEffect(() => {
     document.title = `${title} · ${t('app.name')}`;
   }, [title]);
+}
+
+/** The cash forecast from today (plus optional scenario changes and extra items). */
+export function useForecast(months: number, changes?: ScenarioChange[], extra?: CashItem[]): ForecastResult {
+  const budget = useBudgetInput();
+  const provisions = useStore('provisions');
+  const events = useStore('events');
+  return useMemo(
+    () => forecast({ today: todayIso(), months, budget, provisions, events, ...(changes ? { changes } : {}), ...(extra ? { extra } : {}) }),
+    [budget, provisions, events, months, changes, extra],
+  );
 }

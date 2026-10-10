@@ -1,11 +1,13 @@
 import { useMemo } from 'react';
 import { accountBalances, isOnBudget } from '../../domain/budget';
-import { compareMonths, currentMonth, todayIso } from '../../domain/dates';
+import { compareMonths, currentMonth, formatDate, todayIso } from '../../domain/dates';
+import { eventStatus, provisionStatus } from '../../domain/plan';
+import { LineChart } from '../components/LineChart';
 import { CATEGORY_GROUPS, type CategoryGroup } from '../../domain/types';
 import { monthName, t } from '../../i18n';
 import { Money } from '../components/Money';
 import { ReadyToAssign } from '../components/ReadyToAssign';
-import { useBudgetMonth, useDocumentTitle, useSettings, useStore } from '../hooks';
+import { useBudgetInput, useBudgetMonth, useDocumentTitle, useForecast, useSettings, useStore } from '../hooks';
 import { href } from '../router';
 import { groupLabel } from '../labels';
 import { Icon } from '../components/Icon';
@@ -44,8 +46,19 @@ export function DashboardPage() {
     return rows;
   }, [budget, categories]);
 
+  const input = useBudgetInput();
+  const provisions = useStore('provisions');
+  const events = useStore('events');
+  const allocations = useStore('allocations');
+  const fc = useForecast(4);
+  const days90 = fc.days.slice(0, 91);
+  const low90 = days90.reduce((lo, d) => (d.balance < lo.balance ? d : lo), days90[0]!);
+  const provisionRows = useMemo(() => provisions.map((p) => provisionStatus(p, input, month, todayIso())).sort((a, b) => a.nextDue.localeCompare(b.nextDue)), [provisions, input, month]);
+  const eventRows = useMemo(() => events.filter((e) => e.status !== 'closed').map((e) => eventStatus(e, input, month, allocations)), [events, input, month, allocations]);
+  const linked = new Set([...provisions.map((p) => p.categoryId), ...events.map((e) => e.categoryId)]);
+
   const funds = categories
-    .filter((c) => !c.isIncome && (c.groupId === 'provisions' || c.groupId === 'events' || c.groupId === 'savings'))
+    .filter((c) => !c.isIncome && !c.archivedAt && (c.groupId === 'provisions' || c.groupId === 'events' || c.groupId === 'savings'))
     .sort((a, b) => CATEGORY_GROUPS.indexOf(a.groupId) - CATEGORY_GROUPS.indexOf(b.groupId) || a.sortOrder - b.sortOrder);
 
   if (compareMonths(month, settings.budgetStartMonth) < 0) {
@@ -79,6 +92,36 @@ export function DashboardPage() {
           <span>{lastBackup ? t('dashboard.backupOld', { days: BACKUP_NAG_DAYS }) : t('dashboard.backupNever')}</span>
           <Icon name="chevronRight" size={18} />
         </a>
+      )}
+
+      {open.length > 0 && budget && (
+        <section className="group" aria-labelledby="cash90-h">
+          <div className="group-head">
+            <h2 id="cash90-h">{t('dashboard.next90')}</h2>
+            <a className="muted" href={href('plan')}>{t('dashboard.toPlan')}</a>
+          </div>
+          <div className="card">
+            <p className="split-row">
+              <span className="muted">{t('dashboard.in90', { date: formatDate(days90.at(-1)!.date) })}</span>
+              <strong><Money cents={days90.at(-1)!.balance} /></strong>
+            </p>
+            <p className="split-row">
+              <span className="muted">{t('dashboard.low90', { date: formatDate(low90.date) })}</span>
+              <span className={settings.minimumBuffer && low90.balance < settings.minimumBuffer ? 'bad' : ''}>
+                {settings.minimumBuffer && low90.balance < settings.minimumBuffer ? '⚠ ' : ''}
+                <Money cents={low90.balance} />
+              </span>
+            </p>
+            <LineChart
+              title={t('dashboard.next90')}
+              labels={days90.map((d) => formatDate(d.date))}
+              axisLabels={days90.map((d) => formatDate(d.date).slice(0, 5))}
+              series={[{ name: t('dashboard.cash'), color: 'var(--series-1)', values: days90.map((d) => d.balance) }]}
+              height={150}
+              {...(settings.minimumBuffer ? { reference: { value: settings.minimumBuffer, label: t('plan.buffer') } } : {})}
+            />
+          </div>
+        </section>
       )}
 
       <section className="group" aria-labelledby="cash-h">
@@ -130,13 +173,34 @@ export function DashboardPage() {
         </section>
       )}
 
-      {budget && funds.length > 0 && (
+      {(provisionRows.length > 0 || eventRows.length > 0 || (budget && funds.length > 0)) && (
         <section className="group" aria-labelledby="funds-h">
           <div className="group-head">
             <h2 id="funds-h">{t('dashboard.funds')}</h2>
+            <a className="muted" href={href('plan', { tab: 'provisions' })}>{t('dashboard.toPlan')}</a>
           </div>
           <ul className="rows">
-            {funds.map((c) => (
+            {provisionRows.map((r) => (
+              <li key={r.provision.id} className="row-static">
+                <span className="row-main">
+                  <span className="row-title">{r.provision.name}</span>
+                  <span className="row-sub">{t('dashboard.due', { date: formatDate(r.nextDue) })} · <Money cents={r.provision.amount} /></span>
+                  <span className="row-bar" aria-hidden="true"><span style={{ width: `${r.percent}%` }} /></span>
+                </span>
+                <span className="row-end"><Money cents={r.available} className="row-amount" /></span>
+              </li>
+            ))}
+            {eventRows.map((v) => (
+              <li key={v.event.id} className="row-static">
+                <span className="row-main">
+                  <span className="row-title">{v.event.name}</span>
+                  <span className="row-sub">{formatDate(v.event.targetDate)} · {t('dashboard.funded', { pct: v.fundedPercent })}</span>
+                  <span className="row-bar" aria-hidden="true"><span style={{ width: `${Math.min(100, v.fundedPercent)}%` }} /></span>
+                </span>
+                <span className="row-end"><Money cents={v.available} className="row-amount" /></span>
+              </li>
+            ))}
+            {budget && funds.filter((c) => !linked.has(c.id)).map((c) => (
               <li key={c.id} className="row-static">
                 <span className="row-main">
                   <span className="row-title">{c.name}</span>

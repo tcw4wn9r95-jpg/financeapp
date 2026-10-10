@@ -2,7 +2,7 @@
  "format": "kassa-export",
  "schemaVersion": 1,
  "exportedAt": "2026-10-10T08:00:00.000Z",
- "hash": "d4f93f401146dcd5bc1ae2f6897d7611d19e2b2a0b6f0dbf35941de856cdb98c",
+ "hash": "ec7d8bf2452f49052da626840f1164a372b2f8bc224e2e228c35313602e1b1e6",
  "stores": {
   "accounts": [
    {
@@ -6377,7 +6377,8 @@
     "amount": -41200,
     "confidence": 1,
     "decidedBy": "user",
-    "reason": "Manual entry"
+    "reason": "Manual entry",
+    "subBudget": "Flights"
    },
    {
     "id": "461c2459-6950-4d36-8adf-e51d2488b7a4",
@@ -6390,7 +6391,8 @@
     "amount": -12890,
     "confidence": 1,
     "decidedBy": "user",
-    "reason": "Manual entry"
+    "reason": "Manual entry",
+    "subBudget": "Lodging"
    },
    {
     "id": "8763bb84-6120-414b-86dd-312956813143",
@@ -6455,7 +6457,8 @@
     "amount": -15880,
     "confidence": 1,
     "decidedBy": "user",
-    "reason": "Manual entry"
+    "reason": "Manual entry",
+    "subBudget": "Flights"
    },
    {
     "id": "f60e9901-9059-4acf-8640-2307acafcf26",
@@ -6468,7 +6471,8 @@
     "amount": -21340,
     "confidence": 1,
     "decidedBy": "user",
-    "reason": "Manual entry"
+    "reason": "Manual entry",
+    "subBudget": "Lodging"
    },
    {
     "id": "b08c6e68-a6ff-4dc1-8cb5-636cce251510",
@@ -7363,8 +7367,45 @@
     "note": "Opening savings assigned"
    }
   ],
-  "provisions": [],
-  "events": [],
+  "provisions": [
+   {
+    "id": "4c6e903c-1678-4800-8c74-a0d1a8ce6dd3",
+    "createdAt": "2026-10-10T08:00:00.000Z",
+    "updatedAt": "2026-10-10T08:00:00.000Z",
+    "source": "demo",
+    "name": "Car insurance",
+    "amount": 120000,
+    "dueDate": "2027-06-15",
+    "recurrence": "FREQ=YEARLY;INTERVAL=1",
+    "fundedBalance": 0,
+    "monthlyContribution": 10000,
+    "categoryId": "37406efd-8405-4ffd-820c-81fc847dfdf6"
+   }
+  ],
+  "events": [
+   {
+    "id": "be3a5b44-5439-4526-82a1-7e4b49320fca",
+    "createdAt": "2026-10-10T08:00:00.000Z",
+    "updatedAt": "2026-10-10T08:00:00.000Z",
+    "source": "demo",
+    "name": "Summer trip",
+    "targetAmount": 250000,
+    "targetDate": "2026-08-20",
+    "subBudgets": [
+     {
+      "name": "Flights",
+      "amount": 60000
+     },
+     {
+      "name": "Lodging",
+      "amount": 90000
+     }
+    ],
+    "fundedBalance": 0,
+    "status": "active",
+    "categoryId": "29cb72cb-d4ad-4909-83e4-ebf7fea4f564"
+   }
+  ],
   "rules": [],
   "trainingExamples": [],
   "scenarios": [],
@@ -7388,6 +7429,7 @@
       "name": "Sam"
      }
     ],
+    "minimumBuffer": 300000,
     "updatedAt": "2026-10-10T08:00:00.000Z"
    }
   ]

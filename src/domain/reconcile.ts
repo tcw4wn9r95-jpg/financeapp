@@ -35,7 +35,7 @@ export interface LedgerView {
 }
 
 export type Classification =
-  | { kind: 'category'; categoryId: Id }
+  | { kind: 'category'; categoryId: Id; subBudget?: string }
   | { kind: 'income'; categoryId: Id }
   /**
    * Transfer to another own account. For a repayment to an off-budget loan,
@@ -100,7 +100,9 @@ export function classify(t: Transaction, how: Classification, view: LedgerView, 
   });
 
   if (how.kind === 'category' || how.kind === 'income') {
-    ch.putAllocations.push(alloc(how.kind, how.categoryId, t.amount));
+    const a = alloc(how.kind, how.categoryId, t.amount);
+    if (how.kind === 'category' && how.subBudget) a.subBudget = how.subBudget;
+    ch.putAllocations.push(a);
   } else if (how.kind === 'split') {
     const sum = how.lines.reduce((s, l) => s + l.amount, 0);
     if (sum !== t.amount || how.lines.length === 0) throw new ReconcileError('splitUnbalanced');

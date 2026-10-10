@@ -22,6 +22,8 @@
   --warn: #9a5b06;
   --warn-bg: #fff8eb;
   --focus: #2563eb;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
   --radius: 16px;
   --radius-sm: 10px;
   --tabbar: 64px;
@@ -53,6 +55,8 @@
     --warn: #fbbf24;
     --warn-bg: #2a2010;
     --focus: #60a5fa;
+    --series-1: #3987e5;
+    --series-2: #d95926;
     color-scheme: dark;
   }
 }
@@ -1465,4 +1469,118 @@ details summary {
 }
 .classify .button-quiet {
   padding: 0 0.6rem;
+}
+
+/* ------------------------------------------------------------------ charts */
+.chart {
+  margin: 0;
+}
+.chart-box {
+  position: relative;
+  touch-action: pan-y;
+}
+.chart svg {
+  display: block;
+  overflow: visible;
+}
+.chart svg:focus-visible {
+  outline-offset: 4px;
+}
+.chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.chart-tick {
+  fill: var(--faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.chart-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.chart-area {
+  opacity: 0.1;
+}
+.chart-ref {
+  stroke: var(--warn);
+  stroke-width: 1;
+}
+.chart-ref-label,
+.chart-mark-label {
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: 550;
+}
+.chart-mark {
+  fill: var(--neg);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+.chart-cross {
+  stroke: var(--faint);
+  stroke-width: 1;
+}
+.chart-dot {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+.chart-tip {
+  position: absolute;
+  top: 0;
+  width: 168px;
+  padding: 0.5rem 0.65rem;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+  font-size: 0.8rem;
+  pointer-events: none;
+}
+.chart-tip-title {
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.chart-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.line-key {
+  display: inline-block;
+  width: 12px;
+  height: 2px;
+  border-radius: 2px;
+  flex: none;
+}
+.chart-legend {
+  display: flex;
+  gap: 1rem;
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.chart-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.headline {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+}
+.headline .big-number {
+  font-variant-numeric: proportional-nums;
+}
+
+.row-actions {
+  padding: 0 1rem 0.85rem;
+}
+.chart svg:focus:not(:focus-visible) {
+  outline: none;
 }

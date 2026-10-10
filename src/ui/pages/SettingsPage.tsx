@@ -14,7 +14,7 @@ import {
 } from '../../storage/backup';
 import { MIN_PASSPHRASE_LENGTH, VaultError } from '../../storage/vault';
 import { download, loadDemo, restoreSnapshot, saveMembers, saveSettings } from '../actions';
-import { SelectField, TextField } from '../components/fields';
+import { MoneyField, SelectField, TextField, useMoneyInput } from '../components/fields';
 import { useToast } from '../components/Toast';
 import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { useRoute } from '../router';
@@ -54,6 +54,7 @@ function BudgetSettings() {
   const months = startMonthOptions();
   if (!months.includes(settings.budgetStartMonth)) months.unshift(settings.budgetStartMonth);
   const [lockMinutes, setLockMinutes] = useState(String(settings.autoLockMinutes));
+  const buffer = useMoneyInput(settings.minimumBuffer ?? 0);
   const save = async (patch: Parameters<typeof saveSettings>[1]) => {
     await saveSettings(vault, patch);
     notify(t('settings.saved'));
@@ -78,6 +79,16 @@ function BudgetSettings() {
         <option value="">{t('common.none')}</option>
         {categories.filter((c) => !c.isIncome).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
       </SelectField>
+      <form
+        className="inline-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (buffer.cents !== null && buffer.cents >= 0) void save({ minimumBuffer: buffer.cents });
+        }}
+      >
+        <MoneyField label={t('settings.buffer')} state={buffer} hint={t('settings.bufferHint')} />
+        <button className="button">{t('common.save')}</button>
+      </form>
       <form
         className="inline-form"
         onSubmit={(e) => {

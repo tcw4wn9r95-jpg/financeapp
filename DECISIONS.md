@@ -105,3 +105,41 @@ Enter the amount still owed as the loan's negative opening balance. Interest is 
 - Form fields use 16 px text, so iOS does not zoom on focus. There is no tap highlight flash, and installed to the home screen it runs full screen.
 - Spending amounts in lists use plain text with their minus sign; only incoming money is tinted green. Red is kept for overspending and negative balances.
 - Neutral greys, one ink colour for actions, hairline borders, and the self-hosted Inter variable font, so the CSP stays `font-src 'self'`. Light and dark themes follow the phone.
+
+## M3, Provisions, events and forecast (October 2026)
+
+**D-32 Retroactive budgeting.**
+- A new vault starts its budget in January of the current year, and the first-run screen asks for the start month (any month since 2020).
+- While you are still setting up, category amounts apply from the budget start.
+- When an older statement is imported after a newer one, the account's opening balance moves back to the older statement's opening balance. This does not happen if the opening balance was typed by hand.
+
+**D-33 A provision is a category plus a schedule.** Each provision owns a category in the Provisions group:
+- The money set aside is that category's available balance.
+- A bill classified to it draws from it, so Variable spending is untouched (PRD F3).
+- The suggested monthly set-aside is (amount − money already there) ÷ months left until the next due date, current month included, rounded up to the cent.
+- Recurrence is an RRULE subset: `FREQ=MONTHLY|YEARLY;INTERVAL=n`.
+
+**D-34 A trip or event is a category plus a target.** It works the same way, in the Events group:
+- Expenses tagged to it can name a sub-budget, stored on the allocation.
+- Closing moves what is left, or covers an overspend, from another category. It does this with overrides on the current month, so the ledger is untouched.
+- Monthly saving stops from next month, and the category is archived (hidden).
+
+**D-35 Forecast engine.** The forecast is a day-by-day simulation from today's real on-budget balances:
+- **Expected income:** each income category's expected amount (else the average of the last 3 months), on its usual day.
+- **Fixed:** the budgeted amount on its usual day. **Variable:** the budgeted amount spread over the month.
+- **Provisions:** the whole bill on each due date. **Trips:** what is left to spend, on the trip date.
+- **Savings:** no outflow; the money stays in your accounts.
+- **Current month:** only what has not happened yet.
+
+The chart shows each month's lowest balance and flags the first month below the minimum buffer (Settings). The per-account view assumes:
+- each category keeps being paid from the accounts it used over the last 6 months;
+- transfers seen in each of the last 3 months keep happening.
+
+The forecast is never stored.
+
+**D-36 Charts are hand-made SVG, not Apache ECharts.** The PRD names ECharts. One line chart, built to the dataviz specs, avoids a ~1 MB dependency on a phone-only app. Specs:
+- 2px lines with a light wash under the first series and hairline grid;
+- a labelled reference line;
+- touch and keyboard crosshair, and a table view.
+
+The palette is validated for colour blindness and contrast: blue for your plan, orange for scenarios.

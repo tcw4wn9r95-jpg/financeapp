@@ -1,5 +1,6 @@
 import { buildManualEntry, stamp, systemClock, type ManualEntry } from '../domain/ledger';
-import { compareMonths, currentMonth, monthDiff } from '../domain/dates';
+import { addMonths, compareMonths, currentMonth, monthDiff } from '../domain/dates';
+import type { CloseEventPlan } from '../domain/plan';
 import { DEMO_ANCHOR_MONTH, shiftSnapshotMonths } from '../domain/demo';
 import type {
   Account,
@@ -11,6 +12,8 @@ import type {
   Id,
   Member,
   MonthKey,
+  Provision,
+  EventFund,
   RolloverMode,
   Settings,
   StoreSnapshot,
@@ -291,4 +294,122 @@ export function download(filename: string, text: string, type = 'application/jso
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// -------------------------------------------------------- provisions and events
+
+/** Create or update a provision and its budget category (group Provisions). */
+export async function saveProvision(
+  vault: Vault,
+  draft: Pick<Provision, 'name' | 'amount' | 'dueDate' | 'recurrence'>,
+  monthly: Cents,
+  existing?: Provision,
+): Promise<void> {
+  const ops: WriteOp[] = [];
+  let categoryId = existing?.categoryId;
+  const now = new Date().toISOString();
+  if (!categoryId || !vault.get('categories', categoryId)) {
+    const cat: Category = {
+      ...(stamp(systemClock, 'manual') as Category),
+      name: draft.name,
+      groupId: 'provisions',
+      rolloverMode: 'roll',
+      isIncome: false,
+      sortOrder: vault.list('categories').length,
+    };
+    categoryId = cat.id;
+    ops.push({ type: 'put', store: 'categories', record: cat });
+  } else {
+    const cat = vault.get('categories', categoryId)!;
+    if (cat.name !== draft.name) ops.push({ type: 'put', store: 'categories', record: { ...cat, name: draft.name, updatedAt: now } });
+  }
+  const record: Provision = {
+    ...(existing ?? (stamp(systemClock, 'manual') as Provision)),
+    ...draft,
+    categoryId,
+    monthlyContribution: monthly,
+    fundedBalance: existing?.fundedBalance ?? 0,
+    updatedAt: now,
+  };
+  ops.push({ type: 'put', store: 'provisions', record });
+  ops.push(...defaultOps(vault, categoryId, monthly, defaultStartMonth(vault)));
+  await vault.write(ops);
+}
+
+export async function deleteProvision(vault: Vault, p: Provision): Promise<void> {
+  const ops: WriteOp[] = [{ type: 'delete', store: 'provisions', id: p.id }];
+  // The category stays if money or transactions are in it; otherwise it goes too.
+  if (!categoryInUse(vault, p.categoryId)) {
+    ops.push({ type: 'delete', store: 'categories', id: p.categoryId });
+    for (const d of vault.list('budgetDefaults')) if (d.categoryId === p.categoryId) ops.push({ type: 'delete', store: 'budgetDefaults', id: d.id });
+  }
+  await vault.write(ops);
+}
+
+export async function saveEvent(
+  vault: Vault,
+  draft: Pick<EventFund, 'name' | 'targetAmount' | 'targetDate' | 'subBudgets'>,
+  monthly: Cents,
+  existing?: EventFund,
+): Promise<void> {
+  const ops: WriteOp[] = [];
+  let categoryId = existing?.categoryId;
+  const now = new Date().toISOString();
+  if (!categoryId || !vault.get('categories', categoryId)) {
+    const cat: Category = {
+      ...(stamp(systemClock, 'manual') as Category),
+      name: draft.name,
+      groupId: 'events',
+      rolloverMode: 'roll',
+      isIncome: false,
+      sortOrder: vault.list('categories').length,
+    };
+    categoryId = cat.id;
+    ops.push({ type: 'put', store: 'categories', record: cat });
+  } else {
+    const cat = vault.get('categories', categoryId)!;
+    if (cat.name !== draft.name) ops.push({ type: 'put', store: 'categories', record: { ...cat, name: draft.name, updatedAt: now } });
+  }
+  const record: EventFund = {
+    ...(existing ?? (stamp(systemClock, 'manual') as EventFund)),
+    ...draft,
+    categoryId,
+    fundedBalance: existing?.fundedBalance ?? 0,
+    status: existing?.status ?? 'saving',
+    updatedAt: now,
+  };
+  ops.push({ type: 'put', store: 'events', record });
+  if (record.status !== 'closed') ops.push(...defaultOps(vault, categoryId, monthly, defaultStartMonth(vault)));
+  await vault.write(ops);
+}
+
+/** Close an event: move what is left to (or cover a deficit from) another category, stop contributions. */
+export async function closeEvent(vault: Vault, e: EventFund, plan: CloseEventPlan, targetCategoryId: Id, month: MonthKey): Promise<void> {
+  const ops: WriteOp[] = [];
+  const now = new Date().toISOString();
+  for (const o of plan.overrides) {
+    const same = vault.list('budgetOverrides').find((x) => x.categoryId === o.categoryId && x.month === o.month);
+    const record: BudgetOverride = same
+      ? { ...same, amount: o.amount, note: o.note, updatedAt: now }
+      : { ...(stamp(systemClock, 'manual') as BudgetOverride), categoryId: o.categoryId, month: o.month, amount: o.amount, note: o.note };
+    ops.push({ type: 'put', store: 'budgetOverrides', record });
+  }
+  ops.push(...defaultOps(vault, e.categoryId, 0, addMonths(month, 1)));
+  ops.push({
+    type: 'put',
+    store: 'events',
+    record: { ...e, status: 'closed', closedAt: now, closeDisposition: { targetType: 'category', targetId: targetCategoryId, amount: plan.moved }, updatedAt: now },
+  });
+  const cat = vault.get('categories', e.categoryId);
+  if (cat) ops.push({ type: 'put', store: 'categories', record: { ...cat, archivedAt: now, updatedAt: now } });
+  await vault.write(ops);
+}
+
+export async function deleteEvent(vault: Vault, e: EventFund): Promise<void> {
+  const ops: WriteOp[] = [{ type: 'delete', store: 'events', id: e.id }];
+  if (!categoryInUse(vault, e.categoryId)) {
+    ops.push({ type: 'delete', store: 'categories', id: e.categoryId });
+    for (const d of vault.list('budgetDefaults')) if (d.categoryId === e.categoryId) ops.push({ type: 'delete', store: 'budgetDefaults', id: d.id });
+  }
+  await vault.write(ops);
 }

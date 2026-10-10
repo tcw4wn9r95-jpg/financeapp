@@ -25,7 +25,7 @@ export function BudgetPage() {
   const [editing, setEditing] = useState<Category | null>(null);
   const setMonth = (m: MonthKey) => navigate(`budget/${m}`);
 
-  const expense = categories.filter((c) => !c.isIncome);
+  const expense = categories.filter((c) => !c.isIncome && !c.archivedAt);
   const income = categories.filter((c) => c.isIncome).sort((a, b) => a.sortOrder - b.sortOrder);
 
   return (

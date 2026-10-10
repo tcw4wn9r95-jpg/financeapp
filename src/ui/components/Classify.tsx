@@ -30,7 +30,7 @@ export function decodeTarget(v: string): Classification | undefined {
 }
 
 export function TargetOptions({ tx, categories, accounts, transfers = true }: { tx: Pick<Transaction, 'accountId' | 'amount'>; categories: readonly Category[]; accounts: readonly Account[]; transfers?: boolean }) {
-  const expense = categories.filter((c) => !c.isIncome);
+  const expense = categories.filter((c) => !c.isIncome && !c.archivedAt);
   const income = categories.filter((c) => c.isIncome).sort((a, b) => a.sortOrder - b.sortOrder);
   const incomeFirst = tx.amount > 0;
   const incomeGroup = income.length > 0 && (
@@ -84,8 +84,13 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
   const target = decoded?.kind === 'transfer' ? accounts.find((a) => a.id === decoded.accountId) : undefined;
   // Paying an off-budget loan from a budget account: ask which budget category it counts in.
   const isRepayment = !!target && target.type === 'loan' && tx.amount < 0 && accounts.find((a) => a.id === tx.accountId)?.type !== 'loan';
+  const events = useStore('events');
+  const event = decoded?.kind === 'category' ? events.find((e) => e.categoryId === decoded.categoryId && e.subBudgets.length > 0) : undefined;
+  const [subBudget, setSubBudget] = useState('');
   const choice: Classification | undefined =
-    isRepayment && decoded?.kind === 'transfer' ? (repaymentCategory ? { ...decoded, categoryId: repaymentCategory } : undefined) : decoded;
+    isRepayment && decoded?.kind === 'transfer'
+      ? repaymentCategory ? { ...decoded, categoryId: repaymentCategory } : undefined
+      : decoded?.kind === 'category' && event && subBudget ? { ...decoded, subBudget } : decoded;
   const bulk = all && others.length > 0 && choice && choice.kind !== 'transfer';
 
   async function submit(e: FormEvent) {
@@ -121,6 +126,15 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
             <select id={`${selectId}-cat`} value={repaymentCategory} onChange={(e) => setRepaymentCategory(e.target.value)} aria-describedby={`${selectId}-cat-hint`}>
               <option value="">{t('inbox.repaymentCategory')}</option>
               {categories.filter((c) => !c.isIncome).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </>
+        )}
+        {event && (
+          <>
+            <label htmlFor={`${selectId}-sb`} className="visually-hidden">{t('inbox.subBudget')}</label>
+            <select id={`${selectId}-sb`} value={subBudget} onChange={(e) => setSubBudget(e.target.value)}>
+              <option value="">{t('inbox.subBudget')}</option>
+              {event.subBudgets.map((b) => <option key={b.name} value={b.name}>{b.name}</option>)}
             </select>
           </>
         )}

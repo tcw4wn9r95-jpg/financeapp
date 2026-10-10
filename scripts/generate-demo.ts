@@ -110,6 +110,7 @@ const settings: Settings = {
   sweepTargetCategoryId: C.emergency,
   autoLockMinutes: 15,
   members: [{ id: ALEX, name: 'Alex' }, { id: SAM, name: 'Sam' }],
+  minimumBuffer: 300000,
   updatedAt: STAMP,
 };
 snap.settings.push(settings);
@@ -229,6 +230,22 @@ ovr(C.emergency, '2026-04', emergencyDefault + aprilBefore - INCOME, 'Opening sa
 const check = (month: string) => budgetForMonth(input(), month)!.readyToAssign;
 for (const m of months) if (check(m) !== INCOME) throw new Error(`${m}: Ready to assign ${check(m)} ≠ ${INCOME}`);
 if (check('2026-10') !== -2499) throw new Error(`October Ready to assign ${check('2026-10')}`);
+
+// Plan records behind the Provisions and Events categories (M3).
+snap.provisions.push({
+  ...meta(), name: 'Car insurance', amount: 120000, dueDate: '2027-06-15', recurrence: 'FREQ=YEARLY;INTERVAL=1',
+  fundedBalance: 0, monthlyContribution: 10000, categoryId: C.carInsurance,
+});
+snap.events.push({
+  ...meta(), name: 'Summer trip', targetAmount: 250000, targetDate: '2026-08-20',
+  subBudgets: [{ name: 'Flights', amount: 60000 }, { name: 'Lodging', amount: 90000 }], fundedBalance: 0, status: 'active', categoryId: C.trip,
+});
+for (const a of snap.allocations) {
+  if (a.targetId !== C.trip) continue;
+  const tx = snap.transactions.find((t) => t.id === a.transactionId)!;
+  if (/LUXAIR|TAP AIR/.test(tx.descriptionRaw)) a.subBudget = 'Flights';
+  else if (/AIRBNB|HOTEL/.test(tx.descriptionRaw)) a.subBudget = 'Lodging';
+}
 
 const out = await toPlainExport(snap, new Date(STAMP));
 writeFileSync(new URL('../fixtures/demo-household.json', import.meta.url), JSON.stringify(out, null, 1) + '\n');
