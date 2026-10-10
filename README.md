@@ -1,1 +1,86 @@
-# financeapp
+# Kassa
+
+A private, local-first household finance app for a Luxembourg household. It runs entirely in the browser and is hosted as a static site on GitHub Pages. There is no server, account or tracking. Data is stored in IndexedDB, encrypted with AES-GCM under a key derived from your passphrase. It also works offline as an installable PWA.
+
+**Status: milestone M1 (Foundations and budget).** M1 delivers:
+
+- encrypted storage, backup and restore;
+- accounts, categories and manual entry;
+- a monthly budget with defaults, month overrides and rollover;
+- dashboard v0.
+
+Import, reconciliation, provisions, forecast, learning reconciliation and Luxembourg tax follow in M2 to M5 (see the PRD roadmap).
+
+## Run locally
+
+Requires Node 22.
+
+```sh
+npm install
+npm run dev        # http://localhost:5173 (no CSP, no service worker)
+npm test           # domain and storage unit tests (Vitest)
+npm run build      # typecheck + production build in dist/
+npm run preview    # serve dist/ at http://localhost:4173 with CSP and offline support
+```
+
+The built `dist/` folder is plain static files. You can serve it from any folder with any static server (for example `npx serve dist`). If GitHub disappears, the app still runs.
+
+To try every screen without your own data: on first run, create a passphrase and choose **Explore with the demo household**. Later, use **Settings → Data → Load demo household**.
+
+## Deploy to GitHub Pages
+
+1. In the repository on GitHub, open **Settings → Pages** and set **Source** to **GitHub Actions**.
+2. Push to `main`. The workflow `.github/workflows/deploy.yml` runs the tests, builds, and publishes `dist/`.
+3. The site appears at `https://<user>.github.io/<repo>/`. All paths are relative and routes use the hash (`#/budget/2026-10`), so no Pages configuration is needed.
+
+Pull requests run the tests and build but do not deploy.
+
+## Security model
+
+- A random 256-bit data key encrypts every record (AES-GCM, fresh IV per write). The key is stored only in wrapped form, under:
+  - PBKDF2-SHA-256 with 600,000 iterations of your passphrase;
+  - the same derivation from a recovery key shown once at setup.
+- IndexedDB contains only `{id, iv, ciphertext}` rows. Store names, dates and amounts are all inside the ciphertext.
+- The decrypted data and key live in memory only. Kassa locks after 15 minutes without activity (configurable from 1 to 60 minutes in Settings) and when you press **Lock**.
+- Content-Security-Policy (meta tag): scripts, styles, images and connections from the site itself only, plus `https://api.anthropic.com` for the optional AI classification planned in M4. There are no third-party scripts and no analytics.
+- If you lose both the passphrase and the recovery key, the data cannot be recovered. Keep backups.
+
+## Backup and restore
+
+- **Make a backup:** open **Settings → Backup**, choose a backup passphrase (reusing the vault passphrase is fine), then **Download encrypted backup**. The file `kassa-backup-YYYY-MM-DD.kassa.json` is useless without that passphrase. The dashboard reminds you when the last backup is more than 7 days old.
+- **Full JSON export:** **Settings → Backup → Download JSON export**. This file is unencrypted and human-readable; keep it safe.
+- **Restore:** open **Settings → Restore**, choose a backup or export file, and enter its passphrase if it is encrypted. Check the preview of record counts, then **Replace all data**. Kassa recomputes the SHA-256 fingerprint of the restored data and confirms that it matches the file.
+- **New browser or cleared storage:** create a new vault (any passphrase), choose **Restore from a backup file**, and follow the restore steps.
+- **Forgot your passphrase:** on the lock screen, choose **Use your recovery key**, then set a new passphrase.
+
+## Adding a bank mapping
+
+Bank import (CSV mappings, CAMT.053) arrives in M2. This section will document the mapping file format and how to add a bank. M2 will also add sample files for two CSV layouts, CAMT.053 and a card statement under `/fixtures`.
+
+## Updating a tax year file
+
+The Luxembourg tax engine arrives in M5. It will read one JSON file per tax year, `/tax/lu/YYYY.json`, holding:
+
+- bracket thresholds and rates;
+- surcharge thresholds;
+- deduction ceilings and credit amounts;
+- a `sources` array of official URLs and the date each value was verified.
+
+To update a year, copy the latest file, change the values from the official Administration des contributions directes publication, update `sources` and the verification date, and run the tax test vectors (`npm test`). Rates are never hard-coded.
+
+## Project layout
+
+```
+src/domain/    pure TypeScript: money, dates, ledger, budget engine (no React, no Dexie; a test enforces this)
+src/storage/   WebCrypto, encrypted Dexie vault, backup and export format
+src/ui/        React pages and components
+src/i18n/en.ts every UI string (copy it to fr.ts / es.ts to translate)
+fixtures/      anonymised demo household (generated by scripts/generate-demo.ts)
+DECISIONS.md   choices made where the PRD leaves room
+```
+
+## Money and dates
+
+- Amounts are integer cents in EUR. Foreign transactions also keep the original currency and amount.
+- The amount box accepts `1.234,56`, `1234,56` or `1234.56`.
+- Dates are typed and shown as dd/mm/yyyy and stored as `YYYY-MM-DD`. Weeks start on Monday.
