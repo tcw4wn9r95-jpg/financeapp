@@ -13,7 +13,7 @@ import {
   type PlainExport,
 } from '../../storage/backup';
 import { MIN_PASSPHRASE_LENGTH, VaultError } from '../../storage/vault';
-import { download, loadDemo, restoreSnapshot, saveMembers, saveSettings } from '../actions';
+import { canShareFiles, download, loadDemo, shareFile, restoreSnapshot, saveMembers, saveSettings } from '../actions';
 import { MoneyField, SelectField, TextField, useMoneyInput } from '../components/fields';
 import { useToast } from '../components/Toast';
 import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
@@ -242,15 +242,27 @@ function BackupSection() {
   const [busy, setBusy] = useState(false);
   const [plainOk, setPlainOk] = useState(false);
   const [lastHash, setLastHash] = useState<string>();
+  const sharing = canShareFiles();
+  // Encryption takes a moment, and browsers only open the share sheet straight
+  // after a tap; so "Share" first prepares the file, then a second tap shares it.
+  const [prepared, setPrepared] = useState<{ name: string; text: string; hash: string } | null>(null);
 
   async function encrypted(e: FormEvent) {
     e.preventDefault();
     if (pass.length < MIN_PASSPHRASE_LENGTH || pass !== confirm) return;
+    const share = (e.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'share';
     setBusy(true);
     try {
       const plain = await toPlainExport(vault.snapshot());
       const file = await encryptBackup(plain, pass);
-      download(`casaressan-backup-${todayIso()}.json`, JSON.stringify(file));
+      const name = `casaressan-backup-${todayIso()}.json`;
+      if (share) {
+        setPrepared({ name, text: JSON.stringify(file), hash: plain.hash });
+        setPass('');
+        setConfirm('');
+        return;
+      }
+      download(name, JSON.stringify(file));
       await saveSettings(vault, { lastBackupAt: new Date().toISOString() });
       setLastHash(plain.hash);
       setPass('');
@@ -295,6 +307,31 @@ function BackupSection() {
         <button className="button button-primary" disabled={busy || pass.length < MIN_PASSPHRASE_LENGTH || pass !== confirm}>
           {busy ? t('lock.working') : t('backup.download')}
         </button>
+        {sharing && (
+          <button className="button" name="action" value="share" disabled={busy || pass.length < MIN_PASSPHRASE_LENGTH || pass !== confirm}>
+            {t('backup.share')}
+          </button>
+        )}
+        {sharing && <p className="hint">{t('backup.shareHint')}</p>}
+        {prepared && (
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={async () => {
+              try {
+                if (!(await shareFile(prepared.name, prepared.text, t('backup.shareTitle')))) return;
+                await saveSettings(vault, { lastBackupAt: new Date().toISOString() });
+                setLastHash(prepared.hash);
+                setPrepared(null);
+                notify(t('backup.done'));
+              } catch {
+                notify(t('common.unexpectedError'), 'error');
+              }
+            }}
+          >
+            {t('backup.shareNow')}
+          </button>
+        )}
       </form>
       {lastHash && <p className="hint">{t('backup.hash', { hash: lastHash.slice(0, 16) })}</p>}
       <h3>{t('backup.plainTitle')}</h3>

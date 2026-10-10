@@ -386,7 +386,7 @@ export const en = {
   // import
   'import.intro': 'Import bank and card statements. Files are read in this browser only; nothing is uploaded.',
   'import.choose': 'Choose statement files',
-  'import.formats': 'Spuerkeess PDF statements, Worldline credit-card PDF statements, Revolut CSV, CAMT.053 XML, and any other CSV once you map its columns.',
+  'import.formats': 'Spuerkeess PDF statements, Worldline credit-card PDF statements, Revolut CSV, CAMT.053 XML, OFX/QFX, and any other CSV once you map its columns.',
   'import.reading': 'Reading…',
   'import.rows': '{n} transactions',
   'import.willSkip': '{n} skipped',
@@ -632,6 +632,10 @@ export const en = {
   'plan.closed': '{name} closed.',
   // ---------------------------------------------------------------- M4
   'nav.rules': 'Rules',
+  'backup.share': 'Share encrypted backup…',
+  'backup.shareTitle': 'CasaresSan backup',
+  'backup.shareNow': 'Backup ready — share it now',
+  'backup.shareHint': 'Opens the share sheet: save it to Files or iCloud Drive, or AirDrop it to the other phone and restore it there. It stays encrypted with this passphrase.',
   'import.r.auto': 'Categorised by your rules and history',
   'history.imports': 'Imports',
   'rules.intro': 'Rules file transactions automatically when they are imported. The first rule that matches wins.',

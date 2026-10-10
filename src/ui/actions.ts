@@ -296,6 +296,27 @@ export function download(filename: string, text: string, type = 'application/jso
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/** Can this device hand a file to the system share sheet (Files, AirDrop, mail…)? */
+export function canShareFiles(): boolean {
+  try {
+    return typeof navigator.canShare === 'function' && navigator.canShare({ files: [new File(['x'], 'x.json', { type: 'application/json' })] });
+  } catch {
+    return false;
+  }
+}
+
+/** Share a file through the system sheet. Returns false when the user cancelled. */
+export async function shareFile(filename: string, text: string, title: string): Promise<boolean> {
+  const file = new File([text], filename, { type: 'application/json' });
+  try {
+    await navigator.share({ files: [file], title });
+    return true;
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') return false;
+    throw e;
+  }
+}
+
 // -------------------------------------------------------- provisions and events
 
 /** Create or update a provision and its budget category (group Provisions). */

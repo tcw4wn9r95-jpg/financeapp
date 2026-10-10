@@ -71,7 +71,7 @@ export function ImportPage() {
       <div className="card">
         <div className="field">
           <label htmlFor="import-files">{t('import.choose')}</label>
-          <input id="import-files" type="file" multiple accept=".csv,.txt,.xml,.pdf,text/csv,application/pdf,application/xml" onChange={(e) => { void addFiles(e.target.files); e.target.value = ''; }} />
+          <input id="import-files" type="file" multiple accept=".csv,.txt,.xml,.pdf,.ofx,.qfx,text/csv,application/pdf,application/xml,application/x-ofx" onChange={(e) => { void addFiles(e.target.files); e.target.value = ''; }} />
           <p className="hint">{t('import.formats')}</p>
         </div>
       </div>

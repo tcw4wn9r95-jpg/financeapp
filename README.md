@@ -6,7 +6,7 @@ A private, local-first household finance app for a Luxembourg household. It runs
 
 - **M1, Foundations and budget:** encrypted storage, backup and restore; accounts, categories and manual entry; a monthly budget with defaults, month overrides and rollover; dashboard v0.
 - **M2, Import and reconciliation:**
-  - statement import from Spuerkeess PDFs, Worldline credit-card PDFs, Revolut CSV, CAMT.053 and any CSV through a saved column mapping;
+  - statement import from Spuerkeess PDFs, Worldline credit-card PDFs, Revolut CSV, CAMT.053, OFX/QFX and any CSV through a saved column mapping;
   - deduplication and an import report;
   - automatic pairing of transfers between your accounts;
   - card statements linked to their settlement debit;
@@ -97,6 +97,7 @@ Pull requests run the tests and build but do not deploy.
    | Visa statement from Worldline | PDF |
    | Revolut | CSV |
    | Bank statement | CAMT.053 XML |
+   | Bank or card export | OFX / QFX |
    | Any other export | CSV |
 
    The app detects the format and proposes the account for each part of the file, by IBAN or card number. A Revolut file has one part per product (Current, Deposit); choose the account for each, or "Do not import". Then press **Import** and read the report: new rows, duplicates ignored, rows skipped and why, transfers paired, card statements linked.
@@ -133,7 +134,7 @@ To update a year, copy the latest file, change the values from the official Admi
 
 ```
 src/domain/    pure TypeScript: money, dates, ledger, budget engine, reconcile, plan, forecast, learn (no React, no Dexie; a test enforces this)
-src/domain/import/  parsers (Spuerkeess PDF, Worldline PDF, CSV mappings, CAMT.053) and the import engine
+src/domain/import/  parsers (Spuerkeess PDF, Worldline PDF, CSV mappings, CAMT.053, OFX) and the import engine
 src/infra/     pdf.js text extraction; the optional Claude client
 src/storage/   WebCrypto, encrypted Dexie vault, backup and export format
 src/ui/        React pages and components

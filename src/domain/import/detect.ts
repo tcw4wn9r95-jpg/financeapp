@@ -1,5 +1,6 @@
 import { isCamt053, parseCamt053 } from './camt053';
 import { findMapping, parseCsv, readCsv, type MappingSpec } from './csv';
+import { isOfx, parseOfx } from './ofx';
 import { isSpuerkeessStatement, parseSpuerkeess } from './spuerkeess';
 import { ImportParseError, type ParseResult } from './types';
 import { isWorldlineStatement, parseWorldline } from './worldline';
@@ -21,6 +22,10 @@ export function detectAndParse<M extends MappingSpec>(file: FileContent, mapping
     throw new ImportParseError('unknownFormat');
   }
   const text = file.text;
+  if (/\.(ofx|qfx)$/i.test(file.name) || isOfx(text)) {
+    if (!isOfx(text)) throw new ImportParseError('unknownFormat');
+    return { kind: 'parsed', result: parseOfx(text) };
+  }
   if (/\.xml$/i.test(file.name) || /^\s*<\?xml|^\s*<Document/.test(text)) {
     if (!isCamt053(text)) throw new ImportParseError('unknownFormat');
     return { kind: 'parsed', result: parseCamt053(parseXml(text)) };

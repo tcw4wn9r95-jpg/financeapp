@@ -247,7 +247,7 @@ export interface TaxProfile extends BaseRecord {
 
 // ------------------------------------------------- import and reconcile
 
-export type ImportFormat = 'csv' | 'camt053' | 'pdf-spuerkeess' | 'pdf-worldline';
+export type ImportFormat = 'csv' | 'camt053' | 'ofx' | 'pdf-spuerkeess' | 'pdf-worldline';
 
 /** One statement period of one account, as read from a file (PRD F5, F7). */
 export interface Statement extends BaseRecord {
