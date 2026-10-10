@@ -39,7 +39,7 @@ describe('Spuerkeess PDF statement', () => {
   it('reads every booking across pages and balances to the closing balance', async () => {
     const r = await parse('spuerkeess-joint-2026-09.pdf');
     expect(r.format).toBe('pdf-spuerkeess');
-    expect(r.rows).toHaveLength(14);
+    expect(r.rows).toHaveLength(15);
     expect(r.skipped).toEqual([]);
     expect(r.warnings).toEqual([]);
     const s = r.statements[0]!;

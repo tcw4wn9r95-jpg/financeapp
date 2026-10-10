@@ -37,7 +37,12 @@ export interface LedgerView {
 export type Classification =
   | { kind: 'category'; categoryId: Id }
   | { kind: 'income'; categoryId: Id }
-  | { kind: 'transfer'; accountId: Id }
+  /**
+   * Transfer to another own account. For a repayment to an off-budget loan,
+   * `categoryId` makes the payment count in that budget category while the
+   * loan's balance still goes down (D-29).
+   */
+  | { kind: 'transfer'; accountId: Id; categoryId?: Id }
   | { kind: 'split'; lines: { kind: 'category' | 'income'; categoryId: Id; amount: Cents }[] };
 
 export class ReconcileError extends Error {
@@ -66,18 +71,20 @@ export function classify(t: Transaction, how: Classification, view: LedgerView, 
   if (t.status === 'locked') throw new ReconcileError('locked');
   const ch = emptyChanges();
   const source = 'manual' as const;
-  // Drop the old classification, including the far side of an old transfer.
+  // Drop the old classification, including the far side of an old transfer
+  // (found from either side: a loan repayment links only from the loan side).
   const old = view.allocations.filter((a) => a.transactionId === t.id);
-  for (const a of old) {
-    ch.deleteAllocations.push(a.id);
-    if (a.targetType === 'transfer') {
-      const other = view.transactions.find((x) => x.id === a.targetId);
-      if (other) {
-        for (const b of view.allocations.filter((b) => b.transactionId === other.id)) ch.deleteAllocations.push(b.id);
-        if (other.isMirror) ch.deleteTransactions.push(other.id);
-        else if (other.status !== 'locked') ch.putTransactions.push({ ...other, status: 'new', updatedAt: clock.now() });
-      }
-    }
+  const farIds = new Set([
+    ...old.filter((a) => a.targetType === 'transfer').map((a) => a.targetId),
+    ...view.allocations.filter((a) => a.targetType === 'transfer' && a.targetId === t.id).map((a) => a.transactionId),
+  ]);
+  for (const a of old) ch.deleteAllocations.push(a.id);
+  for (const id of farIds) {
+    const other = view.transactions.find((x) => x.id === id);
+    if (!other) continue;
+    for (const b of view.allocations.filter((b) => b.transactionId === other.id)) ch.deleteAllocations.push(b.id);
+    if (other.isMirror) ch.deleteTransactions.push(other.id);
+    else if (other.status !== 'locked') ch.putTransactions.push({ ...other, status: 'new', updatedAt: clock.now() });
   }
   const { suggestion: _s, ...plain } = t;
   const done: Transaction = { ...plain, status: 'reconciled', updatedAt: clock.now() };
@@ -115,7 +122,12 @@ export function classify(t: Transaction, how: Classification, view: LedgerView, 
         })()
       : makeMirror(clock, t, target, from, source);
     ch.putTransactions.push(other);
-    ch.putAllocations.push(alloc('transfer', other.id, t.amount));
+    if (how.categoryId) {
+      // Loan repayment: the payment is budget activity; the loan side still points back.
+      ch.putAllocations.push(alloc('category', how.categoryId, t.amount));
+    } else {
+      ch.putAllocations.push(alloc('transfer', other.id, t.amount));
+    }
     ch.putAllocations.push(alloc('transfer', t.id, other.amount, other));
   }
   ch.putTransactions.push(done);

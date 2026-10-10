@@ -66,18 +66,26 @@ export function errorMessage(e: unknown): string {
 }
 
 /** Choose a category, income or transfer for one transaction; optionally for all similar ones. */
-export function ClassifyControl({ tx, onDone }: { tx: Transaction; onDone?: () => void }) {
+export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction; onDone?: () => void; initial?: string }) {
   const vault = useVault();
   const notify = useToast();
   const categories = useStore('categories');
   const accounts = useStore('accounts');
   const transactions = useStore('transactions');
-  const [value, setValue] = useState('');
+  const [value, setValue] = useState(initial);
+  const [repaymentCategory, setRepaymentCategory] = useState(
+    () => categories.find((c) => !c.isIncome && /loan|pr[eê]t|cr[ée]dit|kredit/i.test(c.name))?.id ?? '',
+  );
   const [all, setAll] = useState(true);
   const [busy, setBusy] = useState(false);
   const [splitting, setSplitting] = useState(false);
   const others = useMemo(() => similar(tx, transactions), [tx, transactions]);
-  const choice = decodeTarget(value);
+  const decoded = decodeTarget(value);
+  const target = decoded?.kind === 'transfer' ? accounts.find((a) => a.id === decoded.accountId) : undefined;
+  // Paying an off-budget loan from a budget account: ask which budget category it counts in.
+  const isRepayment = !!target && target.type === 'loan' && tx.amount < 0 && accounts.find((a) => a.id === tx.accountId)?.type !== 'loan';
+  const choice: Classification | undefined =
+    isRepayment && decoded?.kind === 'transfer' ? (repaymentCategory ? { ...decoded, categoryId: repaymentCategory } : undefined) : decoded;
   const bulk = all && others.length > 0 && choice && choice.kind !== 'transfer';
 
   async function submit(e: FormEvent) {
@@ -107,6 +115,15 @@ export function ClassifyControl({ tx, onDone }: { tx: Transaction; onDone?: () =
         <select id={selectId} value={value} onChange={(e) => setValue(e.target.value)}>
           <TargetOptions tx={tx} categories={categories} accounts={accounts} />
         </select>
+        {isRepayment && (
+          <>
+            <label htmlFor={`${selectId}-cat`} className="visually-hidden">{t('inbox.repaymentCategory')}</label>
+            <select id={`${selectId}-cat`} value={repaymentCategory} onChange={(e) => setRepaymentCategory(e.target.value)} aria-describedby={`${selectId}-cat-hint`}>
+              <option value="">{t('inbox.repaymentCategory')}</option>
+              {categories.filter((c) => !c.isIncome).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </>
+        )}
         <button className="button button-primary" disabled={!choice || busy}>{t('inbox.apply')}</button>
         <button type="button" className="button button-quiet" onClick={() => setSplitting(true)} disabled={busy}>{t('inbox.split')}</button>
         {others.length > 0 && (
@@ -116,6 +133,7 @@ export function ClassifyControl({ tx, onDone }: { tx: Transaction; onDone?: () =
           </label>
         )}
       </form>
+      {isRepayment && <p id={`${selectId}-cat-hint`} className="hint">{t('inbox.repaymentHint', { name: target!.name })}</p>}
       {splitting && <SplitEditor tx={tx} onClose={() => setSplitting(false)} onDone={onDone} />}
     </>
   );

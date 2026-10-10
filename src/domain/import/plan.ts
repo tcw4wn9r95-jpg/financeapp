@@ -342,7 +342,16 @@ export function planImport(input: ImportInput, ledger: Ledger, clock: Clock): Le
     if (!isOpen(t)) continue;
     const target = recogniseAccount(t, ledger.accounts);
     if (!target) continue;
-    if (!hasImports(target.id)) {
+    if (target.type === 'loan') {
+      // A loan repayment also needs a budget category, so the user confirms it (D-29).
+      putTxn({
+        ...t,
+        status: 'suggested',
+        suggestion: { targetType: 'transfer', targetId: target.id, confidence: 0.9, decidedBy: 'rule', reason: `Repayment of ${target.name}` },
+        updatedAt: clock.now(),
+      });
+      report.suggestions++;
+    } else if (!hasImports(target.id)) {
       const mirror = makeMirror(clock, t, target, accountsById.get(t.accountId), source);
       putTxn(mirror);
       putTxn({ ...t, status: 'reconciled', updatedAt: clock.now() });

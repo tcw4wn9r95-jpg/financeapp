@@ -15,7 +15,8 @@
  * - John's Revolut "Compte flexible"     no statement; recognised by text
  * - John's Visa (Worldline)              card …4321, settled from …1234
  * - Jane's savings (CAMT.053)            IBAN …9876
- * - Jane's credit card (French CSV)      settled by "DIRECT DEBIT BUY WAY"
+ * - Jane's credit card (French CSV)      card …2222, settled from …1234
+ * - A consumer loan (Buy Way)            repaid by "DIRECT DEBIT BUY WAY" 
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 
@@ -36,7 +37,8 @@ const spk: BankLine[] = [
   { date: '02.09.26', desc: 'STANDING ORDER IN FAVOUR OF JOHN DOE', value: '02.09.26', amount: -120000, extra: ['IBAN LT00 3250 0000 0000 5678', 'Beneficiary bank: REVOLT21', 'Communication: Provisions'] },
   { date: '03.09.26', desc: 'DEBIT TPV CACTUS HOWALD 01.09', value: '03.09.26', amount: -8437 },
   { date: '05.09.26', desc: 'DIRECT DEBIT 4999000000004321 CARTE VISA', value: '05.09.26', amount: -61240 },
-  { date: '07.09.26', desc: 'DIRECT DEBIT BUY WAY SA 07/09/26', value: '07.09.26', amount: -14320 },
+  { date: '07.09.26', desc: 'DIRECT DEBIT 5355000000002222 CARTE MASTERCARD', value: '07.09.26', amount: -14320 },
+  { date: '07.09.26', desc: 'DIRECT DEBIT BUY WAY SA 07/09/26', value: '07.09.26', amount: -18950 },
   { date: '12.09.26', desc: 'DIRECT DEBIT ENOVOS LUXEMBOURG S.A.', value: '12.09.26', amount: -12850, extra: ['NR.INV/0000123/2026'] },
   { date: '15.09.26', desc: "CREDIT TRANSFER FROM CAISSE POUR L'AVENIR DES ENFANTS", value: '15.09.26', amount: 31504, extra: ['B.P. 394 L-2013 LUXEMBOURG', 'Ordering party bank: BCEELULL', 'Communication: CAE DOSSIER: 0000000000000 DECOMPTE DU', '12.09.26 PRESTATIONS FAMILIALES'] },
   { date: '18.09.26', desc: "DEBIT TPV AUCHAN CLOCHE D'OR 16.09", value: '18.09.26', amount: -6780 },

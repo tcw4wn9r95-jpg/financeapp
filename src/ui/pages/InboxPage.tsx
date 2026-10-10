@@ -47,7 +47,9 @@ function Review({ items }: { items: Transaction[] }) {
   const [limit, setLimit] = useState(PAGE);
   const name = useMemo(() => new Map(accounts.map((a) => [a.id, a.name])), [accounts]);
   const shown = items.filter((x) => !accountFilter || x.accountId === accountFilter);
-  const suggested = shown.filter((x) => x.status === 'suggested');
+  const isLoan = (id: string) => accounts.find((a) => a.id === id)?.type === 'loan';
+  // Loan repayments need a budget category, so they are confirmed one by one.
+  const suggested = shown.filter((x) => x.status === 'suggested' && !(x.suggestion?.targetType === 'transfer' && isLoan(x.suggestion.targetId)));
 
   async function accept(list: Transaction[]) {
     try {
@@ -87,20 +89,30 @@ function Review({ items }: { items: Transaction[] }) {
               <TxSummary tx={tx} accountName={name.get(tx.accountId) ?? '?'} />
               <Money cents={tx.amount} plusSign className="tx-amount" />
             </div>
-            {tx.suggestion && (
-              <p className="suggestion">
-                <span>
-                  <strong>{t('inbox.suggested')}</strong>{' '}
-                  {tx.suggestion.targetType === 'transfer'
-                    ? (tx.amount < 0 ? t('inbox.transferToName', { name: name.get(tx.suggestion.targetId) ?? '?' }) : t('inbox.transferFromName', { name: name.get(tx.suggestion.targetId) ?? '?' }))
-                    : vault.get('categories', tx.suggestion.targetId)?.name}
-                  {' · '}
-                  <span className="muted">{tx.suggestion.reason} · {Math.round(tx.suggestion.confidence * 100)}%</span>
-                </span>
-                <button type="button" className="button" onClick={() => void accept([tx])}>{t('inbox.accept')}</button>
-              </p>
-            )}
-            <ClassifyControl tx={tx} />
+            {tx.suggestion && (() => {
+              const sg = tx.suggestion;
+              const target = name.get(sg.targetId) ?? '?';
+              const label =
+                sg.targetType === 'transfer' && isLoan(sg.targetId) ? t('inbox.repaymentOf', { name: target })
+                : sg.targetType === 'transfer' ? (tx.amount < 0 ? t('inbox.transferToName', { name: target }) : t('inbox.transferFromName', { name: target }))
+                : vault.get('categories', sg.targetId)?.name ?? '?';
+              return (
+                <p className="suggestion">
+                  <span>
+                    <strong>{t('inbox.suggested')}</strong> {label}
+                    {' · '}
+                    <span className="muted">{sg.reason !== label ? `${sg.reason} · ` : ''}{Math.round(sg.confidence * 100)}%</span>
+                  </span>
+                  {!(sg.targetType === 'transfer' && isLoan(sg.targetId)) && (
+                    <button type="button" className="button" onClick={() => void accept([tx])}>{t('inbox.accept')}</button>
+                  )}
+                </p>
+              );
+            })()}
+            <ClassifyControl
+              tx={tx}
+              initial={tx.suggestion?.targetType === 'transfer' && isLoan(tx.suggestion.targetId) ? `xfer:${tx.suggestion.targetId}` : ''}
+            />
           </li>
         ))}
       </ul>

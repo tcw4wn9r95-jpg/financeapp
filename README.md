@@ -66,6 +66,7 @@ Pull requests run the tests and build but do not deploy.
    - In **Accounts**, create each account with its owner and the **last 4 characters of its IBAN** or card number. Kassa uses them to route files and recognise transfers.
    - For an account whose statements you never import, add a **"Recognise in other statements"** hint. The Revolut Compte flexible is the example: add the hint "Compte flexible". Transfers that mention it then land there automatically.
    - Give each credit card its **Paid from** account.
+   - Create each loan (for example Buy Way) as a **Loan** account. Enter the amount still owed as a negative opening balance, and add the hint "BUY WAY". Its monthly debit is suggested as a repayment: choose the budget category it counts in (for example "Loan repayments"), and the loan balance goes down too.
 2. **Import.** Open **Import** and choose one or more files:
 
    | File | Format |

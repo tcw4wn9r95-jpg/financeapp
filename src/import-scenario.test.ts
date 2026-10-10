@@ -35,7 +35,8 @@ class Ledger {
     acct('flex', 'savings', { matchHints: ['Compte flexible'] }),
     acct('visa', 'card', { ibanLast4: '4321', settlementAccountId: 'joint' }),
     acct('janeSav', 'savings', { ibanLast4: '9876' }),
-    acct('janeCard', 'card', { matchHints: ['BUY WAY'], settlementAccountId: 'joint' }),
+    acct('janeCard', 'card', { ibanLast4: '2222', settlementAccountId: 'joint' }),
+    acct('buyWay', 'loan', { matchHints: ['BUY WAY'], openingBalance: -500000 }),
   ];
   transactions: Transaction[] = [];
   allocations: Allocation[] = [];
@@ -133,7 +134,7 @@ describe('import scenario: a household month across six files', () => {
 
   it('sets the opening balance from the first statement and balances to its closing balance', async () => {
     const report = await L.import('spuerkeess-joint-2026-09.pdf');
-    expect(report.newCount).toBe(14);
+    expect(report.newCount).toBe(15);
     expect(report.warnings).toContain('openingSet:joint:1250000');
     const s = L.statements.find((x) => x.accountId === 'joint')!;
     expect(checkStatement(s, L.view()).difference).toBe(0);
@@ -141,9 +142,10 @@ describe('import scenario: a household month across six files', () => {
 
   it('creates the other side of transfers to accounts without statements, and replaces it when their statement arrives', async () => {
     const spk = await L.import('spuerkeess-joint-2026-09.pdf');
-    // Revolut top-up (hint), Revolut standing order (IBAN), Jane savings (IBAN), Jane card (hint),
-    // and John's Visa settlement (card number ••4321).
+    // Revolut top-up (hint), Revolut standing order (IBAN), Jane savings (IBAN), Jane's card (••2222)
+    // and John's Visa settlement (••4321). The loan repayment is only suggested.
     expect(spk.mirrorsCreated).toBe(5);
+    expect(spk.suggestions).toBe(1);
     expect(L.tx('johnRev', 120000)[0]).toMatchObject({ isMirror: true });
 
     const rev = await L.import('revolut-john-2026-09.csv', REVOLUT);
@@ -244,7 +246,22 @@ describe('import scenario: a household month across six files', () => {
 
     // Re-importing the locked month changes nothing.
     const again = await L.import('spuerkeess-joint-2026-09.pdf');
-    expect(again).toMatchObject({ newCount: 0, duplicateCount: 14 });
+    expect(again).toMatchObject({ newCount: 0, duplicateCount: 15 });
+  });
+
+  it('a loan repayment is suggested, counts in a budget category and lowers the loan (D-29)', async () => {
+    await L.import('spuerkeess-joint-2026-09.pdf');
+    const debit = L.tx('joint', 'BUY WAY')[0]!;
+    expect(debit).toMatchObject({ status: 'suggested', suggestion: { targetType: 'transfer', targetId: 'buyWay' } });
+    L.apply(classify(debit, { kind: 'transfer', accountId: 'buyWay', categoryId: 'loanRepayments' }, L.view(), L.clock));
+    expect(L.allocations.filter((a) => a.transactionId === debit.id)).toEqual([expect.objectContaining({ targetType: 'category', targetId: 'loanRepayments', amount: -18950 })]);
+    expect(L.balance('buyWay')).toBe(-500000 + 18950);
+    const input = { startMonth: '2026-08', categories: [{ ...base, id: 'loanRepayments', name: 'Loan', groupId: 'fixed' as const, rolloverMode: 'reset' as const, isIncome: false, sortOrder: 0 }], defaults: [], overrides: [], accounts: L.accounts, transactions: L.transactions, allocations: L.allocations };
+    expect(budgetForMonth(input, '2026-09')!.categories.get('loanRepayments')!.activity).toBe(-18950);
+    // Reclassifying removes the loan side again.
+    L.apply(classify(L.tx('joint', 'BUY WAY')[0]!, { kind: 'category', categoryId: 'other' }, L.view(), L.clock));
+    expect(L.balance('buyWay')).toBe(-500000);
+    expect(L.tx('buyWay', '')).toHaveLength(0);
   });
 
   it('splits must sum to the transaction', async () => {

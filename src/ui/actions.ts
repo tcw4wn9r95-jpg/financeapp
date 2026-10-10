@@ -143,6 +143,7 @@ const SUGGESTED: [string, CategoryGroup, RolloverMode, boolean][] = [
   ['Energy', 'fixed', 'roll', false],
   ['Phone & internet', 'fixed', 'reset', false],
   ['Insurance', 'fixed', 'roll', false],
+  ['Loan repayments', 'fixed', 'reset', false],
   ['Groceries', 'variable', 'roll', false],
   ['Eating out', 'variable', 'roll', false],
   ['Transport', 'variable', 'roll', false],
