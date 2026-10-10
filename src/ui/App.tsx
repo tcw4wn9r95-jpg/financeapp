@@ -12,6 +12,7 @@ import { InboxPage } from './pages/InboxPage';
 import { PlanPage } from './pages/PlanPage';
 import { RulesPage } from './pages/RulesPage';
 import { ScenariosTab } from './pages/ScenariosTab';
+import { TaxTab } from './pages/TaxTab';
 import { LockScreen, RecoveryKeyStep } from './pages/LockScreen';
 import { SettingsPage } from './pages/SettingsPage';
 import { TransactionsPage } from './pages/TransactionsPage';
@@ -133,7 +134,7 @@ function Page({ section }: { section: string }) {
     case 'inbox':
       return <InboxPage />;
     case 'plan':
-      return <PlanPage extraTabs={{ scenarios: <ScenariosTab /> }} />;
+      return <PlanPage extraTabs={{ scenarios: <ScenariosTab />, tax: <TaxTab /> }} />;
     case 'rules':
       return <RulesPage />;
     case 'import':

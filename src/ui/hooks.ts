@@ -1,3 +1,4 @@
+import { taxCashItems } from './taxParams';
 import { createContext, useContext, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { computeBudget, type BudgetInput, type BudgetMonth } from '../domain/budget';
 import { compareMonths, todayIso } from '../domain/dates';
@@ -75,8 +76,10 @@ export function useForecast(months: number, changes?: ScenarioChange[], extra?: 
   const budget = useBudgetInput();
   const provisions = useStore('provisions');
   const events = useStore('events');
-  return useMemo(
-    () => forecast({ today: todayIso(), months, budget, provisions, events, ...(changes ? { changes } : {}), ...(extra ? { extra } : {}) }),
-    [budget, provisions, events, months, changes, extra],
-  );
+  const taxProfiles = useStore('taxProfiles');
+  return useMemo(() => {
+    // Expected tax refunds or payments the user chose to show (M5).
+    const all = [...taxCashItems(taxProfiles), ...(extra ?? [])];
+    return forecast({ today: todayIso(), months, budget, provisions, events, ...(changes ? { changes } : {}), ...(all.length ? { extra: all } : {}) });
+  }, [budget, provisions, events, months, changes, extra, taxProfiles]);
 }

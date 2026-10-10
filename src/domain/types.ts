@@ -235,14 +235,32 @@ export interface Scenario extends BaseRecord {
 
 export type TaxRegime = '1' | '1a' | '2' | 'U' | 'T';
 
+export interface TaxProfilePerson {
+  name: string;
+  grossSalary: Cents;
+  withheld: Cents;
+  travel?: Cents;
+  pensionSavings?: Cents;
+}
+
+/** One tax year's inputs for the Luxembourg projection (M5, D-41). */
 export interface TaxProfile extends BaseRecord {
   year: number;
   regime: TaxRegime;
-  persons: unknown[];
-  incomes: unknown[];
-  deductions: unknown[];
+  persons: TaxProfilePerson[];
+  householdMembers: number;
+  insurance: Cents;
+  otherDeductions: Cents;
+  otherIncome: Cents;
+  /** Kept from the PRD model; the projection uses the per-person withheld amounts. */
   withholdingYtd: Cents;
+  /** The parameter file used, e.g. "2026". */
   paramsVersion: string;
+  /** Per-value overrides of the parameter file ("scale.3.rate" → 0.1). */
+  overrides?: Record<string, number>;
+  /** When the refund or payment is expected (for the forecast). */
+  settleMonth?: MonthKey;
+  inForecast?: boolean;
 }
 
 // ------------------------------------------------- import and reconcile
