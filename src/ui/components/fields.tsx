@@ -63,8 +63,8 @@ export function useMoneyInput(initial?: Cents) {
   return { text, setText, cents, valid: text.trim() === '' || cents !== null };
 }
 
-export function useDateInput(initial: IsoDate) {
-  const [text, setText] = useState(formatDate(initial));
+export function useDateInput(initial?: IsoDate) {
+  const [text, setText] = useState(initial ? formatDate(initial) : '');
   const iso = parseDate(text);
   return { text, setText, iso };
 }
@@ -108,16 +108,19 @@ export function MoneyField({ label, hint, error, state, signed = false, ...rest 
   );
 }
 
-export function DateField({ label, error, state, ...rest }: Omit<InputProps, 'value' | 'onChange'> & { state: ReturnType<typeof useDateInput> }) {
+/**
+ * Date input using the system date picker (the iPhone's wheel); phone
+ * number pads have no "/" key, so typed dd/mm/yyyy dates do not work there.
+ */
+export function DateField({ label, error, hint, state, ...rest }: Omit<InputProps, 'value' | 'onChange'> & { state: ReturnType<typeof useDateInput> }) {
   return (
     <TextField
       label={label}
-      hint={t('field.dateHint')}
+      hint={hint}
       error={error ?? (state.text && !state.iso ? t('field.dateInvalid') : undefined)}
-      inputMode="numeric"
-      placeholder="dd/mm/yyyy"
+      type="date"
       autoComplete="off"
-      value={state.text}
+      value={state.iso ?? ''}
       onChange={(e) => state.setText(e.target.value)}
       {...rest}
     />

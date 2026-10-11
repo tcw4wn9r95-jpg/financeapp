@@ -5,7 +5,7 @@ import type { Account, AccountType } from '../../domain/types';
 import { monthName, t } from '../../i18n';
 import { accountInUse, deleteAccount, ownerName, saveAccount } from '../actions';
 import { Dialog } from '../components/Dialog';
-import { MoneyField, SelectField, TextField, useMoneyInput } from '../components/fields';
+import { DateField, MoneyField, SelectField, TextField, useDateInput, useMoneyInput } from '../components/fields';
 import { Money } from '../components/Money';
 import { formatMoney } from '../../domain/money';
 import { useToast } from '../components/Toast';
@@ -97,8 +97,9 @@ export function AccountDialog({ existing, initial, onClose }: {
   // Loans are entered as the amount still owed (positive) and stored as a negative balance.
   const opening = useMoneyInput(existing ? (existing.type === 'loan' ? Math.abs(existing.openingBalance) : existing.openingBalance) : 0);
   const [settlement, setSettlement] = useState(existing?.settlementAccountId ?? '');
-  const [since, setSince] = useState(existing?.openingDate ? formatDate(existing.openingDate) : '');
-  const sinceIso = since.trim() ? parseDate(since) : undefined;
+  const sinceInput = useDateInput(existing?.openingDate);
+  const since = sinceInput.text;
+  const sinceIso = since.trim() ? (sinceInput.iso ?? undefined) : undefined;
   const payment = useMoneyInput(existing?.monthlyPayment);
   const [lastPayment, setLastPayment] = useState(existing?.lastPaymentMonth ?? '');
   const [closed, setClosed] = useState(!!existing?.closedAt);
@@ -161,15 +162,10 @@ export function AccountDialog({ existing, initial, onClose }: {
         <TextField label={t('accounts.institution')} value={institution} onChange={(e) => setInstitution(e.target.value)} />
         <TextField label={t('accounts.last4')} value={last4} onChange={(e) => setLast4(e.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase())} hint={t('accounts.last4Hint')} autoComplete="off" />
         <TextField label={t('accounts.hints')} value={hints} onChange={(e) => setHints(e.target.value)} hint={t('accounts.hintsHint')} autoComplete="off" />
-        <TextField
+        <DateField
           label={type === 'loan' ? t('accounts.loanSince') : t('accounts.since')}
           hint={type === 'loan' ? t('accounts.loanSinceHint') : t('accounts.sinceHint', { month: monthName(settings.budgetStartMonth) })}
-          error={since.trim() && !sinceIso ? t('field.dateInvalid') : undefined}
-          inputMode="numeric"
-          placeholder="dd/mm/yyyy"
-          autoComplete="off"
-          value={since}
-          onChange={(e) => setSince(e.target.value)}
+          state={sinceInput}
         />
         {type === 'loan' && (
           <>

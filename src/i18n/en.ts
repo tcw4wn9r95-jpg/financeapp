@@ -48,7 +48,7 @@ export const en = {
   // fields
   'field.moneyHint': 'Decimal comma or point: 1.234,56',
   'field.moneyInvalid': 'Enter an amount like 1.234,56 (at most 2 decimals).',
-  'field.dateHint': 'dd/mm/yyyy',
+  'field.dateHint': 'Pick a date.',
   'field.dateInvalid': 'Enter a real date as dd/mm/yyyy.',
 
   // groups, rollover, account types
@@ -637,7 +637,7 @@ export const en = {
   'plan.startDate': 'Start saving from',
   'plan.startAfterTarget': 'The start is after the target date.',
   'plan.scheduleFirst': 'From {from}:',
-  'plan.scheduleThen': 'then from {from}:',
+  'plan.scheduleThen': 'Then from {from}:',
   'plan.scheduleStops': 'Nothing more from {from}.',
   'plan.scheduleAuto': 'Added to each month’s budget automatically.',
   'plan.perMonthShort': 'a month.',
