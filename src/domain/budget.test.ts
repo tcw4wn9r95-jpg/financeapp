@@ -267,3 +267,27 @@ describe('moving the budget start earlier (D-45)', () => {
     expect(budgetForMonth(w.input(), '2026-12')!.categories.get('rent')!.assigned).toBe(190000);
   });
 });
+
+describe('accounts that start counting later (D-47)', () => {
+  it('an account tracked from June adds its opening balance to Ready to assign in June, and has no balance before', () => {
+    const w = new World('2026-01');
+    w.account('joint', 'current', 100000);
+    w.account('rev', 'current', 50000);
+    w.accounts[1]!.openingDate = '2026-06-10';
+    expect(budgetForMonth(w.input(), '2026-05')!.readyToAssign).toBe(100000);
+    expect(budgetForMonth(w.input(), '2026-06')!.readyToAssign).toBe(150000);
+    expect(accountBalances(w.accounts, [], '2026-06-09').get('rev')).toBe(0);
+    expect(accountBalances(w.accounts, [], '2026-06-10').get('rev')).toBe(50000);
+  });
+  it('an opening date before the budget start counts at the start; a loan never touches the budget', () => {
+    const w = new World('2026-01');
+    w.account('joint', 'current', 100000);
+    w.accounts[0]!.openingDate = '2025-11-01';
+    w.account('car', 'loan', -1800000);
+    w.accounts[1]!.openingDate = '2026-03-15';
+    expect(budgetForMonth(w.input(), '2026-01')!.readyToAssign).toBe(100000);
+    expect(budgetForMonth(w.input(), '2026-04')!.readyToAssign).toBe(100000);
+    expect(accountBalances(w.accounts, [], '2026-02-28').get('car')).toBe(0);
+    expect(accountBalances(w.accounts, [], '2026-03-15').get('car')).toBe(-1800000);
+  });
+});

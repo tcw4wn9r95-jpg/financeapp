@@ -169,8 +169,20 @@ function activityByMonth(input: BudgetInput): Map<MonthKey, MonthActivity> {
   return out;
 }
 
-export function openingFunds(accounts: readonly Account[]): Cents {
-  return accounts.filter(isOnBudget).reduce((s, a) => s + a.openingBalance, 0);
+/**
+ * Opening balances of on-budget accounts that join Ready to assign in a
+ * month: at the budget start for accounts without a later opening date,
+ * otherwise in the month of their opening date (D-47).
+ */
+export function openingFunds(accounts: readonly Account[], month?: MonthKey, startMonth?: MonthKey): Cents {
+  return accounts
+    .filter(isOnBudget)
+    .filter((a) => {
+      if (month === undefined) return true;
+      const opens = a.openingDate && startMonth && compareMonths(monthOf(a.openingDate), startMonth) > 0 ? monthOf(a.openingDate) : startMonth;
+      return opens === month;
+    })
+    .reduce((s, a) => s + a.openingBalance, 0);
 }
 
 /**
@@ -188,7 +200,7 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       : undefined;
 
   const result: BudgetMonth[] = [];
-  let ready = openingFunds(input.accounts);
+  let ready = 0;
   let carry = new Map<Id, Cents>();
   let returned = 0;
 
@@ -245,7 +257,7 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       });
     }
 
-    ready += act.income + act.uncategorised + returned - assignedTotal;
+    ready += openingFunds(input.accounts, month, input.startMonth) + act.income + act.uncategorised + returned - assignedTotal;
     assertCents(ready);
     result.push({
       month,
@@ -275,7 +287,8 @@ export function accountBalances(
   transactions: readonly Transaction[],
   throughDate?: string,
 ): Map<Id, Cents> {
-  const out = new Map<Id, Cents>(accounts.map((a) => [a.id, a.openingBalance]));
+  // Before its opening date an account has no opening balance yet (D-47).
+  const out = new Map<Id, Cents>(accounts.map((a) => [a.id, a.openingDate && throughDate && throughDate < a.openingDate ? 0 : a.openingBalance]));
   for (const t of transactions) {
     if (throughDate && t.date > throughDate) continue;
     if (!out.has(t.accountId)) continue;

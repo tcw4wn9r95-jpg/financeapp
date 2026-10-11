@@ -198,3 +198,13 @@ The palette is validated for colour blindness and contrast: blue for your plan, 
 **D-46 Negative amounts on phones.** The iPhone decimal keypad has no minus key.
 - A loan asks for the **amount still owed**, as a positive number, and stores it as a negative balance.
 - Other opening balances have a +/− button next to the field that flips the sign, for example for a credit card you owe.
+
+**D-47 Start dates for accounts and budget amounts.**
+- **Accounts:** an account can have an opening date (a loan taken out in March, an account opened or tracked from June). The opening balance applies from that day, and the account's balance is zero before it.
+  - For an on-budget account, the opening balance joins Ready to assign in that month instead of the budget start.
+  - Loans stay off budget.
+  - Earlier transactions on the account are not hidden; the statements checklist starts at the opening month.
+  - An older statement that sets the opening balance also moves the opening date back to its first day.
+- **Categories:** a monthly amount can start in any month from the budget start to a year ahead, and can end ("Until"). The end is stored as a zero amount from the month after.
+  - The category dialog lists the dated amounts.
+  - The hint offering to carry amounts back to the budget start (D-45) now appears only for the old set-up pattern: several categories all starting in the same later month, and none from the start. "Keep as is" is remembered.

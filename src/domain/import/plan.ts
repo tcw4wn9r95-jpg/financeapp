@@ -271,7 +271,9 @@ export function planImport(input: ImportInput, ledger: Ledger, clock: Clock): Le
     const first = own.length === 0 && current.openingBalance === 0;
     const older = current.openingFromStatement === true && earliest !== undefined && periodStart <= earliest;
     if (info.openingBalance !== undefined && (first || older) && info.openingBalance !== current.openingBalance) {
-      const updated = { ...current, openingBalance: info.openingBalance, openingFromStatement: true, updatedAt: clock.now() };
+      const updated: Account = { ...current, openingBalance: info.openingBalance, openingFromStatement: true, updatedAt: clock.now() };
+      // The statement's opening balance is the balance on its first day (D-47).
+      if (current.openingDate && periodStart < current.openingDate) updated.openingDate = periodStart;
       const i = accountsOut.findIndex((a) => a.id === account.id);
       if (i >= 0) accountsOut[i] = updated;
       else accountsOut.push(updated);

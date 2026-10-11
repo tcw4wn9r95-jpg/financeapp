@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { addMonths, monthRange } from '../../domain/dates';
 import { defaultFor } from '../../domain/budget';
 import { CATEGORY_GROUPS, type Category, type CategoryGroup, type RolloverMode } from '../../domain/types';
 import { monthName, t } from '../../i18n';
@@ -101,6 +102,7 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
   const notify = useToast();
   const settings = useSettings();
   const [fromMonth, setFromMonth] = useState(() => suggestedFromMonth(vault));
+  const [until, setUntil] = useState('');
   const thisMonth = defaultStartMonth(vault);
   const current = existing ? defaultFor(vault.list('budgetDefaults'), existing.id, fromMonth)?.monthlyAmount : undefined;
   const [name, setName] = useState(existing?.name ?? '');
@@ -121,7 +123,8 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
     try {
       await saveCategory(vault, {
         name: name.trim(), groupId, rolloverMode: isIncome ? 'reset' : mode, isIncome,
-        ...(changedDefault ? { monthlyDefault: amount.cents!, fromMonth } : {}),
+        ...(changedDefault || until ? { monthlyDefault: amount.cents ?? current ?? 0, fromMonth } : {}),
+        ...(until ? { untilMonth: until } : {}),
       }, existing);
       notify(t('categories.saved', { name: name.trim() }));
       onClose();
@@ -162,11 +165,16 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
           </>
         )}
         <MoneyField label={isIncome ? t('categories.expectedIncome') : t('categories.defaultAmount')} state={amount} hint={isIncome ? t('categories.expectedIncomeHint') : t('categories.defaultHint')} />
-        <SelectField label={t('categories.appliesFrom')} value={fromMonth} onChange={(e) => setFromMonth(e.target.value)}>
-          {[...new Set([settings.budgetStartMonth, thisMonth])].map((m) => (
-            <option key={m} value={m}>{m === settings.budgetStartMonth ? t('categories.fromStart', { month: monthName(m) }) : monthName(m)}</option>
+        <SelectField label={t('categories.appliesFrom')} value={fromMonth} onChange={(e) => setFromMonth(e.target.value)} hint={t('categories.appliesFromHint')}>
+          {monthRange(settings.budgetStartMonth, addMonths(thisMonth, 12)).map((m) => (
+            <option key={m} value={m}>{m === settings.budgetStartMonth ? t('categories.fromStart', { month: monthName(m) }) : m === thisMonth ? t('categories.fromThisMonth', { month: monthName(m) }) : monthName(m)}</option>
           ))}
         </SelectField>
+        <SelectField label={t('categories.until')} value={until} onChange={(e) => setUntil(e.target.value)} hint={t('categories.untilHint')}>
+          <option value="">{t('categories.noEnd')}</option>
+          {monthRange(fromMonth, addMonths(fromMonth, 36)).map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
+        </SelectField>
+        {existing && <Schedule categoryId={existing.id} />}
         {error && <p className="error" role="alert">⚠ {error}</p>}
         <div className="row">
           <button className="button button-primary" disabled={busy}>{t('common.save')}</button>
@@ -178,5 +186,26 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
         {existing && inUse && <p className="hint">{t('categories.cannotDelete')}</p>}
       </form>
     </Dialog>
+  );
+}
+
+/** The dated monthly amounts of a category, oldest first. */
+function Schedule({ categoryId }: { categoryId: string }) {
+  const defaults = useStore('budgetDefaults')
+    .filter((d) => d.categoryId === categoryId)
+    .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  if (defaults.length === 0) return null;
+  return (
+    <details className="schedule">
+      <summary>{t('categories.schedule')}</summary>
+      <ul className="plain-list">
+        {defaults.map((d) => (
+          <li key={d.id} className="split-row">
+            <span>{t('categories.fromMonth', { month: monthName(d.effectiveFrom) })}</span>
+            <Money cents={d.monthlyAmount} />
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

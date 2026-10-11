@@ -11,6 +11,7 @@ import type {
   CategoryGroup,
   Cents,
   Id,
+  IsoDate,
   Member,
   MonthKey,
   Provision,
@@ -69,12 +70,14 @@ export type AccountDraft = Pick<Account, 'name' | 'type' | 'institution' | 'iban
   closed?: boolean;
   owner?: Id;
   matchHints?: string[];
+  /** Day the account starts to count; empty = from the budget start (D-47). */
+  openingDate?: IsoDate;
 };
 
 /** Create or update an account; returns its id. */
 export async function saveAccount(vault: Vault, draft: AccountDraft, existing?: Account): Promise<Id> {
   const base = existing ?? (stamp(systemClock, 'manual') as Account);
-  const { closed, settlementAccountId, owner, matchHints, ...fields } = draft;
+  const { closed, settlementAccountId, owner, matchHints, openingDate, ...fields } = draft;
   const record: Account = {
     ...base,
     ...fields,
@@ -88,6 +91,8 @@ export async function saveAccount(vault: Vault, draft: AccountDraft, existing?: 
   else delete record.closedAt;
   if (owner) record.owner = owner;
   else delete record.owner;
+  if (openingDate) record.openingDate = openingDate;
+  else delete record.openingDate;
   const hints = (matchHints ?? []).map((h) => h.trim()).filter((h) => h.length >= 3);
   if (hints.length) record.matchHints = hints;
   else delete record.matchHints;
@@ -127,6 +132,8 @@ export interface CategoryDraft {
   /** Monthly default (expense) or expected monthly income (income) from `fromMonth` on. */
   monthlyDefault?: Cents;
   fromMonth?: MonthKey;
+  /** Last month of this amount; from the month after, the category gets nothing (D-47). */
+  untilMonth?: MonthKey;
 }
 
 /** The month a new default should start: this month, but never before the budget starts. */
@@ -147,7 +154,7 @@ export function suggestedFromMonth(vault: Vault): MonthKey {
 }
 
 export async function saveCategory(vault: Vault, draft: CategoryDraft, existing?: Category): Promise<void> {
-  const { monthlyDefault, fromMonth, ...fields } = draft;
+  const { monthlyDefault, fromMonth, untilMonth, ...fields } = draft;
   const sortOrder = existing?.sortOrder ?? Math.max(-1, ...vault.list('categories').map((c) => c.sortOrder)) + 1;
   const record: Category = {
     ...(existing ?? (stamp(systemClock, 'manual') as Category)),
@@ -159,6 +166,7 @@ export async function saveCategory(vault: Vault, draft: CategoryDraft, existing?
   if (monthlyDefault !== undefined) {
     ops.push(...defaultOps(vault, record.id, monthlyDefault, fromMonth ?? defaultStartMonth(vault)));
   }
+  if (untilMonth) ops.push(...defaultOps(vault, record.id, 0, addMonths(untilMonth, 1)));
   await vault.write(ops);
 }
 

@@ -3,7 +3,7 @@ import type { CategoryMonth } from '../../domain/budget';
 import { compareMonths, currentMonth, isMonthKey } from '../../domain/dates';
 import { CATEGORY_GROUPS, type Category, type MonthKey } from '../../domain/types';
 import { monthName, t } from '../../i18n';
-import { backdateToStart, resetOverride, setDefaultFrom, setOverride } from '../actions';
+import { backdateToStart, saveSettings, resetOverride, setDefaultFrom, setOverride } from '../actions';
 import { backdateDefaults } from '../../domain/budget';
 import { Dialog } from '../components/Dialog';
 import { MoneyField, TextField, useMoneyInput } from '../components/fields';
@@ -28,7 +28,12 @@ function LateAmounts({ month }: { month: MonthKey }) {
   const late = backdateDefaults(defaults, settings.budgetStartMonth)
     .map((d) => defaults.find((x) => x.id === d.id)!)
     .filter((d) => compareMonths(d.effectiveFrom, month) > 0);
-  if (late.length === 0 || hidden) return null;
+  // Only when no category starts at the budget start: a set-up made before the
+  // start was moved. Amounts deliberately starting later are left alone (D-47).
+  const categoriesWithAmounts = new Set(defaults.map((d) => d.categoryId)).size;
+  const anyFromStart = defaults.some((d) => compareMonths(d.effectiveFrom, settings.budgetStartMonth) <= 0);
+  const sameMonth = new Set(late.map((d) => d.effectiveFrom)).size === 1;
+  if (late.length < 2 || !sameMonth || hidden || settings.lateAmountsKept || anyFromStart || late.length < categoriesWithAmounts / 2) return null;
   const from = late.map((d) => d.effectiveFrom).sort()[0]!;
   return (
     <div className="notice notice-warn" role="status">
@@ -40,7 +45,7 @@ function LateAmounts({ month }: { month: MonthKey }) {
       >
         {t('budget.applyFromStart', { month: monthName(settings.budgetStartMonth) })}
       </button>{' '}
-      <button type="button" className="button button-quiet" onClick={() => { lateDismissed = true; setHidden(true); }}>{t('budget.keepLate')}</button>
+      <button type="button" className="button button-quiet" onClick={() => { lateDismissed = true; setHidden(true); void saveSettings(vault, { lateAmountsKept: true }); }}>{t('budget.keepLate')}</button>
     </div>
   );
 }

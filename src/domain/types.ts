@@ -34,8 +34,14 @@ export interface Account extends BaseRecord {
   type: AccountType;
   institution: string;
   ibanLast4: string;
-  /** Balance on the budget start month, in cents. Cards and loans are negative when owing. */
+  /** Balance on the budget start month (or on `openingDate`), in cents. Cards and loans are negative when owing. */
   openingBalance: Cents;
+  /**
+   * The day the account starts to count (a loan taken out, an account opened
+   * or tracked later). The opening balance applies from this day; for an
+   * on-budget account it joins Ready to assign in this month (D-47).
+   */
+  openingDate?: IsoDate;
   /** Card accounts: the current account that pays the monthly statement. */
   settlementAccountId?: Id;
   closedAt?: string;
@@ -355,6 +361,8 @@ export interface Settings {
   minimumBuffer?: Cents;
   /** History matches at or above this confidence are applied without review (default 0.92). */
   autoApplyThreshold?: number;
+  /** "Keep as is" on the hint about monthly amounts starting after the budget start. */
+  lateAmountsKept?: boolean;
   /** Merchants whose rule proposal was dismissed. */
   dismissedRuleProposals?: string[];
   /** Optional Claude fallback for transactions nothing else recognises (opt-in, D-37). */

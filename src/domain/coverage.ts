@@ -28,7 +28,8 @@ export function coverage(
     .map((a) => {
       const own = statements.filter((s) => s.accountId === a.id);
       const rows = new Set(transactions.filter((t) => t.accountId === a.id && t.importBatchId && !t.isMirror).map((t) => t.date.slice(0, 7)));
-      const list = months.map((month) => {
+      const opens = a.openingDate?.slice(0, 7);
+      const list = months.filter((month) => !opens || month >= opens).map((month) => {
         const covered = own.some((s) => s.periodStart <= lastDayOfMonth(month) && s.periodEnd >= `${month}-01`);
         return { month, status: (covered ? 'statement' : rows.has(month) ? 'rows' : 'none') as MonthCoverage };
       });
