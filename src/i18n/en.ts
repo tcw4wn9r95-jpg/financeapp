@@ -632,6 +632,12 @@ export const en = {
   'plan.closed': '{name} closed.',
   // ---------------------------------------------------------------- M4
   'nav.rules': 'Rules',
+  'accounts.payment': 'Monthly payment (optional)',
+  'accounts.paymentHint': 'The instalment. It is budgeted every month in a Fixed category named after the loan, and repayments are filed there automatically.',
+  'accounts.lastPayment': 'Last payment',
+  'accounts.lastPaymentHint': 'After this month nothing more is budgeted for the loan.',
+  'accounts.lastPaymentUnknown': 'Not set',
+  'accounts.paymentShort': '{amount} a month',
   'categories.appliesFromHint': 'Pick a later month for something that starts during the year, such as a new loan or childcare.',
   'categories.fromThisMonth': '{month} (this month)',
   'categories.until': 'Until (optional)',

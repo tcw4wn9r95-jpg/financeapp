@@ -74,9 +74,9 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
   const accounts = useStore('accounts');
   const transactions = useStore('transactions');
   const [value, setValue] = useState(initial);
-  const [repaymentCategory, setRepaymentCategory] = useState(
-    () => categories.find((c) => !c.isIncome && /loan|pr[eê]t|cr[ée]dit|kredit/i.test(c.name))?.id ?? '',
-  );
+  // The loan's own category when it has one (D-48), else a category that looks like loans.
+  const [repaymentPick, setRepaymentPick] = useState('');
+  const guessedRepayment = categories.find((c) => !c.isIncome && /loan|pr[eê]t|cr[ée]dit|kredit/i.test(c.name))?.id ?? '';
   const [all, setAll] = useState(true);
   const [busy, setBusy] = useState(false);
   const [splitting, setSplitting] = useState(false);
@@ -85,6 +85,8 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
   const target = decoded?.kind === 'transfer' ? accounts.find((a) => a.id === decoded.accountId) : undefined;
   // Paying an off-budget loan from a budget account: ask which budget category it counts in.
   const isRepayment = !!target && target.type === 'loan' && tx.amount < 0 && accounts.find((a) => a.id === tx.accountId)?.type !== 'loan';
+  const repaymentCategory = repaymentPick || target?.categoryId || guessedRepayment;
+  const setRepaymentCategory = setRepaymentPick;
   const events = useStore('events');
   const event = decoded?.kind === 'category' ? events.find((e) => e.categoryId === decoded.categoryId && e.subBudgets.length > 0) : undefined;
   const [subBudget, setSubBudget] = useState('');

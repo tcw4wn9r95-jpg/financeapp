@@ -139,8 +139,10 @@ export function classify(t: Transaction, how: Classification, view: LedgerView, 
 export function acceptSuggestion(t: Transaction, view: LedgerView, clock: Clock): Changes {
   const s = t.suggestion;
   if (!s) return emptyChanges();
+  const loan = view.accounts.find((a) => a.id === s.targetId && a.type === 'loan');
   const how: Classification =
-    s.targetType === 'transfer' ? { kind: 'transfer', accountId: s.targetId }
+    s.targetType === 'transfer'
+      ? { kind: 'transfer', accountId: s.targetId, ...(loan?.categoryId && t.amount < 0 ? { categoryId: loan.categoryId } : {}) }
     : s.targetType === 'income' ? { kind: 'income', categoryId: s.targetId }
     : { kind: 'category', categoryId: s.targetId };
   return classify(t, how, view, clock, s.decidedBy, `Accepted: ${s.reason}`);

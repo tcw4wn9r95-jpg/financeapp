@@ -42,6 +42,15 @@ export interface Account extends BaseRecord {
    * on-budget account it joins Ready to assign in this month (D-47).
    */
   openingDate?: IsoDate;
+  /**
+   * Loans: the monthly instalment. It keeps a linked Fixed budget category
+   * (`categoryId`) with this amount, and repayments are filed there (D-48).
+   */
+  monthlyPayment?: Cents;
+  /** Loans: month of the last instalment; the budgeted amount stops after it. */
+  lastPaymentMonth?: MonthKey;
+  /** Loans: the budget category the repayments count in. */
+  categoryId?: Id;
   /** Card accounts: the current account that pays the monthly statement. */
   settlementAccountId?: Id;
   closedAt?: string;

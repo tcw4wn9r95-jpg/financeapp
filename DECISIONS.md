@@ -208,3 +208,10 @@ The palette is validated for colour blindness and contrast: blue for your plan, 
 - **Categories:** a monthly amount can start in any month from the budget start to a year ahead, and can end ("Until"). The end is stored as a zero amount from the month after.
   - The category dialog lists the dated amounts.
   - The hint offering to carry amounts back to the budget start (D-45) now appears only for the old set-up pattern: several categories all starting in the same later month, and none from the start. "Keep as is" is remembered.
+
+**D-48 Loan payment in the budget.** A loan can carry its monthly payment and last payment month. The app then keeps a linked category in the Fixed group, named after the loan and set to reset:
+- It is budgeted at the instalment from the loan start (or the budget start) through the last payment, and gets nothing after it.
+- A changed instalment applies from the current month; earlier months keep the old amount.
+- Renaming the loan renames the category. The category cannot be deleted while the loan points to it.
+- Repayments recognised for that loan are suggested with the category already set, so "Accept" (and "Accept all") files them in one tap. The payment counts as spending in the category and lowers the loan.
+- Loans without a payment still ask for a category, as in D-29.

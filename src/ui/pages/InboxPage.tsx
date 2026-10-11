@@ -50,9 +50,14 @@ function Review({ items }: { items: Transaction[] }) {
   const [limit, setLimit] = useState(PAGE);
   const name = useMemo(() => new Map(accounts.map((a) => [a.id, a.name])), [accounts]);
   const shown = items.filter((x) => !accountFilter || x.accountId === accountFilter);
+  // A loan without its own budget category needs the category picked by hand (D-29, D-48).
   const isLoan = (id: string) => accounts.find((a) => a.id === id)?.type === 'loan';
+  const needsCategory = (id: string) => {
+    const a = accounts.find((x) => x.id === id);
+    return a?.type === 'loan' && !a.categoryId;
+  };
   // Loan repayments need a budget category, so they are confirmed one by one.
-  const suggested = shown.filter((x) => x.status === 'suggested' && !(x.suggestion?.targetType === 'transfer' && isLoan(x.suggestion.targetId)));
+  const suggested = shown.filter((x) => x.status === 'suggested' && !(x.suggestion?.targetType === 'transfer' && needsCategory(x.suggestion.targetId)));
 
   async function accept(list: Transaction[]) {
     try {
@@ -112,7 +117,7 @@ function Review({ items }: { items: Transaction[] }) {
                     {' · '}
                     <span className="muted">{sg.reason !== label ? `${sg.reason} · ` : ''}{Math.round(sg.confidence * 100)}%</span>
                   </span>
-                  {!(sg.targetType === 'transfer' && isLoan(sg.targetId)) && (
+                  {!(sg.targetType === 'transfer' && needsCategory(sg.targetId)) && (
                     <button type="button" className="button" onClick={() => void accept([tx])}>{t('inbox.accept')}</button>
                   )}
                 </p>

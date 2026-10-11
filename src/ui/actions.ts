@@ -72,12 +72,15 @@ export type AccountDraft = Pick<Account, 'name' | 'type' | 'institution' | 'iban
   matchHints?: string[];
   /** Day the account starts to count; empty = from the budget start (D-47). */
   openingDate?: IsoDate;
+  /** Loans: monthly instalment and last instalment month (D-48). */
+  monthlyPayment?: Cents;
+  lastPaymentMonth?: MonthKey;
 };
 
 /** Create or update an account; returns its id. */
 export async function saveAccount(vault: Vault, draft: AccountDraft, existing?: Account): Promise<Id> {
   const base = existing ?? (stamp(systemClock, 'manual') as Account);
-  const { closed, settlementAccountId, owner, matchHints, openingDate, ...fields } = draft;
+  const { closed, settlementAccountId, owner, matchHints, openingDate, monthlyPayment, lastPaymentMonth, ...fields } = draft;
   const record: Account = {
     ...base,
     ...fields,
@@ -96,8 +99,85 @@ export async function saveAccount(vault: Vault, draft: AccountDraft, existing?: 
   const hints = (matchHints ?? []).map((h) => h.trim()).filter((h) => h.length >= 3);
   if (hints.length) record.matchHints = hints;
   else delete record.matchHints;
-  await vault.put('accounts', record);
+  const ops: WriteOp[] = [];
+  if (draft.type === 'loan') ops.push(...loanBudgetOps(vault, record, monthlyPayment, lastPaymentMonth, existing));
+  else {
+    delete record.monthlyPayment;
+    delete record.lastPaymentMonth;
+  }
+  ops.push({ type: 'put', store: 'accounts', record });
+  await vault.write(ops);
   return record.id;
+}
+
+/**
+ * A loan with a monthly payment keeps a linked Fixed category named after it,
+ * budgeted at the instalment from the loan start (or the budget start) to the
+ * last payment. Mutates `record` (payment fields and link) (D-48).
+ */
+function loanBudgetOps(vault: Vault, record: Account, payment: Cents | undefined, lastMonth: MonthKey | undefined, existing?: Account): WriteOp[] {
+  const ops: WriteOp[] = [];
+  const now = new Date().toISOString();
+  const pay = payment && payment > 0 ? payment : 0;
+  let cat = record.categoryId ? vault.get('categories', record.categoryId) : undefined;
+  if (!pay && !cat) {
+    delete record.monthlyPayment;
+    delete record.lastPaymentMonth;
+    return ops;
+  }
+  if (!cat) {
+    cat = {
+      ...(stamp(systemClock, 'manual') as Category),
+      name: record.name,
+      groupId: 'fixed',
+      rolloverMode: 'reset',
+      isIncome: false,
+      sortOrder: vault.list('categories').length,
+    };
+    ops.push({ type: 'put', store: 'categories', record: cat });
+  } else if (cat.name !== record.name || cat.archivedAt) {
+    const { archivedAt: _a, ...rest } = cat;
+    ops.push({ type: 'put', store: 'categories', record: { ...rest, name: record.name, updatedAt: now } });
+  }
+  record.categoryId = cat.id;
+  if (pay) record.monthlyPayment = pay;
+  else delete record.monthlyPayment;
+  if (lastMonth) record.lastPaymentMonth = lastMonth;
+  else delete record.lastPaymentMonth;
+
+  const start = getSettings(vault).budgetStartMonth;
+  const loanStart = record.openingDate && compareMonths(record.openingDate.slice(0, 7), start) > 0 ? record.openingDate.slice(0, 7) : start;
+  const defaults = vault.list('budgetDefaults').filter((d) => d.categoryId === cat!.id);
+  const deleted = new Set<Id>();
+  const drop = (id: Id) => {
+    if (!deleted.has(id)) ops.push({ type: 'delete', store: 'budgetDefaults', id });
+    deleted.add(id);
+  };
+  const firstTime = !existing?.monthlyPayment || defaults.every((d) => d.monthlyAmount === 0);
+  if (firstTime || record.openingDate !== existing?.openingDate) {
+    // The instalment applies from the loan start; nothing is budgeted before it.
+    for (const d of defaults) if (d.effectiveFrom !== loanStart) drop(d.id);
+    ops.push(...defaultOps(vault, cat.id, pay, loanStart));
+  } else if (pay !== existing.monthlyPayment) {
+    // A new instalment applies from this month on; earlier months keep theirs.
+    const from = compareMonths(defaultStartMonth(vault), loanStart) < 0 ? loanStart : defaultStartMonth(vault);
+    ops.push(...defaultOps(vault, cat.id, pay, from));
+  }
+  // The end: nothing after the last instalment.
+  if (existing?.lastPaymentMonth && existing.lastPaymentMonth !== lastMonth) {
+    const old = defaults.find((d) => d.effectiveFrom === addMonths(existing.lastPaymentMonth!, 1) && d.monthlyAmount === 0);
+    if (old) drop(old.id);
+  }
+  if (lastMonth) {
+    const marker = addMonths(lastMonth, 1);
+    const same = defaults.find((d) => d.effectiveFrom === marker && !deleted.has(d.id));
+    ops.push({
+      type: 'put',
+      store: 'budgetDefaults',
+      record: same ? { ...same, monthlyAmount: 0, updatedAt: now } : { ...(stamp(systemClock, 'manual') as BudgetDefault), categoryId: cat.id, monthlyAmount: 0, effectiveFrom: marker },
+    });
+  }
+  return ops;
 }
 
 // ----------------------------------------------------------------- members
@@ -171,7 +251,11 @@ export async function saveCategory(vault: Vault, draft: CategoryDraft, existing?
 }
 
 export function categoryInUse(vault: Vault, id: Id): boolean {
-  return vault.list('allocations').some((a) => a.targetId === id) || getSettings(vault).sweepTargetCategoryId === id;
+  return (
+    vault.list('allocations').some((a) => a.targetId === id) ||
+    getSettings(vault).sweepTargetCategoryId === id ||
+    vault.list('accounts').some((a) => a.categoryId === id)
+  );
 }
 
 export async function deleteCategory(vault: Vault, id: Id): Promise<void> {

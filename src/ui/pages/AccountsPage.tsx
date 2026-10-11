@@ -1,12 +1,13 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { accountBalances, isOnBudget } from '../../domain/budget';
-import { formatDate, parseDate, todayIso } from '../../domain/dates';
+import { addMonths, currentMonth, formatDate, monthRange, parseDate, todayIso } from '../../domain/dates';
 import type { Account, AccountType } from '../../domain/types';
 import { monthName, t } from '../../i18n';
 import { accountInUse, deleteAccount, ownerName, saveAccount } from '../actions';
 import { Dialog } from '../components/Dialog';
 import { MoneyField, SelectField, TextField, useMoneyInput } from '../components/fields';
 import { Money } from '../components/Money';
+import { formatMoney } from '../../domain/money';
 import { useToast } from '../components/Toast';
 import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { accountTypeLabel } from '../labels';
@@ -40,6 +41,7 @@ export function AccountsPage() {
             {a.institution && ` · ${a.institution}`}
             {a.ibanLast4 && ` · ••${a.ibanLast4}`}
             {a.openingDate && ` · ${t('accounts.countsFrom', { date: formatDate(a.openingDate) })}`}
+            {a.type === 'loan' && a.monthlyPayment ? ` · ${t('accounts.paymentShort', { amount: formatMoney(a.monthlyPayment) })}` : ''}
             {!isOnBudget(a) && <span className="tag">{t('accounts.offBudget')}</span>}
           </p>
           {a.type === 'card' && a.settlementAccountId && (
@@ -97,6 +99,8 @@ export function AccountDialog({ existing, initial, onClose }: {
   const [settlement, setSettlement] = useState(existing?.settlementAccountId ?? '');
   const [since, setSince] = useState(existing?.openingDate ? formatDate(existing.openingDate) : '');
   const sinceIso = since.trim() ? parseDate(since) : undefined;
+  const payment = useMoneyInput(existing?.monthlyPayment);
+  const [lastPayment, setLastPayment] = useState(existing?.lastPaymentMonth ?? '');
   const [closed, setClosed] = useState(!!existing?.closedAt);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -109,6 +113,7 @@ export function AccountDialog({ existing, initial, onClose }: {
     if (opening.cents === null) return setError(t('field.moneyInvalid'));
     if (last4 && !/^[A-Za-z0-9]{4}$/.test(last4)) return setError(t('accounts.last4Invalid'));
     if (since.trim() && !sinceIso) return setError(t('field.dateInvalid'));
+    if (type === 'loan' && !payment.valid) return setError(t('field.moneyInvalid'));
     setBusy(true);
     try {
       const id = await saveAccount(vault, {
@@ -116,6 +121,8 @@ export function AccountDialog({ existing, initial, onClose }: {
         ...(type === 'card' && settlement ? { settlementAccountId: settlement } : {}), closed,
         ...(owner ? { owner } : {}),
         ...(sinceIso ? { openingDate: sinceIso } : {}),
+        ...(type === 'loan' && payment.cents ? { monthlyPayment: Math.abs(payment.cents) } : {}),
+        ...(type === 'loan' && lastPayment ? { lastPaymentMonth: lastPayment } : {}),
         matchHints: hints.split(',').map((h) => h.trim()).filter(Boolean),
       }, existing);
       notify(t('accounts.saved', { name: name.trim() }));
@@ -164,6 +171,17 @@ export function AccountDialog({ existing, initial, onClose }: {
           value={since}
           onChange={(e) => setSince(e.target.value)}
         />
+        {type === 'loan' && (
+          <>
+            <MoneyField label={t('accounts.payment')} state={payment} hint={t('accounts.paymentHint')} />
+            {!!payment.cents && (
+              <SelectField label={t('accounts.lastPayment')} value={lastPayment} onChange={(e) => setLastPayment(e.target.value)} hint={t('accounts.lastPaymentHint')}>
+                <option value="">{t('accounts.lastPaymentUnknown')}</option>
+                {monthRange(currentMonth(), addMonths(currentMonth(), 30 * 12)).map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
+              </SelectField>
+            )}
+          </>
+        )}
         {type === 'loan' ? (
           <MoneyField label={t('accounts.owed')} state={opening} hint={sinceIso ? t('accounts.owedOnHint', { date: formatDate(sinceIso) }) : t('accounts.owedHint', { month: monthName(settings.budgetStartMonth) })} />
         ) : (
