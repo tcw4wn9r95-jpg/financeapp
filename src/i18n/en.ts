@@ -250,7 +250,7 @@ export const en = {
   'accounts.last4Hint': 'Only the last 4 digits are stored, to tell accounts apart.',
   'accounts.last4Invalid': 'Enter exactly 4 digits, or leave it empty.',
   'accounts.opening': 'Opening balance',
-  'accounts.openingHint': 'Balance at the start of your budget ({month}). Negative for a card or loan you owe.',
+  'accounts.openingHint': 'Balance at the start of your budget ({month}). Tap + to make it negative, for example a credit card you owe.',
   'accounts.closedLabel': 'This account is closed',
   'accounts.nameRequired': 'Give the account a name.',
   'accounts.saved': '{name} saved.',
@@ -632,6 +632,9 @@ export const en = {
   'plan.closed': '{name} closed.',
   // ---------------------------------------------------------------- M4
   'nav.rules': 'Rules',
+  'field.negative': 'Negative amount',
+  'accounts.owed': 'Amount still owed',
+  'accounts.owedHint': 'What you owed on the loan at the start of {month}, from the lender’s statement. Enter it as a positive number.',
   'coverage.title': 'Statements since {month}',
   'coverage.complete': 'Every month is imported.',
   'coverage.missing': '{n} account-months still to upload. Older statements can be imported in any order.',

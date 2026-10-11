@@ -91,7 +91,8 @@ export function AccountDialog({ existing, initial, onClose }: {
   const [last4, setLast4] = useState(existing?.ibanLast4 ?? initial?.ibanLast4 ?? '');
   const [owner, setOwner] = useState(existing?.owner ?? '');
   const [hints, setHints] = useState((existing?.matchHints ?? []).join(', '));
-  const opening = useMoneyInput(existing?.openingBalance ?? 0);
+  // Loans are entered as the amount still owed (positive) and stored as a negative balance.
+  const opening = useMoneyInput(existing ? (existing.type === 'loan' ? Math.abs(existing.openingBalance) : existing.openingBalance) : 0);
   const [settlement, setSettlement] = useState(existing?.settlementAccountId ?? '');
   const [closed, setClosed] = useState(!!existing?.closedAt);
   const [error, setError] = useState<string>();
@@ -107,7 +108,7 @@ export function AccountDialog({ existing, initial, onClose }: {
     setBusy(true);
     try {
       const id = await saveAccount(vault, {
-        name: name.trim(), type, institution: institution.trim(), ibanLast4: last4, openingBalance: opening.cents,
+        name: name.trim(), type, institution: institution.trim(), ibanLast4: last4, openingBalance: type === 'loan' ? -Math.abs(opening.cents) : opening.cents,
         ...(type === 'card' && settlement ? { settlementAccountId: settlement } : {}), closed,
         ...(owner ? { owner } : {}),
         matchHints: hints.split(',').map((h) => h.trim()).filter(Boolean),
@@ -148,7 +149,11 @@ export function AccountDialog({ existing, initial, onClose }: {
         <TextField label={t('accounts.institution')} value={institution} onChange={(e) => setInstitution(e.target.value)} />
         <TextField label={t('accounts.last4')} value={last4} onChange={(e) => setLast4(e.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase())} hint={t('accounts.last4Hint')} autoComplete="off" />
         <TextField label={t('accounts.hints')} value={hints} onChange={(e) => setHints(e.target.value)} hint={t('accounts.hintsHint')} autoComplete="off" />
-        <MoneyField label={t('accounts.opening')} state={opening} hint={t('accounts.openingHint', { month: monthName(settings.budgetStartMonth) })} />
+        {type === 'loan' ? (
+          <MoneyField label={t('accounts.owed')} state={opening} hint={t('accounts.owedHint', { month: monthName(settings.budgetStartMonth) })} />
+        ) : (
+          <MoneyField signed label={t('accounts.opening')} state={opening} hint={t('accounts.openingHint', { month: monthName(settings.budgetStartMonth) })} />
+        )}
         {existing && (
           <label className="check">
             <input type="checkbox" checked={closed} onChange={(e) => setClosed(e.target.checked)} />

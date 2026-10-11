@@ -69,18 +69,42 @@ export function useDateInput(initial: IsoDate) {
   return { text, setText, iso };
 }
 
-export function MoneyField({ label, hint, error, state, ...rest }: Omit<InputProps, 'value' | 'onChange'> & { state: ReturnType<typeof useMoneyInput> }) {
+/**
+ * Money input. Phone number pads have no minus key, so `signed` adds a
+ * button that flips the sign (for balances that can be below zero).
+ */
+export function MoneyField({ label, hint, error, state, signed = false, ...rest }: Omit<InputProps, 'value' | 'onChange'> & { state: ReturnType<typeof useMoneyInput>; signed?: boolean }) {
+  const negative = /^\s*[-−]/.test(state.text);
+  const flip = () => {
+    const body = state.text.replace(/^\s*[-−]\s*/, '');
+    state.setText(negative ? body : `-${body || ''}`);
+  };
   return (
-    <TextField
-      label={label}
-      hint={hint ?? t('field.moneyHint')}
-      error={error ?? (!state.valid ? t('field.moneyInvalid') : undefined)}
-      inputMode="decimal"
-      autoComplete="off"
-      value={state.text}
-      onChange={(e) => state.setText(e.target.value)}
-      {...rest}
-    />
+    <Field label={label} hint={hint ?? t('field.moneyHint')} error={error ?? (!state.valid ? t('field.moneyInvalid') : undefined)}>
+      {({ id, describedBy }) => {
+        const input = (
+          <input
+            id={id}
+            aria-describedby={describedBy}
+            aria-invalid={!!(error ?? !state.valid)}
+            inputMode="decimal"
+            autoComplete="off"
+            value={state.text}
+            onChange={(e) => state.setText(e.target.value)}
+            {...rest}
+          />
+        );
+        if (!signed) return input;
+        return (
+          <div className="signed-input">
+            <button type="button" className={`sign-toggle ${negative ? 'sign-neg' : ''}`} onClick={flip} aria-pressed={negative} aria-label={t('field.negative')}>
+              {negative ? '−' : '+'}
+            </button>
+            {input}
+          </div>
+        );
+      }}
+    </Field>
   );
 }
 

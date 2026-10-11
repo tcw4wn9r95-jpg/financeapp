@@ -1735,3 +1735,30 @@ a.chip {
 .coverage-legend .cov:first-child {
   margin-left: 0;
 }
+
+/* ------------------------------------------------------- signed money input */
+.signed-input {
+  display: flex;
+  gap: 0.5rem;
+}
+.signed-input input {
+  flex: 1;
+  min-width: 0;
+}
+.sign-toggle {
+  flex: none;
+  width: 48px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 1.25rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sign-toggle.sign-neg {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--ink-text);
+}

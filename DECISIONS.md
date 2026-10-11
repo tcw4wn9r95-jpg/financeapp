@@ -194,3 +194,7 @@ The palette is validated for colour blindness and contrast: blue for your plan, 
 - **Repair hint:** when a category's amounts still begin after the start (a vault set up before this rule, or an amount set "from this month"), the Budget page says so for the months affected. It offers to carry them back, or to keep them as they are.
 - **Backfill checklist:** the Import page shows, for each account, which months since the start have a statement, only some imported rows, or nothing.
 - **Opening balance:** the earliest statement sets it automatically unless it was typed by hand (D-32). If an older statement than anything imported opens with a different balance than the typed one, the import report shows both and offers to use the statement's.
+
+**D-46 Negative amounts on phones.** The iPhone decimal keypad has no minus key.
+- A loan asks for the **amount still owed**, as a positive number, and stores it as a negative balance.
+- Other opening balances have a +/− button next to the field that flips the sign, for example for a credit card you owe.
