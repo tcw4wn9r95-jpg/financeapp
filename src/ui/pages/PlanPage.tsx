@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { currentMonth, formatDate, monthOf, parseDate, todayIso } from '../../domain/dates';
 import { firstBelow, type ForecastResult } from '../../domain/forecast';
-import { eventStatus, formatRecurrence, monthlySetAside, nextDue, parseRecurrence, planCloseEvent, provisionStatus, type Recurrence } from '../../domain/plan';
+import { eventStatus, formatRecurrence, monthlySetAside, nextDue, parseRecurrence, planCloseEvent, provisionSchedule, provisionStatus, type Recurrence } from '../../domain/plan';
 import type { EventFund, Provision, SubBudget } from '../../domain/types';
 import { monthName, monthShort, t, type MessageKey } from '../../i18n';
 import { closeEvent, deleteEvent, deleteProvision, saveEvent, saveProvision, setDefaultFrom, defaultStartMonth } from '../actions';
@@ -192,15 +192,21 @@ function Provisions() {
                     </span>
                     <span className="row-bar" aria-hidden="true"><span style={{ width: `${r.percent}%` }} /></span>
                     <span className="row-sub">
+                      {r.provision.startDate && monthOf(r.provision.startDate) > currentMonth() ? (
+                        t('plan.startsIn', { month: monthName(monthOf(r.provision.startDate)) })
+                      ) : (
+                        <>
                       {t('plan.setAsideNow', { pct: r.percent })} · {t('plan.perMonth')} <Money cents={r.assignedThisMonth} />
-                      {r.suggested !== r.assignedThisMonth && (
+                        </>
+                      )}
+                      {Math.abs(r.suggested - r.assignedThisMonth) >= 100 && (
                         <> · <strong>{t('plan.suggested')} <Money cents={r.suggested} /></strong></>
                       )}
                     </span>
                   </span>
                   <span className="row-end"><Money cents={r.available} className="row-amount" /></span>
                 </button>
-                {r.suggested !== r.assignedThisMonth && (
+                {Math.abs(r.suggested - r.assignedThisMonth) >= 100 && (
                   <div className="row-actions">
                     <button
                       type="button"
@@ -229,25 +235,29 @@ function Provisions() {
 function ProvisionDialog({ existing, onClose }: { existing: Provision | undefined; onClose: () => void }) {
   const vault = useVault();
   const notify = useToast();
-  const input = useBudgetInput();
   const [name, setName] = useState(existing?.name ?? '');
   const amount = useMoneyInput(existing?.amount);
-  const due = useDateInput(existing ? nextDue(existing, todayIso()) : todayIso());
+  const due = useDateInput(existing ? (existing.startDate ? existing.dueDate : nextDue(existing, todayIso())) : todayIso());
+  // Existing provisions without a start date: the month their amounts began, else today.
+  const firstDefault = existing
+    ? vault.list('budgetDefaults').filter((d) => d.categoryId === existing.categoryId).map((d) => d.effectiveFrom).sort()[0]
+    : undefined;
+  const start = useDateInput(existing?.startDate ?? (firstDefault ? `${firstDefault}-01` : todayIso()));
   const [recurrence, setRecurrence] = useState(existing?.recurrence ?? 'FREQ=YEARLY;INTERVAL=1');
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const funded = existing ? provisionStatus(existing, input, currentMonth(), todayIso()) : undefined;
-  const suggestion =
-    amount.cents && due.iso ? monthlySetAside(amount.cents, funded ? funded.fundedBefore : 0, currentMonth(), due.iso) : null;
+  const schedule =
+    amount.cents && due.iso && start.iso ? provisionSchedule({ amount: amount.cents, dueDate: due.iso, recurrence, startDate: start.iso }, monthOf(start.iso)) : null;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) return setError(t('plan.nameRequired'));
     if (!amount.cents || amount.cents <= 0) return setError(t('tx.amountRequired'));
-    if (!due.iso) return setError(t('field.dateInvalid'));
+    if (!due.iso || !start.iso) return setError(t('field.dateInvalid'));
+    if (!recurrence && start.iso > due.iso) return setError(t('plan.startAfterTarget'));
     setBusy(true);
     try {
-      await saveProvision(vault, { name: name.trim(), amount: amount.cents, dueDate: due.iso, recurrence }, suggestion ?? 0, existing);
+      await saveProvision(vault, { name: name.trim(), amount: amount.cents, dueDate: due.iso, recurrence, startDate: start.iso }, existing);
       notify(t('plan.saved', { name: name.trim() }));
       onClose();
     } catch {
@@ -260,15 +270,21 @@ function ProvisionDialog({ existing, onClose }: { existing: Provision | undefine
     <Dialog open title={existing ? t('plan.editProvision') : t('plan.newProvision')} onClose={onClose}>
       <form onSubmit={submit} noValidate>
         <TextField label={t('plan.name')} value={name} onChange={(e) => setName(e.target.value)} placeholder={t('plan.provisionExample')} autoFocus />
-        <MoneyField label={t('plan.amount')} state={amount} />
-        <DateField label={t('plan.dueDate')} state={due} />
+        <MoneyField label={t('plan.targetAmount')} state={amount} />
+        <DateField label={t('plan.targetDate')} state={due} />
+        <DateField label={t('plan.startDate')} state={start} />
         <SelectField label={t('plan.repeats')} value={recurrence} onChange={(e) => setRecurrence(e.target.value)}>
           {RECURRENCES.map(([v, k]) => <option key={v} value={v}>{t(k)}</option>)}
           {!RECURRENCES.some(([v]) => v === recurrence) && <option value={recurrence}>{recurrenceLabel(recurrence)}</option>}
         </SelectField>
-        {suggestion !== null && (
+        {schedule && (
           <p className="notice">
-            {t('plan.willSetAside')} <strong><Money cents={suggestion} /></strong> {t('plan.perMonthLong')}
+            {t('plan.scheduleFirst', { from: monthName(schedule[0]!.from) })} <strong><Money cents={schedule[0]!.amount} /></strong> {t('plan.perMonthShort')}
+            {schedule[1] && schedule[1].amount > 0 && (
+              <> {t('plan.scheduleThen', { from: monthName(schedule[1].from) })} <strong><Money cents={schedule[1].amount} /></strong> {t('plan.perMonthShort')}</>
+            )}
+            {schedule[1] && schedule[1].amount === 0 && <> {t('plan.scheduleStops', { from: monthName(schedule[1].from) })}</>}
+            {' '}{t('plan.scheduleAuto')}
           </p>
         )}
         {error && <p className="error" role="alert">⚠ {error}</p>}

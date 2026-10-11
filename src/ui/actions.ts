@@ -1,7 +1,7 @@
 import { backdateDefaults } from '../domain/budget';
 import { buildManualEntry, stamp, systemClock, type ManualEntry } from '../domain/ledger';
-import { addMonths, compareMonths, currentMonth, monthDiff } from '../domain/dates';
-import type { CloseEventPlan } from '../domain/plan';
+import { addMonths, compareMonths, currentMonth, monthDiff, monthOf } from '../domain/dates';
+import { provisionSchedule, type CloseEventPlan } from '../domain/plan';
 import { DEMO_ANCHOR_MONTH, shiftSnapshotMonths } from '../domain/demo';
 import type {
   Account,
@@ -435,8 +435,7 @@ export async function shareFile(filename: string, text: string, title: string): 
 /** Create or update a provision and its budget category (group Provisions). */
 export async function saveProvision(
   vault: Vault,
-  draft: Pick<Provision, 'name' | 'amount' | 'dueDate' | 'recurrence'>,
-  monthly: Cents,
+  draft: Pick<Provision, 'name' | 'amount' | 'dueDate' | 'recurrence'> & { startDate: IsoDate },
   existing?: Provision,
 ): Promise<void> {
   const ops: WriteOp[] = [];
@@ -457,16 +456,21 @@ export async function saveProvision(
     const cat = vault.get('categories', categoryId)!;
     if (cat.name !== draft.name) ops.push({ type: 'put', store: 'categories', record: { ...cat, name: draft.name, updatedAt: now } });
   }
+  // The budgeted amounts follow from start, target date and target amount (D-49).
+  const schedule = provisionSchedule(draft, monthOf(draft.startDate));
   const record: Provision = {
     ...(existing ?? (stamp(systemClock, 'manual') as Provision)),
     ...draft,
     categoryId,
-    monthlyContribution: monthly,
+    monthlyContribution: schedule[0]!.amount,
     fundedBalance: existing?.fundedBalance ?? 0,
     updatedAt: now,
   };
   ops.push({ type: 'put', store: 'provisions', record });
-  ops.push(...defaultOps(vault, categoryId, monthly, defaultStartMonth(vault)));
+  for (const d of vault.list('budgetDefaults')) if (d.categoryId === categoryId) ops.push({ type: 'delete', store: 'budgetDefaults', id: d.id });
+  for (const step of schedule) {
+    ops.push({ type: 'put', store: 'budgetDefaults', record: { ...(stamp(systemClock, 'manual') as BudgetDefault), categoryId, monthlyAmount: step.amount, effectiveFrom: step.from } });
+  }
   await vault.write(ops);
 }
 

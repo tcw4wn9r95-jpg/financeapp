@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { budgetForMonth } from './budget';
 import { firstBelow, forecast, recurringTransfers, scheduleItems } from './forecast';
-import { eventStatus, monthlySetAside, nextDue, occurrences, planCloseEvent, provisionStatus } from './plan';
+import { eventStatus, monthlySetAside, nextDue, occurrences, planCloseEvent, provisionSchedule, provisionStatus } from './plan';
 import { World } from './testkit';
 import type { EventFund, Provision } from './types';
 
@@ -156,5 +156,26 @@ describe('forecast (F9)', () => {
     expect(!b || s!.month < b.month).toBe(true);
     expect(flat.months.find((m) => m.month === '2027-02')!.end).toBe(baseline.months.find((m) => m.month === '2027-02')!.end);
     expect(flat.months.find((m) => m.month === '2027-03')!.end).toBe(baseline.months.find((m) => m.month === '2027-03')!.end - eur(600));
+  });
+});
+
+describe('provision schedule: start, target date, target amount (D-49)', () => {
+  it('car insurance 1,200 € due 15/06/2026, saving from January: 200 a month, then 100 a month for the yearly cycle', () => {
+    expect(provisionSchedule(provision({ dueDate: '2026-06-15', startDate: '2026-01-01' }), '2026-01')).toEqual([
+      { from: '2026-01', amount: eur(200) },
+      { from: '2026-07', amount: eur(100) },
+    ]);
+  });
+  it('a one-off goal stops after its target month; nothing before the start', () => {
+    expect(provisionSchedule(provision({ amount: eur(1000), dueDate: '2026-12-20', recurrence: '', startDate: '2026-09-05' }), '2026-01')).toEqual([
+      { from: '2026-09', amount: 25000 },
+      { from: '2027-01', amount: 0 },
+    ]);
+  });
+  it('a start after this year’s due date aims at the next occurrence; a full first cycle is one step', () => {
+    expect(provisionSchedule(provision({ dueDate: '2026-06-15', startDate: '2026-07-01' }), '2026-01')).toEqual([{ from: '2026-07', amount: eur(100) }]);
+    expect(provisionSchedule(provision({ amount: eur(1000), dueDate: '2026-03-31', recurrence: 'FREQ=MONTHLY;INTERVAL=3', startDate: '2026-01-10' }), '2026-01')).toEqual([
+      { from: '2026-01', amount: 33334 },
+    ]);
   });
 });

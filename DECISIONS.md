@@ -215,3 +215,11 @@ The palette is validated for colour blindness and contrast: blue for your plan, 
 - Renaming the loan renames the category. The category cannot be deleted while the loan points to it.
 - Repayments recognised for that loan are suggested with the category already set, so "Accept" (and "Accept all") files them in one tap. The payment counts as spending in the category and lowers the loan.
 - Loans without a payment still ask for a category, as in D-29.
+
+**D-49 Provisions run on a schedule.** A provision has a target amount, a target date, a start date and a recurrence. Saving it rewrites its category's monthly amounts:
+- from the start month to the first target month: the target spread evenly, rounded up to the cent;
+- then, for a recurring bill, the target spread over one full cycle (a yearly bill: a twelfth);
+- for a one-off, nothing after the target month;
+- nothing before the start.
+
+Single months can still be changed on the Budget page. The provisions list shows "Starts in …" until the start month. The catch-up suggestion appears only when it differs from the budgeted amount by at least 1 €. Provisions saved before this keep their amounts until edited; the start date then defaults to the month their amounts began.

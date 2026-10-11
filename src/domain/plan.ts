@@ -75,6 +75,29 @@ export function monthlySetAside(amount: Cents, funded: Cents, currentMonth: Mont
   return Math.max(0, Math.ceil((amount - funded) / months));
 }
 
+/**
+ * The monthly amounts a provision budgets, as dated steps (D-49):
+ * - from the start month to the first due month: the target spread evenly;
+ * - after that, for a recurring bill, the target spread over one full cycle;
+ * - for a one-off, nothing after the due month.
+ * Amounts are rounded up to the cent so the target is always reached.
+ */
+export function provisionSchedule(p: Pick<Provision, 'amount' | 'dueDate' | 'recurrence' | 'startDate'>, fallbackStart: MonthKey): { from: MonthKey; amount: Cents }[] {
+  const start = p.startDate ? monthOf(p.startDate) : fallbackStart;
+  const r = parseRecurrence(p.recurrence);
+  const firstDue = r ? occurrences(p, `${start}-01`, addMonthsToDate(`${start}-01`, 12 * 50))[0] : p.dueDate;
+  if (!firstDue || monthOf(firstDue) < start) return [{ from: start, amount: 0 }];
+  const months = monthDiff(start, monthOf(firstDue)) + 1;
+  const out = [{ from: start, amount: Math.ceil(p.amount / months) }];
+  const after = addMonths(monthOf(firstDue), 1);
+  if (!r) out.push({ from: after, amount: 0 });
+  else {
+    const cycle = Math.ceil(p.amount / periodMonths(r));
+    if (cycle !== out[0]!.amount) out.push({ from: after, amount: cycle });
+  }
+  return out;
+}
+
 export interface ProvisionStatus {
   provision: Provision;
   nextDue: IsoDate;
@@ -95,7 +118,9 @@ export function provisionStatus(p: Provision, input: BudgetInput, month: MonthKe
   const available = cm?.available ?? 0;
   // Money already there, not counting this month's own assignment (a bill paid
   // this month has already left it).
-  const suggested = monthlySetAside(p.amount, fundedBefore + (cm?.activity ?? 0), month, due);
+  // Not live yet: nothing to set aside before the start month (D-49).
+  const notStarted = !!p.startDate && monthOf(p.startDate) > month;
+  const suggested = notStarted ? 0 : monthlySetAside(p.amount, fundedBefore + (cm?.activity ?? 0), month, due);
   return {
     provision: p,
     nextDue: due,

@@ -178,8 +178,12 @@ export interface BudgetOverride extends BaseRecord {
 
 export interface Provision extends BaseRecord {
   name: string;
+  /** Target amount, needed by the target (due) date. */
   amount: Cents;
+  /** Target date: the (first) due date. */
   dueDate: IsoDate;
+  /** When saving starts; nothing is budgeted before it (D-49). */
+  startDate?: IsoDate;
   /** RFC 5545 RRULE subset: "FREQ=MONTHLY;INTERVAL=n" or "FREQ=YEARLY;INTERVAL=n". Empty = one-off. */
   recurrence: string;
   /** Cached for display; the truth is the linked category's available amount. */
