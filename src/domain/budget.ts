@@ -283,3 +283,18 @@ export function accountBalances(
   }
   return out;
 }
+
+/**
+ * Categories whose monthly amounts only begin after the budget start (for
+ * example set up in October, then the start moved to January): their first
+ * default, moved back to the start so the earlier months are budgeted too
+ * (D-45). Later changes of amount keep their own dates.
+ */
+export function backdateDefaults(defaults: readonly BudgetDefault[], start: MonthKey): BudgetDefault[] {
+  const first = new Map<Id, BudgetDefault>();
+  for (const d of defaults) {
+    const cur = first.get(d.categoryId);
+    if (!cur || compareMonths(d.effectiveFrom, cur.effectiveFrom) < 0) first.set(d.categoryId, d);
+  }
+  return [...first.values()].filter((d) => compareMonths(d.effectiveFrom, start) > 0).map((d) => ({ ...d, effectiveFrom: start }));
+}

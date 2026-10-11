@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from 'react';
 import type { CategoryMonth } from '../../domain/budget';
-import { currentMonth, isMonthKey } from '../../domain/dates';
+import { compareMonths, currentMonth, isMonthKey } from '../../domain/dates';
 import { CATEGORY_GROUPS, type Category, type MonthKey } from '../../domain/types';
 import { monthName, t } from '../../i18n';
-import { resetOverride, setDefaultFrom, setOverride } from '../actions';
+import { backdateToStart, resetOverride, setDefaultFrom, setOverride } from '../actions';
+import { backdateDefaults } from '../../domain/budget';
 import { Dialog } from '../components/Dialog';
 import { MoneyField, TextField, useMoneyInput } from '../components/fields';
 import { Money } from '../components/Money';
@@ -13,6 +14,36 @@ import { useToast } from '../components/Toast';
 import { useBudgetMonth, useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { groupLabel, rolloverLabel } from '../labels';
 import { href, navigate, useRoute } from '../router';
+
+/** "Keep as is" hides the hint until the app is reopened. */
+let lateDismissed = false;
+
+/** Monthly amounts that start after this month although the budget starts earlier: offer to carry them back (D-45). */
+function LateAmounts({ month }: { month: MonthKey }) {
+  const vault = useVault();
+  const notify = useToast();
+  const settings = useSettings();
+  const defaults = useStore('budgetDefaults');
+  const [hidden, setHidden] = useState(lateDismissed);
+  const late = backdateDefaults(defaults, settings.budgetStartMonth)
+    .map((d) => defaults.find((x) => x.id === d.id)!)
+    .filter((d) => compareMonths(d.effectiveFrom, month) > 0);
+  if (late.length === 0 || hidden) return null;
+  const from = late.map((d) => d.effectiveFrom).sort()[0]!;
+  return (
+    <div className="notice notice-warn" role="status">
+      <p>⚠ {t('budget.lateAmounts', { n: late.length, month: monthName(from) })}</p>
+      <button
+        type="button"
+        className="button button-primary"
+        onClick={() => void backdateToStart(vault).then((n) => notify(t(n === 1 ? 'settings.startMovedOne' : 'settings.startMoved', { n, month: monthName(settings.budgetStartMonth) })))}
+      >
+        {t('budget.applyFromStart', { month: monthName(settings.budgetStartMonth) })}
+      </button>{' '}
+      <button type="button" className="button button-quiet" onClick={() => { lateDismissed = true; setHidden(true); }}>{t('budget.keepLate')}</button>
+    </div>
+  );
+}
 
 export function BudgetPage() {
   useDocumentTitle(t('nav.budget'));
@@ -41,6 +72,7 @@ export function BudgetPage() {
         </p>
       ) : (
         <>
+          <LateAmounts month={month} />
           <ReadyToAssign month={budget} />
           {expense.length === 0 && (
             <p className="notice">

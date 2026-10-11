@@ -1,17 +1,18 @@
-import { useState, type FormEvent } from 'react';
-import { formatDate } from '../../domain/dates';
+import { useMemo, useState, type FormEvent } from 'react';
+import { currentMonth, formatDate } from '../../domain/dates';
+import { coverage } from '../../domain/coverage';
 import { guessColumns, parseCsv, type MappingSpec } from '../../domain/import/csv';
 import { detectAndParse, type FileContent } from '../../domain/import/detect';
 import { assignAccounts, planImport, subAccounts } from '../../domain/import/plan';
 import { ImportParseError, type ParseResult } from '../../domain/import/types';
 import { systemClock } from '../../domain/ledger';
 import type { BankMapping, Id, ImportReport } from '../../domain/types';
-import { t, type MessageKey } from '../../i18n';
+import { monthName, t, type MessageKey } from '../../i18n';
 import { getSettings } from '../actions';
 import { SelectField, TextField } from '../components/fields';
 import { Money } from '../components/Money';
 import { useToast } from '../components/Toast';
-import { useDocumentTitle, useStore, useVault } from '../hooks';
+import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { learnContext, writeLearn } from '../learnActions';
 import { learnOnImport } from '../../domain/learn';
 import { applyImport, availableMappings, ledgerView, parseXml, readImportFile, saveMapping } from '../importActions';
@@ -107,6 +108,7 @@ export function ImportPage() {
         </section>
       ))}
       <SavedMappings />
+      <Coverage />
     </>
   );
 }
@@ -268,10 +270,78 @@ function Warning({ code }: { code: string }) {
           ✓ {t('import.warn.openingSet', { name: accounts.find((x) => x.id === a)?.name ?? '?' })} <Money cents={Number(b)} />
         </p>
       );
+    case 'openingDiffers': {
+      const account = accounts.find((x) => x.id === a);
+      return <OpeningDiffers accountId={a ?? ''} name={account?.name ?? '?'} amount={Number(b)} current={account?.openingBalance ?? 0} />;
+    }
     default:
       text = code;
   }
   return <p className="notice notice-warn">⚠ {text}{kind === 'beforeStart' && <> <a href={href('settings')}>{t('nav.settings')}</a></>}</p>;
+}
+
+/** An older statement opens with a different balance than the one typed for the account. */
+function OpeningDiffers({ accountId, name, amount, current }: { accountId: string; name: string; amount: number; current: number }) {
+  const vault = useVault();
+  const notify = useToast();
+  const [done, setDone] = useState(current === amount);
+  if (done) return <p className="notice">✓ {t('import.warn.openingSet', { name })} <Money cents={amount} /></p>;
+  return (
+    <div className="notice notice-warn">
+      <p>⚠ {t('import.warn.openingDiffers', { name })} <Money cents={amount} /> · {t('import.warn.openingTyped')} <Money cents={current} /></p>
+      <button
+        type="button"
+        className="button button-primary"
+        onClick={async () => {
+          const acc = vault.get('accounts', accountId);
+          if (!acc) return;
+          await vault.put('accounts', { ...acc, openingBalance: amount, openingFromStatement: true, updatedAt: new Date().toISOString() });
+          notify(t('import.warn.openingUpdated', { name }));
+          setDone(true);
+        }}
+      >
+        {t('import.warn.useStatementOpening')}
+      </button>
+    </div>
+  );
+}
+
+/** Backfill checklist: which months of each account have statements (D-45). */
+function Coverage() {
+  const accounts = useStore('accounts');
+  const statements = useStore('statements');
+  const transactions = useStore('transactions');
+  const settings = useSettings();
+  const rows = useMemo(
+    () => coverage(accounts, statements, transactions, settings.budgetStartMonth, currentMonth()),
+    [accounts, statements, transactions, settings.budgetStartMonth],
+  );
+  if (rows.length === 0) return null;
+  const missing = rows.reduce((s, r) => s + r.missing, 0);
+  return (
+    <section className="card" aria-labelledby="cov-h">
+      <h2 id="cov-h">{t('coverage.title', { month: monthName(settings.budgetStartMonth) })}</h2>
+      <p className="hint">{missing === 0 ? `✓ ${t('coverage.complete')}` : t('coverage.missing', { n: missing })}</p>
+      {rows.map((r) => (
+        <div key={r.accountId} className="coverage-row">
+          <span className="coverage-name">{accounts.find((a) => a.id === r.accountId)?.name ?? '?'}</span>
+          <ol className="coverage-months">
+            {r.months.map((m) => (
+              <li key={m.month} className={`cov cov-${m.status}`} title={`${monthName(m.month)}: ${t(`coverage.${m.status}`)}`}>
+                <span aria-hidden="true">{new Date(`${m.month}-15T12:00:00`).toLocaleString('en-GB', { month: 'narrow' })}</span>
+                <span className="visually-hidden">{monthName(m.month)}: {t(`coverage.${m.status}`)}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ))}
+      <p className="coverage-legend hint">
+        <span className="cov cov-statement" aria-hidden="true" /> {t('coverage.statement')}
+        <span className="cov cov-rows" aria-hidden="true" /> {t('coverage.rows')}
+        <span className="cov cov-none" aria-hidden="true" /> {t('coverage.none')}
+      </p>
+    </section>
+  );
 }
 
 const SKIP_KEYS: Record<string, MessageKey> = {

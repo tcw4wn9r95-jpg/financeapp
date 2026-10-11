@@ -188,3 +188,9 @@ The palette is validated for colour blindness and contrast: blue for your plan, 
 - Face ID is offered automatically when the app is opened. After a manual "Lock" it waits for a tap, otherwise it would unlock at once.
 - Needs a browser with PRF for platform passkeys: iOS/iPadOS 18+, recent Chrome/Android. Elsewhere the setting explains that and the passphrase stays.
 - The passkey may sync through iCloud Keychain, but each device's vault has its own slot.
+
+**D-45 Starting the budget earlier and backfilling.** The budget can start in any month from January 2020.
+- **Moving the start earlier** (Settings, or the first-run screen) moves each category's first monthly amount back to the new start, so the earlier months are budgeted. Later changes of amount keep their own dates.
+- **Repair hint:** when a category's amounts still begin after the start (a vault set up before this rule, or an amount set "from this month"), the Budget page says so for the months affected. It offers to carry them back, or to keep them as they are.
+- **Backfill checklist:** the Import page shows, for each account, which months since the start have a statement, only some imported rows, or nothing.
+- **Opening balance:** the earliest statement sets it automatically unless it was typed by hand (D-32). If an older statement than anything imported opens with a different balance than the typed one, the import report shows both and offers to use the statement's.

@@ -187,6 +187,14 @@ describe('import scenario: a household month across six files', () => {
     expect(L.accounts.find((a) => a.id === 'joint')!.openingBalance).toBe(100);
   });
 
+  it('an older statement than a hand-typed opening balance asks before replacing it (D-45)', async () => {
+    await L.import('revolut-john-2026-09-part2.csv', REVOLUT);
+    L.accounts = L.accounts.map((a) => (a.id === 'johnRev' ? { ...a, openingBalance: 999, openingFromStatement: false } : a));
+    const r = await L.import('revolut-john-2026-09-part1.csv', REVOLUT);
+    expect(r.warnings).toContain('openingDiffers:johnRev:41250');
+    expect(L.accounts.find((a) => a.id === 'johnRev')!.openingBalance).toBe(999);
+  });
+
   it('pairs transfers when the other statement was imported first', async () => {
     await L.import('revolut-john-2026-09.csv', REVOLUT);
     const spk = await L.import('spuerkeess-joint-2026-09.pdf');

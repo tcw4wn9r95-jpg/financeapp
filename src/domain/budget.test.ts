@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accountBalances, budgetForMonth, computeBudget, defaultFor, isOnBudget } from './budget';
+import { accountBalances, backdateDefaults, budgetForMonth, computeBudget, defaultFor, isOnBudget } from './budget';
 import { lastDayOfMonth, monthRange } from './dates';
 import { World } from './testkit';
 
@@ -244,5 +244,26 @@ describe('invariant: Ready to assign + Σ available = on-budget cash', () => {
       expect(m.readyToAssign + available).toBe(cash);
       expect(Number.isSafeInteger(m.readyToAssign)).toBe(true);
     }
+  });
+});
+
+describe('moving the budget start earlier (D-45)', () => {
+  it('moves each category’s first monthly amount back to the start; later changes keep their dates', () => {
+    const w = new World('2026-01');
+    w.category('rent', 'fixed', 'reset');
+    w.category('food', 'variable', 'roll');
+    w.category('old', 'variable', 'roll');
+    w.setDefault('rent', 180000, '2026-10');
+    w.setDefault('rent', 190000, '2026-12');
+    w.setDefault('food', 60000, '2026-10');
+    w.setDefault('old', 10000, '2026-01');
+    const moved = backdateDefaults(w.defaults, '2026-01');
+    expect(moved.map((d) => [d.categoryId, d.monthlyAmount, d.effectiveFrom])).toEqual([
+      ['rent', 180000, '2026-01'],
+      ['food', 60000, '2026-01'],
+    ]);
+    w.defaults = w.defaults.map((d) => moved.find((m) => m.id === d.id) ?? d);
+    expect(budgetForMonth(w.input(), '2026-03')!.categories.get('rent')!.assigned).toBe(180000);
+    expect(budgetForMonth(w.input(), '2026-12')!.categories.get('rent')!.assigned).toBe(190000);
   });
 });

@@ -90,6 +90,13 @@ Settings → Face ID → enter the passphrase once → **Turn on Face ID**. From
 - **New browser or cleared storage:** create a new vault (any passphrase), choose **Restore from a backup file**, and follow the restore steps.
 - **Forgot your passphrase:** on the lock screen, choose **Use your recovery key**, then set a new passphrase.
 
+## Starting in January and backfilling
+
+1. Settings → Budget starts in → choose the first month (for example January 2026). Monthly amounts you already set move back with it.
+2. Import the statements from that month on, in any order. Duplicates are ignored. The oldest statement sets each account's opening balance; if you typed one by hand, the report asks before replacing it.
+3. The Import page's "Statements since …" card shows which months are still missing for each account.
+4. Go through the past months on the Budget page (‹ ›) and adjust what was assigned in each, then clear the inbox.
+
 ## Importing statements
 
 1. **Set up once.**

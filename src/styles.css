@@ -1682,3 +1682,56 @@ a.chip {
   flex: 1;
   border-top: 1px solid var(--border);
 }
+
+/* ------------------------------------------------------------- coverage */
+.coverage-row {
+  display: grid;
+  gap: 4px;
+  margin: 0.6rem 0;
+}
+.coverage-name {
+  font-size: 0.85rem;
+  font-weight: 550;
+}
+.coverage-months {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 3px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.cov {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  border-radius: 5px;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+.cov-statement {
+  background: var(--ink);
+  color: var(--ink-text);
+}
+.cov-rows {
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.cov-none {
+  background: transparent;
+  color: var(--muted);
+  border: 1px dashed var(--border-strong);
+}
+.coverage-legend .cov {
+  display: inline-block;
+  width: 12px;
+  min-height: 12px;
+  height: 12px;
+  margin: 0 0.25rem 0 0.75rem;
+  vertical-align: -1px;
+}
+.coverage-legend .cov:first-child {
+  margin-left: 0;
+}

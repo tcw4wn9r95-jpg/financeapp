@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { evaluatePasskey, PasskeyError } from '../../infra/passkey';
 import { MIN_PASSPHRASE_LENGTH, VaultError } from '../../storage/vault';
 import { monthName, t } from '../../i18n';
-import { addSuggestedCategories, getSettings, loadDemo, saveSettings } from '../actions';
+import { addSuggestedCategories, changeBudgetStart, getSettings, loadDemo, saveSettings } from '../actions';
 import { startMonthOptions } from './SettingsPage';
 import { SelectField, TextField } from '../components/fields';
 import { useVault } from '../hooks';
@@ -109,7 +109,7 @@ export function RecoveryKeyStep({ recoveryKey, onDone }: { recoveryKey: string; 
   const [startMonth, setStartMonth] = useState(getSettings(vault).budgetStartMonth);
   const start = async (how: 'empty' | 'suggested' | 'demo' | 'restore') => {
     setBusy(true);
-    await saveSettings(vault, { budgetStartMonth: startMonth });
+    await changeBudgetStart(vault, startMonth);
     if (how === 'suggested') await addSuggestedCategories(vault);
     if (how === 'demo') await loadDemo(vault);
     navigate(how === 'restore' ? 'settings' : how === 'suggested' ? 'categories' : '', how === 'restore' ? { section: 'restore' } : undefined);

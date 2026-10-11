@@ -276,6 +276,16 @@ export function planImport(input: ImportInput, ledger: Ledger, clock: Clock): Le
       if (i >= 0) accountsOut[i] = updated;
       else accountsOut.push(updated);
       report.warnings.push(`openingSet:${account.id}:${info.openingBalance}`);
+    } else if (
+      info.openingBalance !== undefined &&
+      current.openingFromStatement !== true &&
+      own.length > 0 &&
+      earliest !== undefined &&
+      periodStart <= earliest &&
+      info.openingBalance !== current.openingBalance
+    ) {
+      // An older statement than anything imported, but the opening balance was typed by hand: ask (D-45).
+      report.warnings.push(`openingDiffers:${account.id}:${info.openingBalance}`);
     }
   }
 

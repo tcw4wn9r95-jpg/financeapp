@@ -13,7 +13,7 @@ import {
   type PlainExport,
 } from '../../storage/backup';
 import { MIN_PASSPHRASE_LENGTH, VaultError } from '../../storage/vault';
-import { canShareFiles, download, loadDemo, shareFile, restoreSnapshot, saveMembers, saveSettings } from '../actions';
+import { changeBudgetStart, canShareFiles, download, loadDemo, shareFile, restoreSnapshot, saveMembers, saveSettings } from '../actions';
 import { MoneyField, SelectField, TextField, useMoneyInput } from '../components/fields';
 import { useToast } from '../components/Toast';
 import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
@@ -143,7 +143,11 @@ function BudgetSettings() {
       <SelectField
         label={t('settings.startMonth')}
         value={settings.budgetStartMonth}
-        onChange={(e) => void save({ budgetStartMonth: e.target.value })}
+        onChange={(e) => {
+          void changeBudgetStart(vault, e.target.value).then((n) =>
+            notify(n > 0 ? t(n === 1 ? 'settings.startMovedOne' : 'settings.startMoved', { n, month: monthName(e.target.value) }) : t('settings.saved')),
+          );
+        }}
         hint={t('settings.startMonthHint')}
       >
         {months.map((m) => <option key={m} value={m}>{monthName(m)}</option>)}

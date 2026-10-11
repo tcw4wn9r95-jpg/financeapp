@@ -1,3 +1,4 @@
+import { backdateDefaults } from '../domain/budget';
 import { buildManualEntry, stamp, systemClock, type ManualEntry } from '../domain/ledger';
 import { addMonths, compareMonths, currentMonth, monthDiff } from '../domain/dates';
 import type { CloseEventPlan } from '../domain/plan';
@@ -34,6 +35,26 @@ export function defaultSettings(now = new Date()): Settings {
 
 export function getSettings(vault: Vault): Settings {
   return vault.get('settings', 'settings') ?? defaultSettings();
+}
+
+/**
+ * Move the first budget month. Moving it earlier carries each category's
+ * first monthly amount back with it, so the new months are budgeted (D-45).
+ * Returns how many categories were carried back.
+ */
+export async function changeBudgetStart(vault: Vault, month: MonthKey): Promise<number> {
+  const settings = getSettings(vault);
+  const moved = backdateDefaults(vault.list('budgetDefaults'), month);
+  await vault.write([
+    { type: 'put', store: 'settings', record: { ...settings, budgetStartMonth: month, updatedAt: new Date().toISOString() } },
+    ...moved.map((record): WriteOp => ({ type: 'put', store: 'budgetDefaults', record: { ...record, updatedAt: new Date().toISOString() } })),
+  ]);
+  return moved.length;
+}
+
+/** Carry monthly amounts that start after the budget start back to it. */
+export async function backdateToStart(vault: Vault): Promise<number> {
+  return changeBudgetStart(vault, getSettings(vault).budgetStartMonth);
 }
 
 export async function saveSettings(vault: Vault, patch: Partial<Omit<Settings, 'id'>>): Promise<void> {
