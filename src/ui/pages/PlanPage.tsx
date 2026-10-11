@@ -243,7 +243,7 @@ function ProvisionDialog({ existing, onClose }: { existing: Provision | undefine
     ? vault.list('budgetDefaults').filter((d) => d.categoryId === existing.categoryId).map((d) => d.effectiveFrom).sort()[0]
     : undefined;
   const start = useDateInput(existing?.startDate ?? (firstDefault ? `${firstDefault}-01` : todayIso()));
-  const [recurrence, setRecurrence] = useState(existing?.recurrence ?? 'FREQ=YEARLY;INTERVAL=1');
+  const [recurrence, setRecurrence] = useState(existing?.recurrence ?? '');
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const schedule =
@@ -270,22 +270,24 @@ function ProvisionDialog({ existing, onClose }: { existing: Provision | undefine
     <Dialog open title={existing ? t('plan.editProvision') : t('plan.newProvision')} onClose={onClose}>
       <form onSubmit={submit} noValidate>
         <TextField label={t('plan.name')} value={name} onChange={(e) => setName(e.target.value)} placeholder={t('plan.provisionExample')} autoFocus />
+        <DateField label={t('plan.startDate')} state={start} hint={t('plan.startDateHint')} />
+        <DateField label={t('plan.targetDate')} state={due} hint={t('plan.targetDateHint')} />
         <MoneyField label={t('plan.targetAmount')} state={amount} />
-        <DateField label={t('plan.targetDate')} state={due} />
-        <DateField label={t('plan.startDate')} state={start} />
         <SelectField label={t('plan.repeats')} value={recurrence} onChange={(e) => setRecurrence(e.target.value)}>
           {RECURRENCES.map(([v, k]) => <option key={v} value={v}>{t(k)}</option>)}
           {!RECURRENCES.some(([v]) => v === recurrence) && <option value={recurrence}>{recurrenceLabel(recurrence)}</option>}
         </SelectField>
         {schedule && (
-          <p className="notice">
-            {t('plan.scheduleFirst', { from: monthName(schedule[0]!.from) })} <strong><Money cents={schedule[0]!.amount} /></strong> {t('plan.perMonthShort')}
-            {schedule[1] && schedule[1].amount > 0 && (
-              <> {t('plan.scheduleThen', { from: monthName(schedule[1].from) })} <strong><Money cents={schedule[1].amount} /></strong> {t('plan.perMonthShort')}</>
-            )}
-            {schedule[1] && schedule[1].amount === 0 && <> {t('plan.scheduleStops', { from: monthName(schedule[1].from) })}</>}
-            {' '}{t('plan.scheduleAuto')}
-          </p>
+          <div className="notice schedule-preview" role="status">
+            <p className="schedule-amount">
+              <strong><Money cents={schedule[0]!.amount} /></strong> {t('plan.perMonthShort')}
+            </p>
+            <p>
+              {t('plan.scheduleRange', { from: monthName(schedule[0]!.from), to: monthName(monthOf(due.iso!)) })}
+              {schedule[1] && schedule[1].amount > 0 && <> {t('plan.scheduleThen', { from: monthName(schedule[1].from) })} <Money cents={schedule[1].amount} /> {t('plan.perMonthShort')}</>}
+              {' '}{t('plan.scheduleAuto')}
+            </p>
+          </div>
         )}
         {error && <p className="error" role="alert">⚠ {error}</p>}
         <div className="row">

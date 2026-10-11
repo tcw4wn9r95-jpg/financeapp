@@ -43,7 +43,15 @@ export type Classification =
    * loan's balance still goes down (D-29).
    */
   | { kind: 'transfer'; accountId: Id; categoryId?: Id }
-  | { kind: 'split'; lines: { kind: 'category' | 'income'; categoryId: Id; amount: Cents }[] };
+  /**
+   * Several parts: categories (including provisions and trips, which are
+   * categories), income, and transfers to own accounts (D-51).
+   */
+  | { kind: 'split'; lines: SplitLine[] };
+
+export type SplitLine =
+  | { kind: 'category' | 'income'; categoryId: Id; amount: Cents }
+  | { kind: 'transfer'; accountId: Id; amount: Cents };
 
 export class ReconcileError extends Error {
   constructor(public readonly code: 'locked' | 'splitUnbalanced' | 'sameAccount' | 'unknownAccount') {
@@ -106,7 +114,17 @@ export function classify(t: Transaction, how: Classification, view: LedgerView, 
   } else if (how.kind === 'split') {
     const sum = how.lines.reduce((s, l) => s + l.amount, 0);
     if (sum !== t.amount || how.lines.length === 0) throw new ReconcileError('splitUnbalanced');
-    for (const l of how.lines) ch.putAllocations.push(alloc(l.kind, l.categoryId, l.amount));
+    const used = new Set<Id>();
+    for (const l of how.lines) {
+      if (l.kind !== 'transfer') {
+        ch.putAllocations.push(alloc(l.kind, l.categoryId, l.amount));
+        continue;
+      }
+      // A part moved to another own account: pair it with a matching row there, or create that side.
+      const other = transferSide(t, l.accountId, l.amount, view, ch, used, clock, source);
+      ch.putAllocations.push(alloc('transfer', other.id, l.amount));
+      ch.putAllocations.push(alloc('transfer', t.id, other.amount, other));
+    }
   } else {
     if (how.accountId === t.accountId) throw new ReconcileError('sameAccount');
     const target = view.accounts.find((a) => a.id === how.accountId);
@@ -134,6 +152,28 @@ export function classify(t: Transaction, how: Classification, view: LedgerView, 
   }
   ch.putTransactions.push(done);
   return ch;
+}
+
+/** The other side of a transfer of `amount` from `t` to `accountId` (an existing open row, or a new mirror). */
+function transferSide(t: Transaction, accountId: Id, amount: Cents, view: LedgerView, ch: Changes, used: Set<Id>, clock: Clock, source: Transaction['source']): Transaction {
+  if (accountId === t.accountId) throw new ReconcileError('sameAccount');
+  const target = view.accounts.find((a) => a.id === accountId);
+  if (!target) throw new ReconcileError('unknownAccount');
+  const allocatedIds = new Set(view.allocations.filter((a) => !ch.deleteAllocations.includes(a.id)).map((a) => a.transactionId));
+  const counterpart = view.transactions
+    .filter((x) => x.accountId === target.id && x.amount === -amount && !allocatedIds.has(x.id) && !used.has(x.id) && x.status !== 'locked')
+    .sort((a, b) => closeDays(a.date, t.date) - closeDays(b.date, t.date))
+    .find((x) => closeDays(x.date, t.date) <= 7);
+  const from = view.accounts.find((a) => a.id === t.accountId);
+  const other = counterpart
+    ? (() => {
+        const { suggestion: _x, ...p } = counterpart;
+        return { ...p, status: 'reconciled' as const, updatedAt: clock.now() };
+      })()
+    : makeMirror(clock, { ...t, amount }, target, from, source);
+  used.add(other.id);
+  ch.putTransactions.push(other);
+  return other;
 }
 
 export function acceptSuggestion(t: Transaction, view: LedgerView, clock: Clock): Changes {

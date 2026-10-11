@@ -57,6 +57,26 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  if (e.request.mode === 'navigate') {
+    // The page itself: network first so a new version shows on the next launch;
+    // the cached copy when offline or when the network takes over 3 seconds.
+    const cached = () => caches.match('./index.html');
+    const timeout = new Promise((resolve) => setTimeout(resolve, 3000)).then(cached);
+    e.respondWith(
+      Promise.race([
+        fetch(e.request).then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put('./index.html', copy));
+          }
+          return res;
+        }),
+        timeout,
+      ]).then((res) => res || cached()).catch(cached),
+    );
+    return;
+  }
+  // Built files have content hashes in their names: the cache is always right.
   e.respondWith(
     caches.match(e.request, { ignoreSearch: true }).then((hit) => hit || fetch(e.request).catch(() => caches.match('./index.html'))),
   );
@@ -67,8 +87,11 @@ self.addEventListener('fetch', (e) => {
   };
 }
 
+const BUILT_AT = new Date().toISOString().slice(0, 16).replace('T', ' ');
+
 export default defineConfig({
   base: './',
+  define: { __APP_BUILT__: JSON.stringify(BUILT_AT) },
   plugins: [react(), csp(), serviceWorker()],
   build: {
     target: 'es2022',

@@ -1776,3 +1776,11 @@ input[type='date'] {
 input[type='date']::-webkit-date-and-time-value {
   text-align: left;
 }
+
+.schedule-preview p {
+  margin: 0;
+}
+.schedule-amount {
+  font-size: 1.35rem;
+  margin-bottom: 0.25rem !important;
+}

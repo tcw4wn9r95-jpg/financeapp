@@ -26,6 +26,11 @@ void vault.init().then(() => {
 // Offline support: the service worker only exists in production builds.
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    void navigator.serviceWorker.register('./sw.js');
+    void navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then((reg) => {
+      // Phones keep a home-screen app alive for days: look for a new version whenever it comes back.
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') void reg.update().catch(() => undefined);
+      });
+    });
   });
 }

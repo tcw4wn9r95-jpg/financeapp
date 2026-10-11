@@ -1,8 +1,8 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { formatDate } from '../../domain/dates';
 import { systemClock } from '../../domain/ledger';
-import { parseMoney } from '../../domain/money';
-import { classify, mergeChanges, ReconcileError, similar, type Classification } from '../../domain/reconcile';
+import { formatMoneyInput, parseMoney } from '../../domain/money';
+import { classify, mergeChanges, ReconcileError, similar, type Classification, type SplitLine } from '../../domain/reconcile';
 import { CATEGORY_GROUPS, type Account, type Category, type Transaction } from '../../domain/types';
 import { t } from '../../i18n';
 import { ledgerView } from '../importActions';
@@ -174,7 +174,11 @@ function SplitEditor({ tx, onClose, onDone }: { tx: Transaction; onClose: () => 
     try {
       const how: Classification = {
         kind: 'split',
-        lines: parsed.map((l) => ({ kind: l.target!.kind as 'category' | 'income', categoryId: (l.target as { categoryId: string }).categoryId, amount: sign * Math.abs(l.cents!) })),
+        lines: parsed.map((l): SplitLine => {
+          const amt = sign * Math.abs(l.cents!);
+          const tg = l.target!;
+          return tg.kind === 'transfer' ? { kind: 'transfer', accountId: tg.accountId, amount: amt } : { kind: tg.kind as 'category' | 'income', categoryId: (tg as { categoryId: string }).categoryId, amount: amt };
+        }),
       };
       await applyUserChanges(vault, classify(tx, how, ledgerView(vault), systemClock));
       notify(t('inbox.done'));
@@ -194,7 +198,7 @@ function SplitEditor({ tx, onClose, onDone }: { tx: Transaction; onClose: () => 
         <div className="split-line" key={i}>
           <label className="visually-hidden" htmlFor={`sp-${tx.id}-${i}-t`}>{t('inbox.splitCategory', { n: i + 1 })}</label>
           <select id={`sp-${tx.id}-${i}-t`} value={l.target} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, target: e.target.value } : x)))}>
-            <TargetOptions tx={tx} categories={categories} accounts={accounts} transfers={false} />
+            <TargetOptions tx={tx} categories={categories} accounts={accounts} />
           </select>
           <label className="visually-hidden" htmlFor={`sp-${tx.id}-${i}-a`}>{t('inbox.splitAmount', { n: i + 1 })}</label>
           <input id={`sp-${tx.id}-${i}-a`} inputMode="decimal" value={l.amount} placeholder="0,00" onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))} />
@@ -202,6 +206,18 @@ function SplitEditor({ tx, onClose, onDone }: { tx: Transaction; onClose: () => 
       ))}
       <div className="row">
         <button type="button" className="button button-quiet" onClick={() => setLines([...lines, { target: '', amount: '' }])}>+ {t('inbox.addLine')}</button>
+        {remaining !== 0 && lines.some((l) => !l.amount.trim()) && (
+          <button
+            type="button"
+            className="button button-quiet"
+            onClick={() => {
+              const i = lines.findIndex((l) => !l.amount.trim());
+              setLines(lines.map((x, j) => (j === i ? { ...x, amount: formatMoneyInput(Math.abs(remaining)) } : x)));
+            }}
+          >
+            {t('inbox.fillRest')}
+          </button>
+        )}
         <button className="button button-primary" disabled={!valid}>{t('inbox.saveSplit')}</button>
         <button type="button" className="button button-quiet" onClick={onClose}>{t('common.cancel')}</button>
       </div>

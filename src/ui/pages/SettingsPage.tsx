@@ -603,6 +603,7 @@ function DataSection() {
   return (
     <section className="card" id="settings-data" aria-labelledby="dt-h">
       <h2 id="dt-h">{t('data.title')}</h2>
+      <p className="hint">{t('data.version', { v: typeof __APP_BUILT__ === 'string' ? __APP_BUILT__ : 'dev' })}</p>
       <h3>{t('data.demoTitle')}</h3>
       <p>{t('data.demoIntro')}</p>
       <label className="check">

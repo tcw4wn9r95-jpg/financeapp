@@ -225,3 +225,9 @@ The palette is validated for colour blindness and contrast: blue for your plan, 
 Single months can still be changed on the Budget page. The provisions list shows "Starts in …" until the start month. The catch-up suggestion appears only when it differs from the budgeted amount by at least 1 €. Provisions saved before this keep their amounts until edited; the start date then defaults to the month their amounts began.
 
 **D-50 Dates use the system date picker.** Date fields are `<input type="date">`, which opens the iPhone's wheel and shows dates in the phone's regional format. Typed dd/mm/yyyy fields did not work on phones: the number keypad has no "/" key. Optional dates (an account's "counts from") can be left empty or cleared in the picker.
+
+**D-51 Splits across categories and accounts.** A split line can be a category (provisions and trips are categories), income, or a transfer to one of your own accounts. A transfer part is paired with a matching open row in that account (same amount, within 7 days), or the app creates that side. The category parts count in the budget; the transfer parts move money between your accounts without touching the budget. "Put the rest on the empty line" fills the remainder.
+
+**D-52 Updates reach the phone.** The service worker now loads the page from the network first: the cached copy is used when offline, or after 3 seconds. Built files are content-hashed and stay cache-first. The app also checks for a new version whenever it comes back to the foreground. Settings → Data shows the build time.
+
+**D-53 Provision form.** The fields read Start date → End date → Target amount. The monthly amount is shown large before saving. New provisions are one-off by default, and a yearly bill can still be set to repeat.
