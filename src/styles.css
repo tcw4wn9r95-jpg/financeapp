@@ -496,6 +496,12 @@ main {
   color: var(--muted);
   font-size: 0.875rem;
 }
+.repeat-count {
+  margin: 0.15rem 0 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-weight: 550;
+}
 .tag,
 .badge {
   display: inline-flex;
@@ -1634,7 +1640,8 @@ a.chip {
   align-items: center;
   text-decoration: none;
 }
-.chip[aria-current] {
+.chip[aria-current],
+.chip[aria-pressed='true'] {
   background: var(--ink);
   border-color: var(--ink);
   color: var(--ink-text);

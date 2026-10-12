@@ -70,6 +70,32 @@ export function similar(t: Transaction, transactions: readonly Transaction[]): T
   return inbox(transactions).filter((x) => x.id !== t.id && x.merchantNorm === t.merchantNorm && x.merchantNorm !== '' && Math.sign(x.amount) === Math.sign(t.amount));
 }
 
+/** Key that groups repeats: same merchant, same direction (as `similar`). */
+function repeatKey(t: Transaction): string {
+  return t.merchantNorm === '' ? `#${t.id}` : `${Math.sign(t.amount)}:${t.merchantNorm}`;
+}
+
+/**
+ * Inbox items with the most repeats first (D-63): each merchant's items stay
+ * together, newest first; groups of the same size keep the newest on top.
+ * `count` gives how many open items share each item's merchant.
+ */
+export function byRepeats(items: readonly Transaction[]): { items: Transaction[]; count: Map<Id, number> } {
+  const groups = new Map<string, Transaction[]>();
+  for (const t of items) {
+    const k = repeatKey(t);
+    const g = groups.get(k);
+    if (g) g.push(t);
+    else groups.set(k, [t]);
+  }
+  const ordered = [...groups.values()]
+    .map((g) => [...g].sort((a, b) => b.date.localeCompare(a.date)))
+    .sort((a, b) => b.length - a.length || b[0]!.date.localeCompare(a[0]!.date) || a[0]!.descriptionRaw.localeCompare(b[0]!.descriptionRaw));
+  const count = new Map<Id, number>();
+  for (const g of ordered) for (const t of g) count.set(t.id, g.length);
+  return { items: ordered.flat(), count };
+}
+
 function closeDays(a: string, b: string): number {
   return Math.abs(Date.parse(a) - Date.parse(b)) / 86_400_000;
 }

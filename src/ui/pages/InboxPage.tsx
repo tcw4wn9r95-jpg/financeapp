@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { formatDate } from '../../domain/dates';
 import { systemClock } from '../../domain/ledger';
-import { acceptSuggestion, checkStatement, inbox, lockStatement, unclassify, undoImport } from '../../domain/reconcile';
+import { acceptSuggestion, byRepeats, checkStatement, inbox, lockStatement, unclassify, undoImport } from '../../domain/reconcile';
 import type { ImportBatch, Statement, Transaction } from '../../domain/types';
 import { t } from '../../i18n';
 import { ClassifyControl, errorMessage, TxSummary } from '../components/Classify';
@@ -47,9 +47,18 @@ function Review({ items }: { items: Transaction[] }) {
   const accounts = useStore('accounts');
   const route = useRoute();
   const accountFilter = route.query.get('account') ?? '';
+  // Most repeated first by default, so one decision clears the most rows (D-63).
+  const sort = route.query.get('sort') === 'date' ? 'date' : 'repeats';
+  const showFilter = route.query.get('show') === 'suggested' || route.query.get('show') === 'new' ? route.query.get('show')! : '';
+  const go = (patch: Record<string, string | undefined>) =>
+    navigate('inbox', { tab: 'review', account: accountFilter || undefined, sort: sort === 'date' ? 'date' : undefined, show: showFilter || undefined, ...patch });
   const [limit, setLimit] = useState(PAGE);
   const name = useMemo(() => new Map(accounts.map((a) => [a.id, a.name])), [accounts]);
-  const shown = items.filter((x) => !accountFilter || x.accountId === accountFilter);
+  const inAccount = items.filter((x) => !accountFilter || x.accountId === accountFilter);
+  const filtered = inAccount.filter((x) => !showFilter || x.status === showFilter);
+  const grouped = useMemo(() => byRepeats(filtered), [filtered]);
+  const shown = sort === 'repeats' ? grouped.items : filtered;
+  const suggestedCount = inAccount.filter((x) => x.status === 'suggested').length;
   // A loan without its own budget category needs the category picked by hand (D-29, D-48).
   const isLoan = (id: string) => accounts.find((a) => a.id === id)?.type === 'loan';
   const needsCategory = (id: string) => {
@@ -87,15 +96,26 @@ function Review({ items }: { items: Transaction[] }) {
       <LearnBar />
       <div className="toolbar">
         <label className="visually-hidden" htmlFor="inbox-account">{t('tx.account')}</label>
-        <select id="inbox-account" value={accountFilter} onChange={(e) => navigate('inbox', { tab: 'review', account: e.target.value || undefined })}>
+        <select id="inbox-account" value={accountFilter} onChange={(e) => go({ account: e.target.value || undefined })}>
           <option value="">{t('tx.allAccounts')}</option>
           {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
+        <label className="visually-hidden" htmlFor="inbox-sort">{t('inbox.sortLabel')}</label>
+        <select id="inbox-sort" value={sort} onChange={(e) => go({ sort: e.target.value === 'date' ? 'date' : undefined })}>
+          <option value="repeats">{t('inbox.sortRepeats')}</option>
+          <option value="date">{t('inbox.sortDate')}</option>
+        </select>
+      </div>
+      <div className="chips" role="group" aria-label={t('inbox.showLabel')}>
+        {([['', t('inbox.showAll', { n: inAccount.length })], ['suggested', t('inbox.showSuggested', { n: suggestedCount })], ['new', t('inbox.showNew', { n: inAccount.length - suggestedCount })]] as const).map(([k, label]) => (
+          <button key={k} type="button" className="chip" aria-pressed={showFilter === k} onClick={() => go({ show: k || undefined })}>{label}</button>
+        ))}
       </div>
       {suggested.length > 1 && (
         <button type="button" className="button button-block accept-all" onClick={() => void accept(suggested)}>{t('inbox.acceptAll', { n: suggested.length })}</button>
       )}
       <p className="summary-line">{t('inbox.count', { n: shown.length })}</p>
+      {shown.length === 0 && <p className="notice">{t('inbox.noneInFilter')}</p>}
       <ul className="inbox-list">
         {shown.slice(0, limit).map((tx) => (
           <li key={tx.id} className="inbox-item">
@@ -103,6 +123,9 @@ function Review({ items }: { items: Transaction[] }) {
               <TxSummary tx={tx} accountName={name.get(tx.accountId) ?? '?'} />
               <Money cents={tx.amount} plusSign className="tx-amount" />
             </div>
+            {sort === 'repeats' && (grouped.count.get(tx.id) ?? 1) > 1 && (
+              <p className="repeat-count">{t('inbox.repeats', { n: grouped.count.get(tx.id)! })}</p>
+            )}
             {tx.suggestion && (() => {
               const sg = tx.suggestion;
               const target = name.get(sg.targetId) ?? '?';

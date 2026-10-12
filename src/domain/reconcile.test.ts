@@ -48,3 +48,21 @@ describe('splitting one payment into categories and accounts (D-51)', () => {
     expect(() => classify(t, { kind: 'split', lines: [{ kind: 'transfer', accountId: 'sav', amount: -50000 }] }, view, testClock())).toThrow(ReconcileError);
   });
 });
+
+describe('inbox sorted by repeats (D-63)', () => {
+  it('puts the merchant with most open items first, grouped, newest first', async () => {
+    const { byRepeats } = await import('./reconcile');
+    const m = (id: string, merchant: string, amount: number, date: string): Transaction => ({ ...tx(id, 'a', amount, date), merchantNorm: merchant, descriptionRaw: merchant });
+    const items = [
+      m('1', 'BAKERY', -500, '2026-09-20'),
+      m('2', 'SUPERMARKET', -4000, '2026-09-01'),
+      m('3', 'SUPERMARKET', -3000, '2026-09-15'),
+      m('4', 'SUPERMARKET', 1200, '2026-09-16'), // a refund: other direction, own group
+      m('5', 'SUPERMARKET', -2000, '2026-09-10'),
+      m('6', '', -100, '2026-09-30'),
+    ];
+    const r = byRepeats(items);
+    expect(r.items.map((x) => x.id)).toEqual(['3', '5', '2', '6', '1', '4']);
+    expect([r.count.get('3'), r.count.get('4'), r.count.get('6')]).toEqual([3, 1, 1]);
+  });
+});
