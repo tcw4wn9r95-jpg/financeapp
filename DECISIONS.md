@@ -263,3 +263,8 @@ This fixes provisions that started in the past showing as complete although noth
 - **When it checks:** the app compares that file with the build it is running when it opens, whenever it comes back to the foreground, and every 10 minutes. When they differ, a banner offers **Refresh**.
 - **What Refresh does:** it updates the service worker, clears the cached files and reloads. The encrypted data in IndexedDB is untouched; the vault only needs unlocking again.
 - **Settings → Data** shows the running build time and has a manual "Reload the app now".
+
+**D-60 PDFs on iPhone Safari.** pdf.js 6 loops over ReadableStreams with `for await` when it reads a page's text, and when it inflates compressed data in its worker. Safari on iOS 18 and earlier does not support that ("undefined is not a function"), so every PDF failed there.
+- The app adds stream iteration where it is missing.
+- Because a worker cannot receive that fix, browsers lacking it read PDFs on the main thread; other browsers keep the worker.
+- Reproduced by removing `ReadableStream.prototype[Symbol.asyncIterator]` in Chromium.

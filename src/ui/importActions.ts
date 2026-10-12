@@ -5,10 +5,12 @@ import type { Changes } from '../domain/reconcile';
 import { stamp, systemClock } from '../domain/ledger';
 import type { BankMapping, Id } from '../domain/types';
 import { pdfToLines, type PdfJsLike } from '../infra/pdf';
+import { ensureStreamIteration } from '../infra/streams';
 import type { Vault, WriteOp } from '../storage/vault';
 
 /** pdf.js is large: load it only when a PDF is imported. */
 async function loadPdfJs(mainThread: boolean): Promise<PdfJsLike> {
+  ensureStreamIteration();
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   if (mainThread) {
     // Read the PDF on the page itself, without a Web Worker (some phones refuse the worker).
@@ -28,6 +30,8 @@ export class FileReadError extends Error {
   }
 }
 
+const nativeStreams = ensureStreamIteration();
+
 const describe = (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : String(e)).slice(0, 200);
 
 export async function readImportFile(file: File): Promise<FileContent> {
@@ -35,11 +39,14 @@ export async function readImportFile(file: File): Promise<FileContent> {
   // By content, not only by name: phones sometimes hand over files without an extension.
   const isPdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf' || String.fromCharCode(...bytes.subarray(0, 5)) === '%PDF-';
   if (isPdf) {
-    let first: unknown;
-    try {
-      return { kind: 'pdf', name: file.name, lines: await pdfToLines(await loadPdfJs(false), bytes.slice()) };
-    } catch (e) {
-      first = e;
+    let first: unknown = 'not tried';
+    // The worker cannot get the stream fix below, so browsers that lack it read on the page (D-60).
+    if (nativeStreams) {
+      try {
+        return { kind: 'pdf', name: file.name, lines: await pdfToLines(await loadPdfJs(false), bytes.slice()) };
+      } catch (e) {
+        first = e;
+      }
     }
     try {
       return { kind: 'pdf', name: file.name, lines: await pdfToLines(await loadPdfJs(true), bytes.slice()) };
