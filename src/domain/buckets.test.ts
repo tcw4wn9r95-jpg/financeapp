@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buckets, provisionCycleStart, provisionWindow } from './buckets';
+import { bucketDetail, buckets, provisionCycleStart, provisionWindow } from './buckets';
 import { World } from './testkit';
 import type { Provision } from './types';
 
@@ -61,5 +61,32 @@ describe('catching up', () => {
     // Paying everything owed leaves nothing behind.
     w.entry(bank, '2026-10-06', eur(-300), { kind: 'transfer', toAccountId: flex });
     expect(buckets(w.input(), '2026-10', flex, [provisionWindow(prov(), '2026-10')]).get('ins')!.behind).toBe(0);
+  });
+});
+
+describe('seeing and correcting what feeds a bucket (D-64)', () => {
+  it('a move pinned to one provision counts for it alone; the rest is still shared', () => {
+    const { w, bank, flex } = household();
+    w.entry(bank, '2026-10-05', eur(-500), { kind: 'transfer', toAccountId: flex });
+    w.entry(bank, '2026-10-06', eur(-300), { kind: 'transfer', toAccountId: flex });
+    const pinnedTx = w.transactions.find((t) => t.accountId === flex && t.amount === eur(300))!;
+    pinnedTx.earmarkCategoryId = 'tax';
+    const windows = [provisionWindow(prov(), '2026-10'), provisionWindow(prov({ id: 'p2', categoryId: 'tax' }), '2026-10')];
+    const v = buckets(w.input(), '2026-10', flex, windows, () => '2026-07');
+    // Tax needs 400: 300 pinned, 100 of the shared 500; insurance gets the other 400.
+    expect([v.get('tax')!.loaded, v.get('ins')!.loaded]).toEqual([eur(400), eur(400)]);
+  });
+
+  it('lists the moves, the spending and incoming money that does not count as a move', () => {
+    const { w, bank, flex } = household();
+    w.entry(bank, '2026-08-02', eur(-200), { kind: 'transfer', toAccountId: flex });
+    w.spend(flex, '2026-09-20', eur(50), 'ins');
+    w.transactions.push({ ...base, id: 'loose', accountId: flex, date: '2026-09-25', amount: eur(80), descriptionRaw: 'From joint', merchantNorm: 'JOINT', counterparty: '', status: 'new' });
+    const d = bucketDetail(w.input(), '2026-10', flex, provisionWindow(prov(), '2026-10'), () => '2026-07');
+    expect(d.months.map((m) => [m.month, m.loaded, m.moves.length, m.spending.map((s) => s.amount)])).toEqual([
+      ['2026-09', 0, 0, [eur(-50)]],
+      ['2026-08', eur(100), 1, []],
+    ]);
+    expect(d.notCounted.map((t) => t.id)).toEqual(['loose']);
   });
 });

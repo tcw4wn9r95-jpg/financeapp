@@ -93,6 +93,11 @@ export interface Transaction extends BaseRecord {
    * row if that account's statement is imported later (D-23).
    */
   isMirror?: boolean;
+  /**
+   * A move into the provisions account pinned to one provision or trip
+   * (its category id) instead of being shared out automatically (D-64).
+   */
+  earmarkCategoryId?: Id;
   /** A proposed classification waiting in the inbox (status 'suggested'). */
   suggestion?: Suggestion;
 }

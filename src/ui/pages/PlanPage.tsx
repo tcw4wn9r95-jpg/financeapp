@@ -9,6 +9,7 @@ import type { EventFund, Provision, SubBudget } from '../../domain/types';
 import { monthName, monthShort, t, type MessageKey } from '../../i18n';
 import { saveSettings, closeEvent, deleteEvent, deleteProvision, saveEvent, saveProvision, setDefaultFrom, defaultStartMonth } from '../actions';
 import { Dialog } from '../components/Dialog';
+import { BucketDialog } from './BucketDialog';
 import { DateField, MoneyField, SelectField, TextField, useDateInput, useMoneyInput } from '../components/fields';
 import { Icon } from '../components/Icon';
 import { LineChart, type Series } from '../components/LineChart';
@@ -223,6 +224,7 @@ function Provisions() {
   const provisions = useStore('provisions');
   const input = useBudgetInput();
   const [editing, setEditing] = useState<Provision | 'new' | null>(null);
+  const [viewing, setViewing] = useState<Provision | null>(null);
   const month = currentMonth();
   const today = todayIso();
   const rows = provisions.map((p) => provisionStatus(p, input, month, today)).sort((a, b) => a.nextDue.localeCompare(b.nextDue));
@@ -256,7 +258,7 @@ function Provisions() {
           <ul className="rows">
             {rows.map((r) => (
               <li key={r.provision.id}>
-                <button type="button" className="row-button" onClick={() => setEditing(r.provision)}>
+                <button type="button" className="row-button" onClick={() => setViewing(r.provision)}>
                   <span className="row-main">
                     <span className="row-title">{r.provision.name}</span>
                     <span className="row-sub">
@@ -291,6 +293,17 @@ function Provisions() {
       )}
       <p className="hint">{t('plan.provisionsHow')}</p>
       {editing && <ProvisionDialog existing={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}
+      {viewing && (
+        <BucketDialog
+          name={viewing.name}
+          window={provisionWindow(viewing, month)}
+          onEdit={() => {
+            setEditing(viewing);
+            setViewing(null);
+          }}
+          onClose={() => setViewing(null)}
+        />
+      )}
     </>
   );
 }
@@ -375,6 +388,7 @@ function Events() {
   const input = useBudgetInput();
   const [editing, setEditing] = useState<EventFund | 'new' | null>(null);
   const [closing, setClosing] = useState<EventFund | null>(null);
+  const [viewing, setViewing] = useState<EventFund | null>(null);
   const month = currentMonth();
   const settings = useSettings();
   const allProvisions = useStore('provisions');
@@ -456,6 +470,7 @@ function Events() {
           )}
           {v.event.status !== 'closed' && (
             <div className="row">
+              <button type="button" className="button button-small" onClick={() => setViewing(v.event)}>{t('bucket.transactions')}</button>
               <button type="button" className="button button-small" onClick={() => setEditing(v.event)}>{t('common.edit')}</button>
               <button type="button" className="button button-small" onClick={() => setClosing(v.event)}>{t('plan.close')}</button>
             </div>
@@ -465,6 +480,7 @@ function Events() {
       <p className="hint">{t('plan.eventsHow')}</p>
       {editing && <EventDialog existing={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}
       {closing && <CloseDialog event={closing} onClose={() => setClosing(null)} />}
+      {viewing && <BucketDialog name={viewing.name} window={tripWindow(viewing)} onClose={() => setViewing(null)} />}
     </>
   );
 }

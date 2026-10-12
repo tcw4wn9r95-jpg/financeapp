@@ -1870,3 +1870,20 @@ input[type='date']::-webkit-date-and-time-value {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Bucket detail (D-64): a move and where it counts. */
+.bucket-move .pin {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.9rem 0.6rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.bucket-move .pin select {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  font: inherit;
+  color: var(--ink);
+}

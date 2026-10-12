@@ -38,18 +38,10 @@ export function TransactionsPage() {
     navigate('transactions', { month, account: accountFilter || undefined, filter: onlyNew ? 'new' : undefined, ...patch });
 
   const accounts = useStore('accounts');
-  const categories = useStore('categories');
   const transactions = useStore('transactions');
-  const allocations = useStore('allocations');
   const [editing, setEditing] = useState<Transaction | 'new' | null>(null);
 
   const accountName = useMemo(() => new Map(accounts.map((a) => [a.id, a.name])), [accounts]);
-  const categoryName = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
-  const allocByTxn = useMemo(() => {
-    const m = new Map<Id, typeof allocations[number][]>();
-    for (const a of allocations) m.set(a.transactionId, [...(m.get(a.transactionId) ?? []), a]);
-    return m;
-  }, [allocations]);
 
   const rows = transactions
     .filter((tx) => (onlyNew ? tx.status === 'new' || tx.status === 'suggested' : tx.date.startsWith(month)))
@@ -59,18 +51,7 @@ export function TransactionsPage() {
   const inflow = rows.filter((r) => r.amount > 0).reduce((s, r) => s + r.amount, 0);
   const outflow = rows.filter((r) => r.amount < 0).reduce((s, r) => s + r.amount, 0);
 
-  const label = (tx: Transaction): string => {
-    const allocs = allocByTxn.get(tx.id) ?? [];
-    if (allocs.length === 0) return t('tx.uncategorised');
-    if (allocs.length > 1) return t('tx.split', { n: allocs.length });
-    const a = allocs[0]!;
-    if (a.targetType === 'transfer') {
-      const other = transactions.find((x) => x.id === a.targetId);
-      const name = other ? accountName.get(other.accountId) ?? '?' : '?';
-      return tx.amount < 0 ? t('tx.transferTo', { name }) : t('tx.transferFrom', { name });
-    }
-    return categoryName.get(a.targetId) ?? '?';
-  };
+  const label = useTxLabel();
 
   return (
     <>
@@ -144,6 +125,47 @@ export function TransactionsPage() {
         editing && <EntryDialog existing={editing === 'new' ? undefined : editing} defaultAccount={accountFilter} onClose={() => setEditing(null)} />
       )}
     </>
+  );
+}
+
+/** "Groceries", "Transfer to Savings", "Split in 3"… for a transaction. */
+function useTxLabel(): (tx: Transaction) => string {
+  const accounts = useStore('accounts');
+  const categories = useStore('categories');
+  const transactions = useStore('transactions');
+  const allocations = useStore('allocations');
+  return useMemo(() => {
+    const accountName = new Map(accounts.map((a) => [a.id, a.name]));
+    const categoryName = new Map(categories.map((c) => [c.id, c.name]));
+    const txById = new Map(transactions.map((x) => [x.id, x]));
+    const allocByTxn = new Map<Id, typeof allocations[number][]>();
+    for (const a of allocations) allocByTxn.set(a.transactionId, [...(allocByTxn.get(a.transactionId) ?? []), a]);
+    return (tx: Transaction): string => {
+      const allocs = allocByTxn.get(tx.id) ?? [];
+      if (allocs.length === 0) return t('tx.uncategorised');
+      if (allocs.length > 1) return t('tx.split', { n: allocs.length });
+      const a = allocs[0]!;
+      if (a.targetType === 'transfer') {
+        const other = txById.get(a.targetId);
+        const name = other ? accountName.get(other.accountId) ?? '?' : '?';
+        return tx.amount < 0 ? t('tx.transferTo', { name }) : t('tx.transferFrom', { name });
+      }
+      return categoryName.get(a.targetId) ?? '?';
+    };
+  }, [accounts, categories, transactions, allocations]);
+}
+
+/** Open one transaction to see or correct it, from anywhere (D-64). */
+export function TransactionDialog({ tx, onClose }: { tx: Transaction; onClose: () => void }) {
+  const label = useTxLabel();
+  const accounts = useStore('accounts');
+  // Follow the live record: it changes when it is reclassified.
+  const live = useStore('transactions').find((x) => x.id === tx.id) ?? tx;
+  const accountName = accounts.find((a) => a.id === live.accountId)?.name ?? '?';
+  return live.importBatchId || live.isMirror ? (
+    <ImportedDialog tx={live} label={label(live)} accountName={accountName} onClose={onClose} />
+  ) : (
+    <EntryDialog existing={live} defaultAccount={live.accountId} onClose={onClose} />
   );
 }
 
