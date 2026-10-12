@@ -282,9 +282,34 @@ const SUGGESTED: [string, CategoryGroup, RolloverMode, boolean][] = [
   ['Fun money', 'variable', 'sweep', false],
   ['Emergency fund', 'savings', 'roll', false],
   ['Retirement savings', 'savings', 'roll', false],
+  ['Investments', 'investments', 'reset', false],
   ['Annual bills', 'provisions', 'roll', false],
   ['Holidays', 'events', 'roll', false],
 ];
+
+/**
+ * Create the Investments category once (D-57), for vaults set up before it
+ * existed. If it is deleted later it is not created again.
+ */
+export async function ensureInvestments(vault: Vault): Promise<void> {
+  const settings = getSettings(vault);
+  // A vault still being set up gets it with the suggested categories instead.
+  if (settings.investmentsSetUp || vault.list('categories').length === 0) return;
+  const ops: WriteOp[] = [];
+  if (!vault.list('categories').some((c) => c.groupId === 'investments')) {
+    const record: Category = {
+      ...(stamp(systemClock, 'manual') as Category),
+      name: t('invest.name'),
+      groupId: 'investments',
+      rolloverMode: 'reset',
+      isIncome: false,
+      sortOrder: vault.list('categories').length,
+    };
+    ops.push({ type: 'put', store: 'categories', record });
+  }
+  ops.push({ type: 'put', store: 'settings', record: { ...settings, investmentsSetUp: true, updatedAt: new Date().toISOString() } });
+  await vault.write(ops);
+}
 
 export async function addSuggestedCategories(vault: Vault): Promise<void> {
   const existing = new Set(vault.list('categories').map((c) => c.name.toLowerCase()));

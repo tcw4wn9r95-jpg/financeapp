@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { t, type MessageKey } from '../i18n';
+import { ensureInvestments } from './actions';
 import { Icon, type IconName } from './components/Icon';
 import { useSettings, useStore, useVault, useVaultVersion } from './hooks';
 import { href, useRoute } from './router';
@@ -52,6 +53,10 @@ function Shell() {
   const inboxCount = useStore('transactions').filter((x) => x.status === 'new' || x.status === 'suggested').length;
   useAutoLock();
   const mainRef = useRef<HTMLElement>(null);
+  // One-time additions for vaults created before a feature existed.
+  useEffect(() => {
+    void ensureInvestments(vault);
+  }, [vault]);
 
   // Move focus to the page on navigation so keyboard and screen-reader users land in the content.
   useEffect(() => {

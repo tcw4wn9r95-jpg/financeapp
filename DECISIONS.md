@@ -247,3 +247,9 @@ Single months can still be changed on the Budget page. The provisions list shows
 - **No provisions account chosen:** the plan stands in for the money and the screen says so.
 
 This fixes provisions that started in the past showing as complete although nothing was moved.
+
+**D-57 Investments.** A new category group, Investments, sits between Savings and Provisions.
+- **The category:** an "Investments" category (rollover set to reset) is created once in every existing vault after unlock, and is part of the suggested set for new vaults. If you delete it, it is not created again.
+- **Filing a purchase:** money sent to an ETF or broker is filed under it like any other budget spending, so its monthly amount is planned and the forecast treats it as a fixed monthly outflow.
+- **Totals:** the Budget page (on the Investments group) and the Dashboard show what has been put in, in total, this year and this month. Sales filed back under the category count back.
+- **Not tracked:** the market value of the investments.

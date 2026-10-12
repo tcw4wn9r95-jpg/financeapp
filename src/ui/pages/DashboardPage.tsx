@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { accountBalances, isOnBudget } from '../../domain/budget';
+import { accountBalances, invested, isOnBudget } from '../../domain/budget';
 import { compareMonths, currentMonth, formatDate, todayIso } from '../../domain/dates';
 import { eventStatus, provisionStatus, provisionsMove } from '../../domain/plan';
 import { buckets, cycleLookup, provisionWindow, tripWindow } from '../../domain/buckets';
@@ -29,6 +29,7 @@ export function DashboardPage() {
   const cash = open.filter(isOnBudget).reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
 
   const budgetInput = useBudgetInput();
+  const inv = useMemo(() => invested(budgetInput, month), [budgetInput, month]);
   const provisions = useStore('provisions');
   const events = useStore('events');
   const moveLeft = useMemo(() => {
@@ -107,6 +108,16 @@ export function DashboardPage() {
         <a className="action-row" href={href('inbox')}>
           <span className="nav-count">{inbox}</span>
           <span>{t('dashboard.inboxCount', { n: inbox })}</span>
+          <Icon name="chevronRight" size={18} />
+        </a>
+      )}
+      {inv.total !== 0 && (
+        <a className="action-row" href={href(`budget/${month}`)}>
+          <span aria-hidden="true">↗</span>
+          <span>
+            {t('invest.dashboard')}: <strong><Money cents={inv.total} /></strong>{' '}
+            <span className="muted">· <Money cents={inv.year} /> {t('invest.thisYear')}</span>
+          </span>
           <Icon name="chevronRight" size={18} />
         </a>
       )}

@@ -374,3 +374,25 @@ export function backdateDefaults(defaults: readonly BudgetDefault[], start: Mont
   }
   return [...first.values()].filter((d) => compareMonths(d.effectiveFrom, start) > 0).map((d) => ({ ...d, effectiveFrom: start }));
 }
+
+/**
+ * Money put into investments (D-57): what was filed under categories of the
+ * Investments group, all time, this year and this month. Sales or
+ * withdrawals filed there count back. No market value: only what went in.
+ */
+export function invested(input: Pick<BudgetInput, 'categories' | 'transactions' | 'allocations'>, month: MonthKey): { total: Cents; year: Cents; month: Cents; byCategory: Map<Id, Cents> } {
+  const ids = new Set(input.categories.filter((c) => !c.isIncome && c.groupId === 'investments').map((c) => c.id));
+  const dates = new Map(input.transactions.map((t) => [t.id, t.date]));
+  const out = { total: 0, year: 0, month: 0, byCategory: new Map<Id, Cents>() };
+  for (const a of input.allocations) {
+    if (a.targetType !== 'category' || !ids.has(a.targetId)) continue;
+    const date = dates.get(a.transactionId);
+    if (!date || monthOf(date) > month) continue;
+    const v = -a.amount;
+    out.total += v;
+    if (date.slice(0, 4) === month.slice(0, 4)) out.year += v;
+    if (monthOf(date) === month) out.month += v;
+    out.byCategory.set(a.targetId, (out.byCategory.get(a.targetId) ?? 0) + v);
+  }
+  return out;
+}

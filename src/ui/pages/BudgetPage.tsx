@@ -1,17 +1,17 @@
-import { useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import type { CategoryMonth } from '../../domain/budget';
 import { compareMonths, currentMonth, isMonthKey } from '../../domain/dates';
 import { CATEGORY_GROUPS, type Category, type MonthKey } from '../../domain/types';
 import { monthName, t } from '../../i18n';
 import { backdateToStart, saveSettings, resetOverride, setDefaultFrom, setOverride } from '../actions';
-import { backdateDefaults } from '../../domain/budget';
+import { backdateDefaults, invested } from '../../domain/budget';
 import { Dialog } from '../components/Dialog';
 import { MoneyField, TextField, useMoneyInput } from '../components/fields';
 import { Money } from '../components/Money';
 import { MonthNav } from '../components/MonthNav';
 import { ReadyToAssign } from '../components/ReadyToAssign';
 import { useToast } from '../components/Toast';
-import { useBudgetMonth, useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
+import { useBudgetInput, useBudgetMonth, useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { groupLabel, rolloverLabel } from '../labels';
 import { href, navigate, useRoute } from '../router';
 
@@ -47,6 +47,20 @@ function LateAmounts({ month }: { month: MonthKey }) {
       </button>{' '}
       <button type="button" className="button button-quiet" onClick={() => { lateDismissed = true; setHidden(true); void saveSettings(vault, { lateAmountsKept: true }); }}>{t('budget.keepLate')}</button>
     </div>
+  );
+}
+
+/** How much has gone into investments so far (D-57). */
+function InvestedLine({ month }: { month: MonthKey }) {
+  const input = useBudgetInput();
+  const inv = useMemo(() => invested(input, month), [input, month]);
+  return (
+    <p className="invested-line">
+      <span>{t('invest.total')} <strong><Money cents={inv.total} /></strong></span>
+      <span className="muted">
+        <Money cents={inv.year} /> {t('invest.thisYear')} · <Money cents={inv.month} /> {t('invest.thisMonth')}
+      </span>
+    </p>
   );
 }
 
@@ -97,6 +111,7 @@ export function BudgetPage() {
                     {t('budget.available')} <Money cents={available} />
                   </span>
                 </div>
+                {g === 'investments' && <InvestedLine month={month} />}
                 <ul className="rows">
                   {rows.map(([c, m]) => (
                     <BudgetRow key={c.id} category={c} m={m} onEdit={() => setEditing(c)} />

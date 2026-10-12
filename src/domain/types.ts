@@ -135,11 +135,12 @@ export interface Allocation extends BaseRecord {
 
 // -------------------------------------------------------------- categories
 
-export type CategoryGroup = 'fixed' | 'variable' | 'savings' | 'provisions' | 'events';
+export type CategoryGroup = 'fixed' | 'variable' | 'savings' | 'investments' | 'provisions' | 'events';
 export const CATEGORY_GROUPS: readonly CategoryGroup[] = [
   'fixed',
   'variable',
   'savings',
+  'investments',
   'provisions',
   'events',
 ];
@@ -382,6 +383,8 @@ export interface Settings {
   autoApplyThreshold?: number;
   /** Savings account where the money for provisions and trips is kept (D-55). */
   provisionsAccountId?: Id;
+  /** The Investments category was created once (D-57); not recreated if deleted. */
+  investmentsSetUp?: boolean;
   /** "Keep as is" on the hint about monthly amounts starting after the budget start. */
   lateAmountsKept?: boolean;
   /** Merchants whose rule proposal was dismissed. */

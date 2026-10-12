@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accountBalances, backdateDefaults, budgetForMonth, computeBudget, defaultFor, isOnBudget } from './budget';
+import { accountBalances, backdateDefaults, budgetForMonth, computeBudget, defaultFor, invested, isOnBudget } from './budget';
 import { lastDayOfMonth, monthRange } from './dates';
 import { World } from './testkit';
 
@@ -289,5 +289,22 @@ describe('accounts that start counting later (D-47)', () => {
     expect(budgetForMonth(w.input(), '2026-04')!.readyToAssign).toBe(100000);
     expect(accountBalances(w.accounts, [], '2026-02-28').get('car')).toBe(0);
     expect(accountBalances(w.accounts, [], '2026-03-15').get('car')).toBe(-1800000);
+  });
+});
+
+describe('investments (D-57)', () => {
+  it('counts what was put in, by year and month; a sale counts back; it is ordinary budget spending', () => {
+    const w = new World('2026-01');
+    const bank = w.account('bank', 'current', 500000);
+    w.category('etf', 'investments', 'reset');
+    w.setDefault('etf', 30000);
+    w.spend(bank, '2026-03-05', 30000, 'etf');
+    w.spend(bank, '2026-10-05', 30000, 'etf');
+    w.earn(bank, '2026-10-20', 5000, 'etf'); // a small sale filed back
+    w.allocations.at(-1)!.targetType = 'category';
+    const inv = invested(w.input(), '2026-10');
+    expect(inv).toMatchObject({ total: 55000, year: 55000, month: 25000 });
+    expect(invested(w.input(), '2026-09').total).toBe(30000);
+    expect(budgetForMonth(w.input(), '2026-03')!.categories.get('etf')!.activity).toBe(-30000);
   });
 });

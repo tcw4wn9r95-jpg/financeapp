@@ -155,7 +155,7 @@ export function scheduleItems(f: ForecastInput): CashItem[] {
       if (assigned <= 0) continue;
       const amount = isCurrent ? Math.max(0, assigned + done) : assigned; // done is negative spending
       if (amount <= 0) continue;
-      if (c.groupId === 'fixed' || c.groupId === 'provisions') {
+      if (c.groupId === 'fixed' || c.groupId === 'provisions' || c.groupId === 'investments') {
         let date = dateIn(month, usual ?? 1);
         if (date < firstDay) date = firstDay;
         push(date, -amount, c.name, 'fixed', c.id);
