@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { accountBalances, invested, isOnBudget } from '../../domain/budget';
 import { compareMonths, currentMonth, formatDate, todayIso } from '../../domain/dates';
-import { eventStatus, provisionStatus, provisionsMove } from '../../domain/plan';
+import { eventStatus, provisionStatus } from '../../domain/plan';
 import { formatMoney } from '../../domain/money';
 import { buckets, provisionWindow, tripWindow, unallocatedMoves } from '../../domain/buckets';
 import { LineChart } from '../components/LineChart';
@@ -36,12 +36,10 @@ export function DashboardPage() {
   const moveLeft = useMemo(() => {
     const acc = accounts.find((a) => a.id === settings.provisionsAccountId);
     if (!acc) return null;
-    const m = provisionsMove(budgetInput, month, acc.id);
-    // Plus what earlier months planned but nobody moved (D-56).
+    // What each provision and open trip still needs to be on plan, this month included (D-66).
     const windows = [...provisions.map((p) => provisionWindow(p, month)), ...events.filter((e) => e.status !== 'closed').map(tripWindow)];
-    let behind = 0;
-    for (const b of buckets(budgetInput, month, acc.id, windows).values()) behind += b.behind;
-    const left = m.left + behind;
+    let left = 0;
+    for (const b of buckets(budgetInput, month, acc.id, windows).values()) left += b.toMove;
     return left > 0 ? { name: acc.name, left } : null;
   }, [accounts, settings.provisionsAccountId, budgetInput, month, provisions, events]);
 

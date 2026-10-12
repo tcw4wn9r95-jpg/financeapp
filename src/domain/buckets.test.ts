@@ -59,7 +59,7 @@ describe('provision buckets fill with real money (D-56)', () => {
 });
 
 describe('allocating moves by hand (D-65)', () => {
-  it('"Fill by plan" proposes what each bucket is short of, then the rest ahead by plan', () => {
+  it('"Fill by plan" proposes what each bucket is short of, and no more', () => {
     const { w, bank, flex } = household();
     w.entry(bank, '2026-10-05', eur(-500), { kind: 'transfer', toAccountId: flex });
     const tx = w.transactions.find((t) => t.accountId === flex)!;
@@ -92,6 +92,37 @@ describe('allocating moves by hand (D-65)', () => {
     w.transactions.find((t) => t.accountId === flex)!.earmarkCategoryId = 'tax';
     const v = buckets(w.input(), '2026-10', flex, [provisionWindow(prov({ categoryId: 'tax' }), '2026-10')]).get('tax')!;
     expect(v.loaded).toBe(eur(300));
+  });
+});
+
+describe('two provisions (D-66)', () => {
+  function two() {
+    const w = new World('2026-01');
+    const bank = w.account('bank', 'current', eur(10000));
+    const flex = w.account('flex', 'savings', 0);
+    w.category('a', 'provisions');
+    w.category('b', 'provisions');
+    w.setDefault('a', eur(100), '2026-07');
+    w.setDefault('b', eur(100), '2026-07');
+    const windows = [provisionWindow(prov({ id: 'pa', categoryId: 'a', startDate: '2026-07-01', dueDate: '2027-06-15' }), '2026-10'), provisionWindow(prov({ id: 'pb', categoryId: 'b', startDate: '2026-07-01', dueDate: '2027-06-15' }), '2026-10')];
+    return { w, bank, flex, windows };
+  }
+
+  it('money allocated before a provision starts stays in its bucket', () => {
+    const { w, bank, flex, windows } = two();
+    w.entry(bank, '2026-03-05', eur(-300), { kind: 'transfer', toAccountId: flex });
+    allocate(w, flex, '2026-03-05', { b: eur(300) });
+    expect(buckets(w.input(), '2026-10', flex, windows).get('b')).toMatchObject({ carried: eur(300), loaded: eur(300), level: eur(300), behind: 0, toMove: eur(100) });
+  });
+
+  it('one bucket allocated ahead does not hide what the other still needs', () => {
+    const { w, bank, flex, windows } = two();
+    w.entry(bank, '2026-10-05', eur(-400), { kind: 'transfer', toAccountId: flex });
+    allocate(w, flex, '2026-10-05', { a: eur(400) });
+    const v = buckets(w.input(), '2026-10', flex, windows);
+    // a is fully funded through October; b planned 400 (July–October) and got nothing.
+    expect([v.get('a')!.toMove, v.get('b')!.toMove, v.get('b')!.behind]).toEqual([0, eur(400), eur(300)]);
+    expect(Object.fromEntries(suggestAllocation(w.input(), '2026-10', flex, eur(500), () => '2026-07'))).toEqual({ b: eur(400) });
   });
 });
 

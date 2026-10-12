@@ -28,14 +28,18 @@ export interface BucketView {
   target: Cents;
   /** Planned by the budget in this cycle, this month included. */
   planned: Cents;
-  /** Moved into the provisions account for this bucket in this cycle. */
+  /** Allocated to this bucket in this cycle, plus what was left in it when the cycle began. */
   loaded: Cents;
+  /** Of `loaded`, what was already in the bucket before this cycle (allocated earlier, not spent). */
+  carried: Cents;
   /** Paid out of the bucket (bill, trip spending) in this cycle. */
   spent: Cents;
   /** In the bucket now. */
   level: Cents;
   /** Planned before this month but not moved yet. */
   behind: Cents;
+  /** Planned up to this month included but not moved yet: what to move now for this bucket. */
+  toMove: Cents;
   plannedThisMonth: Cents;
   percent: number;
   /** False when no provisions account is chosen: "loaded" then follows the plan. */
@@ -127,34 +131,21 @@ function loadedByMonthOf(input: BudgetInput, months: ReturnType<typeof computeBu
 }
 
 /**
- * A proposed split of `amount` moved in `month`: first what each bucket is
- * short of its plan in its current cycle up to that month (not counting
- * `excludeTxId`'s own allocation), then any extra ahead by that month's plan.
+ * A proposed split of `amount` moved in `month`: what each bucket still needs
+ * to be on plan up to that month (not counting `excludeTxId`'s own
+ * allocation). Shared by need when the move is short; more than all needs
+ * together stays savings.
  */
 export function suggestAllocation(input: BudgetInput, month: MonthKey, accountId: Id, amount: Cents, cycleOf: CycleOf, excludeTxId?: Id): Map<Id, Cents> {
-  const months = computeBudget(input, month);
   const without = excludeTxId ? { ...input, transactions: input.transactions.map((t) => (t.id === excludeTxId ? { ...t, earmarks: [], earmarkCategoryId: undefined } : t)) } : input;
-  const loaded = loadedByMonthOf(without, months, accountId);
   const ids = input.categories.filter((c) => !c.isIncome && BUCKET_GROUPS.has(c.groupId)).map((c) => c.id);
-  const needs = ids
-    .map((id) => {
-      const from = cycleOf(id, month);
-      let n = 0;
-      for (const bm of months) {
-        if (from && compareMonths(bm.month, from) < 0) continue;
-        n += Math.max(0, bm.categories.get(id)?.assigned ?? 0) - (loaded.get(bm.month)?.get(id) ?? 0);
-      }
-      return [id, Math.max(0, n)] as const;
-    })
-    .filter(([, n]) => n > 0);
+  const start = computeBudget(input, month)[0]?.month ?? month;
+  const views = buckets(without, month, accountId, ids.map((id) => ({ categoryId: id, target: 0, cycleStart: cycleOf(id, month) ?? start })));
+  const needs = ids.map((id) => [id, views.get(id)?.toMove ?? 0] as const).filter(([, n]) => n > 0);
   const out = new Map<Id, Cents>();
   const needTotal = needs.reduce((s, [, n]) => s + n, 0);
   if (amount > 0 && needTotal > 0) distribute(Math.min(amount, needTotal), needs, out);
-  const extra = amount - Math.min(amount, needTotal);
-  const last = months.at(-1);
-  const ahead = ids.map((id) => [id, Math.max(0, last?.categories.get(id)?.assigned ?? 0)] as const).filter(([, a]) => a > 0);
-  if (extra > 0 && ahead.length > 0) distribute(extra, ahead, out);
-  return out;
+  return out; // anything beyond what the plan needs stays savings
 }
 
 /** `windows` lists the buckets to report, each from the start of its current cycle. */
@@ -173,31 +164,35 @@ export function buckets(
     let loaded = 0;
     let spent = 0;
     let plannedThisMonth = 0;
-    let loadedThisMonth = 0;
+    // Money allocated before this cycle and not spent stays in the bucket (D-66):
+    // a provision created later, or a bill smaller than what was saved.
+    let before = 0;
     for (const bm of months) {
-      if (compareMonths(bm.month, w.cycleStart) < 0) continue;
       const cm = bm.categories.get(w.categoryId);
-      const a = Math.max(0, cm?.assigned ?? 0);
       const l = loadedByMonth.get(bm.month)?.get(w.categoryId) ?? 0;
+      if (compareMonths(bm.month, w.cycleStart) < 0) {
+        before += l + (cm?.activity ?? 0);
+        continue;
+      }
+      const a = Math.max(0, cm?.assigned ?? 0);
       planned += a;
       loaded += l;
       spent += -(cm?.activity ?? 0);
-      if (bm.month === month) {
-        plannedThisMonth = a;
-        loadedThisMonth = l;
-      }
+      if (bm.month === month) plannedThisMonth = a;
     }
+    const carried = accountId ? Math.max(0, before) : 0;
+    loaded += carried;
     const level = loaded - spent;
-    // Short of the plan before this month; extra moved this month pays it down.
-    const behind = Math.max(0, planned - loaded - Math.max(0, plannedThisMonth - loadedThisMonth));
     out.set(w.categoryId, {
       categoryId: w.categoryId,
       target: w.target,
       planned,
       loaded,
+      carried,
       spent,
       level,
-      behind,
+      behind: Math.max(0, planned - plannedThisMonth - loaded),
+      toMove: Math.max(0, planned - loaded),
       plannedThisMonth,
       percent: w.target > 0 ? Math.max(0, Math.min(100, Math.round((level / w.target) * 100))) : 0,
       tracked: !!accountId,
@@ -260,10 +255,7 @@ export interface BucketMonth {
 
 export interface BucketDetail {
   months: BucketMonth[];
-  /**
-   * Money that came into the provisions account in the cycle but is not
-   * counted as a move: not classified yet, or classified as something else.
-   */
+  /** Money that came into the provisions account in the cycle and is not classified yet. */
   notCounted: Transaction[];
 }
 
@@ -303,9 +295,10 @@ export function bucketDetail(input: BudgetInput, month: MonthKey, accountId: Id 
       });
     }
   }
+  // Interest and other income into the account never fill a bucket; only what is still unclassified is listed.
   const notCounted = accountId
     ? input.transactions
-        .filter((t) => t.accountId === accountId && t.amount > 0 && !moveIds.has(t.id) && inCycle(shownMonth(t.date)))
+        .filter((t) => t.accountId === accountId && t.amount > 0 && !moveIds.has(t.id) && (t.status === 'new' || t.status === 'suggested') && inCycle(shownMonth(t.date)))
         .sort((a, b) => b.date.localeCompare(a.date))
     : [];
   return { months: out.reverse(), notCounted };

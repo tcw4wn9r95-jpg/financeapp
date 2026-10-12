@@ -11,9 +11,10 @@ import { AllocateDialog } from './AllocateDialog';
 import { TransactionDialog } from './TransactionsPage';
 
 /**
- * What fed and emptied one provision or trip in its current cycle, with each
- * transaction a tap away from being corrected (D-64), and each move into the
- * provisions account allocated by hand (D-65).
+ * One provision or trip: what is in it, and one list of what went in
+ * (allocated moves) and out (bills, trip spending) in its current cycle
+ * (D-64, D-65, D-66). Money taken out of the provisions account is a plain
+ * transfer and is not listed: the bucket empties where the bill is filed.
  */
 export function BucketDialog({ name, window, onEdit, onClose }: { name: string; window: BucketWindow; onEdit?: () => void; onClose: () => void }) {
   const input = useBudgetInput();
@@ -32,79 +33,101 @@ export function BucketDialog({ name, window, onEdit, onClose }: { name: string; 
   if (open) return <TransactionDialog tx={open} onClose={() => setOpen(null)} />;
   if (allocating) return <AllocateDialog tx={allocating} onClose={() => setAllocating(null)} />;
 
-  const txButton = (tx: Transaction, amount: number, sub: string) => (
-    <button type="button" className="row-button tx-row" onClick={() => setOpen(tx)}>
-      <span className="row-main">
-        <span className="row-title tx-desc">{tx.descriptionRaw || t('tx.noDescription')}</span>
-        <span className="row-sub">{formatDate(tx.date)} · {sub}</span>
-      </span>
-      <span className="row-end"><Money cents={amount} plusSign className="row-amount tx-amount" /></span>
-    </button>
-  );
-  const allocateButton = (tx: Transaction) => (
-    <div className="pin">
-      <button type="button" className="button button-small" onClick={() => setAllocating(tx)}>{t('allocate.button')}</button>
-    </div>
-  );
+  const history = detail.months
+    .flatMap((m) => [
+      ...m.moves.map(({ tx, amount }) => ({
+        key: `in-${tx.id}`,
+        date: tx.date,
+        title: t('bucket.allocated'),
+        sub: t('bucket.fromMove', { total: formatMoney(tx.amount) }),
+        amount,
+        onClick: () => setAllocating(tx),
+      })),
+      ...m.spending.map(({ tx, amount }) => ({
+        key: `out-${tx.id}-${amount}`,
+        date: tx.date,
+        title: tx.descriptionRaw || t('tx.noDescription'),
+        sub: accountName(tx.accountId),
+        amount,
+        onClick: () => setOpen(tx),
+      })),
+    ])
+    .sort((a, b) => b.date.localeCompare(a.date));
 
   return (
     <Dialog open title={name} onClose={onClose} wide>
-      <ul className="plain-list facts">
-        <li className="split-row"><span>{view.tracked ? t('bucket.loaded') : t('bucket.plannedIn')}</span><Money cents={view.loaded} /></li>
-        <li className="split-row"><span>{t('plan.spent')}</span><Money cents={-view.spent} /></li>
-        <li className="split-row"><strong>{t('bucket.level')}</strong><strong><Money cents={view.level} /></strong></li>
-        {view.target > 0 && <li className="split-row"><span className="muted">{t('bucket.target')}</span><Money cents={view.target} /></li>}
-      </ul>
-      <p className="hint">{t('bucket.cycleFrom', { month: monthName(window.cycleStart) })}</p>
+      <div className="bucket-head">
+        <span className="muted">{view.tracked ? t('bucket.level') : t('bucket.plannedIn')}</span>
+        <strong><Money cents={view.level} /></strong>
+        <span className="muted">
+          {view.target > 0 && <>{t('bucket.ofTarget')} <Money cents={view.target} /></>}
+          {view.tracked && view.toMove > 0 && <> · {t('bucket.toMove')} <Money cents={view.toMove} /></>}
+        </span>
+      </div>
       {!accountId && <p className="notice">{t('bucket.noAccount')}</p>}
 
       {waiting.length > 0 && (
-        <section className="group" aria-labelledby="bk-wait">
-          <div className="group-head"><h3 id="bk-wait">{t('allocate.waitingTitle')}</h3></div>
-          <p className="hint">{t('allocate.waitingHint')}</p>
-          <ul className="rows">
-            {waiting.map(({ tx, left }) => (
-              <li key={tx.id} className="bucket-move">
-                {txButton(tx, tx.amount, t('allocate.leftOf', { left: formatMoney(left) }))}
-                {allocateButton(tx)}
+        <div className="bucket-waiting">
+          <p><strong>{t('allocate.waitingTitle')}</strong></p>
+          <ul className="plain-list move-list">
+            {waiting.map(({ tx }) => (
+              <li key={tx.id} className="waiting-row">
+                <span className="waiting-main">
+                  <Money cents={tx.amount} />
+                  <span className="muted">{formatDate(tx.date)}</span>
+                </span>
+                <button type="button" className="button button-small" onClick={() => setAllocating(tx)}>{t('allocate.button')}</button>
               </li>
             ))}
           </ul>
-        </section>
+        </div>
       )}
 
-      {detail.months.length === 0 && <p className="notice">{t('bucket.nothingYet')}</p>}
-      {detail.months.map((m) => (
-        <section key={m.month} className="group" aria-label={monthName(m.month)}>
-          <div className="group-head">
-            <h3>{monthName(m.month)}</h3>
-            {accountId && <span className="muted">{t('bucket.forThis')} <Money cents={m.loaded} /></span>}
-          </div>
-          <ul className="rows">
-            {m.moves.map(({ tx, amount }) => (
-              <li key={tx.id} className="bucket-move">
-                {txButton(tx, amount, t('allocate.partOf', { name: accountName(tx.accountId), total: formatMoney(tx.amount) }))}
-                {allocateButton(tx)}
-              </li>
-            ))}
-            {m.spending.map((s) => (
-              <li key={`${s.tx.id}-${s.amount}`}>{txButton(s.tx, s.amount, `${t('bucket.paidFrom')} ${accountName(s.tx.accountId)}`)}</li>
-            ))}
-          </ul>
-        </section>
-      ))}
+      <h3 className="bucket-h">{t('bucket.history', { month: monthName(window.cycleStart) })}</h3>
+      {history.length === 0 && view.carried === 0 ? (
+        <p className="muted">{t('bucket.nothingYet')}</p>
+      ) : (
+        <ul className="rows">
+          {history.map((h) => (
+            <li key={h.key}>
+              <button type="button" className="row-button tx-row" onClick={h.onClick}>
+                <span className="row-main">
+                  <span className="row-title tx-desc">{h.title}</span>
+                  <span className="row-sub">{formatDate(h.date)} · {h.sub}</span>
+                </span>
+                <span className="row-end"><Money cents={h.amount} plusSign className="row-amount tx-amount" /></span>
+              </button>
+            </li>
+          ))}
+          {view.carried > 0 && (
+            <li className="row-static split-row">
+              <span className="muted">{t('bucket.carried')}</span>
+              <Money cents={view.carried} plusSign />
+            </li>
+          )}
+        </ul>
+      )}
 
       {detail.notCounted.length > 0 && (
-        <section className="group" aria-labelledby="bk-nc">
-          <div className="group-head"><h3 id="bk-nc">{t('bucket.notCounted')}</h3></div>
+        <>
+          <h3 className="bucket-h">{t('bucket.notCounted')}</h3>
           <p className="hint">{t('bucket.notCountedHint', { name: accountName(accountId!) })}</p>
           <ul className="rows">
-            {detail.notCounted.map((tx) => <li key={tx.id}>{txButton(tx, tx.amount, accountName(tx.accountId))}</li>)}
+            {detail.notCounted.map((tx) => (
+              <li key={tx.id}>
+                <button type="button" className="row-button tx-row" onClick={() => setOpen(tx)}>
+                  <span className="row-main">
+                    <span className="row-title tx-desc">{tx.descriptionRaw || t('tx.noDescription')}</span>
+                    <span className="row-sub">{formatDate(tx.date)}</span>
+                  </span>
+                  <span className="row-end"><Money cents={tx.amount} plusSign className="row-amount tx-amount" /></span>
+                </button>
+              </li>
+            ))}
           </ul>
-        </section>
+        </>
       )}
 
-      <p className="hint">{t('bucket.tapToCorrect')}</p>
       <div className="row">
         {onEdit && <button type="button" className="button" onClick={onEdit}>{t('common.edit')}</button>}
         <button type="button" className="button button-quiet" onClick={onClose}>{t('common.close')}</button>

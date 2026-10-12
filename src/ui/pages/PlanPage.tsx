@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { currentMonth, formatDate, monthOf, parseDate, todayIso } from '../../domain/dates';
 import { firstBelow, type ForecastResult } from '../../domain/forecast';
-import { eventPlanParts, provisionsMove, eventStatus, formatRecurrence, monthlySetAside, nextDue, parseRecurrence, planCloseEvent, provisionSchedule, provisionStatus, type Recurrence } from '../../domain/plan';
+import { eventPlanParts, eventStatus, formatRecurrence, monthlySetAside, nextDue, parseRecurrence, planCloseEvent, provisionSchedule, provisionStatus, type Recurrence } from '../../domain/plan';
 import { planPartAmount } from '../../domain/budget';
 import { buckets, provisionWindow, tripWindow, unallocatedMoves } from '../../domain/buckets';
 import { formatMoney, formatMoneyInput, parseMoney } from '../../domain/money';
@@ -158,82 +158,84 @@ function recurrenceLabel(r: string): string {
   return p ? t('plan.rec.custom', { n: p.interval, unit: p.freq === 'YEARLY' ? t('plan.rec.years') : t('plan.rec.months') }) : t('plan.rec.none');
 }
 
-/** This month's move to the savings account that holds provisions and trips (D-55). */
+/** This month's move to the savings account that holds provisions and trips (D-55, D-66). */
 export function ProvisionsMoveCard() {
   const vault = useVault();
   const notify = useToast();
   const settings = useSettings();
   const input = useBudgetInput();
   const accounts = useStore('accounts');
-  const categories = useStore('categories');
+  const provisions = useStore('provisions');
+  const events = useStore('events');
   const savings = accounts.filter((a) => !a.closedAt && a.type !== 'loan' && a.type !== 'card');
   const accountId = settings.provisionsAccountId;
   const account = accounts.find((a) => a.id === accountId);
   const month = currentMonth();
-  const move = useMemo(() => (accountId ? provisionsMove(input, month, accountId) : null), [input, month, accountId]);
-  const provisions = useStore('provisions');
-  const events = useStore('events');
-  // Planned in earlier months of the current cycles but never moved (D-56).
-  const catchUp = useMemo(() => {
-    if (!accountId) return 0;
-    const windows = [...provisions.map((p) => provisionWindow(p, month)), ...events.filter((e) => e.status !== 'closed').map(tripWindow)];
-    let sum = 0;
-    for (const b of buckets(input, month, accountId, windows).values()) sum += b.behind;
-    return sum;
-  }, [input, month, accountId, provisions, events]);
-  const waiting = useMemo(() => (accountId ? unallocatedMoves(input, accountId) : []), [input, accountId]);
   const [allocating, setAllocating] = useState<Transaction | null>(null);
+  // What each provision and open trip still needs to be on plan, this month included.
+  const needs = useMemo(() => {
+    if (!accountId) return [];
+    const named = [...provisions.map((p) => [provisionWindow(p, month), p.name] as const), ...events.filter((e) => e.status !== 'closed').map((e) => [tripWindow(e), e.name] as const)];
+    const views = buckets(input, month, accountId, named.map(([w]) => w));
+    return named.map(([w, name]) => ({ name, id: w.categoryId, amount: views.get(w.categoryId)?.toMove ?? 0 })).filter((x) => x.amount > 0).sort((x, y) => y.amount - x.amount);
+  }, [input, month, accountId, provisions, events]);
+  const total = needs.reduce((s, x) => s + x.amount, 0);
+  const waiting = useMemo(() => (accountId ? unallocatedMoves(input, accountId) : []), [input, accountId]);
+  const accountSelect = (
+    <SelectField
+      label={t('move.account')}
+      value={accountId ?? ''}
+      onChange={(e) => void saveSettings(vault, { provisionsAccountId: e.target.value || undefined }).then(() => notify(t('settings.saved')))}
+      hint={t('move.accountHint')}
+    >
+      <option value="">{t('move.none')}</option>
+      {savings.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+    </SelectField>
+  );
   return (
     <section className="card move-card" aria-labelledby="move-h">
       <h2 id="move-h">{t('move.title')}</h2>
-      <SelectField
-        label={t('move.account')}
-        value={accountId ?? ''}
-        onChange={(e) => void saveSettings(vault, { provisionsAccountId: e.target.value || undefined }).then(() => notify(t('settings.saved')))}
-        hint={t('move.accountHint')}
-      >
-        <option value="">{t('move.none')}</option>
-        {savings.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-      </SelectField>
-      {move && account && (
+      {!account ? (
+        accountSelect
+      ) : (
         <>
-          <p className="move-amount">
-            {move.left + catchUp > 0 ? (
-              <>{t('move.moveNow', { month: monthName(month) })} <strong><Money cents={move.left + catchUp} /></strong> {t('move.to', { name: account.name })}</>
-            ) : (
-              <>✓ {t('move.done', { month: monthName(month) })}</>
-            )}
-          </p>
-          <details>
-            <summary>{t('move.breakdown', { planned: '' })} <Money cents={move.planned} /></summary>
-            <ul className="plain-list">
-              {move.parts.map((p) => (
-                <li key={p.categoryId} className="split-row"><span>{categories.find((c) => c.id === p.categoryId)?.name ?? '?'}</span><Money cents={p.amount} /></li>
+          {total > 0 ? (
+            <p className="move-amount">
+              <span className="muted">{t('move.moveTo', { name: account.name })}</span>
+              <strong><Money cents={total} /></strong>
+            </p>
+          ) : (
+            <p className="move-amount">✓ {t('move.allOnPlan', { month: monthName(month) })}</p>
+          )}
+          {needs.length > 0 && (
+            <ul className="plain-list move-list">
+              {needs.map((x) => (
+                <li key={x.id} className="split-row"><span>{x.name}</span><Money cents={x.amount} /></li>
               ))}
-              {move.moved > 0 && <li className="split-row"><span>{t('move.alreadyMoved')}</span><Money cents={-move.moved} /></li>}
-              {catchUp > 0 && <li className="split-row"><strong>{t('move.catchUp')}</strong><strong><Money cents={catchUp} /></strong></li>}
             </ul>
-            <p className="hint">{t('move.reconcileHint', { name: account.name })}</p>
-          </details>
+          )}
           {waiting.length > 0 && (
             <div className="waiting">
-              <p><strong>⚠ {t('allocate.waitingCount', { n: waiting.length, name: account.name, amount: formatMoney(waiting.reduce((s, x) => s + x.left, 0)) })}</strong></p>
+              <h3>{t('allocate.waitingTitle')}</h3>
               <p className="hint">{t('allocate.waitingHint')}</p>
-              <ul className="rows">
-                {waiting.map(({ tx, left }) => (
-                  <li key={tx.id}>
-                    <button type="button" className="row-button" onClick={() => setAllocating(tx)}>
-                      <span className="row-main">
-                        <span className="row-title tx-desc">{tx.descriptionRaw || t('tx.noDescription')}</span>
-                        <span className="row-sub">{formatDate(tx.date)} · {t('allocate.leftOf', { left: formatMoney(left) })}</span>
-                      </span>
-                      <span className="row-end"><span className="button button-small">{t('allocate.button')}</span></span>
-                    </button>
+              <ul className="plain-list move-list">
+                {waiting.map(({ tx }) => (
+                  <li key={tx.id} className="waiting-row">
+                    <span className="waiting-main">
+                      <Money cents={tx.amount} />
+                      <span className="muted">{formatDate(tx.date)}</span>
+                    </span>
+                    <button type="button" className="button button-small" onClick={() => setAllocating(tx)}>{t('allocate.button')}</button>
                   </li>
                 ))}
               </ul>
             </div>
           )}
+          <details className="move-settings">
+            <summary>{t('move.settings', { name: account.name })}</summary>
+            {accountSelect}
+            <p className="hint">{t('move.reconcileHint', { name: account.name })}</p>
+          </details>
         </>
       )}
       {allocating && <AllocateDialog tx={allocating} onClose={() => setAllocating(null)} />}
