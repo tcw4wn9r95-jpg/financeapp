@@ -18,6 +18,7 @@ import type {
   EventFund,
   RolloverMode,
   Settings,
+  StoreName,
   StoreSnapshot,
 } from '../domain/types';
 import { readPlainExport } from '../storage/backup';
@@ -410,6 +411,27 @@ export async function deleteEntry(vault: Vault, transactionId: Id): Promise<void
 
 export async function restoreSnapshot(vault: Vault, snapshot: StoreSnapshot): Promise<void> {
   await vault.replaceAll(snapshot);
+}
+
+/**
+ * Delete every transaction and what hangs off it (splits and transfer links,
+ * statements, import history), keeping accounts, categories, the budget,
+ * provisions, trips, rules and settings (D-62). Opening balances that came
+ * from a statement go back to 0, so the next import sets them again; typed
+ * ones stay. `forgetLearning` also drops the examples learned from past choices.
+ */
+export async function deleteAllTransactions(vault: Vault, opts: { forgetLearning?: boolean } = {}): Promise<number> {
+  const stores: StoreName[] = ['transactions', 'allocations', 'statements', 'importBatches', ...(opts.forgetLearning ? (['trainingExamples'] as const) : [])];
+  const ops: WriteOp[] = stores.flatMap((store) => vault.list(store).map((r): WriteOp => ({ type: 'delete', store, id: r.id })));
+  const now = new Date().toISOString();
+  for (const a of vault.list('accounts')) {
+    if (!a.openingFromStatement) continue;
+    const { openingFromStatement: _, ...rest } = a;
+    ops.push({ type: 'put', store: 'accounts', record: { ...rest, openingBalance: 0, updatedAt: now } });
+  }
+  const count = vault.list('transactions').length;
+  if (ops.length) await vault.write(ops);
+  return count;
 }
 
 /** Load the anonymised demo household, shifted so its last month is this month. */

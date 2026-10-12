@@ -13,7 +13,7 @@ import {
   type PlainExport,
 } from '../../storage/backup';
 import { MIN_PASSPHRASE_LENGTH, VaultError } from '../../storage/vault';
-import { changeBudgetStart, canShareFiles, download, loadDemo, shareFile, restoreSnapshot, saveMembers, saveSettings } from '../actions';
+import { changeBudgetStart, canShareFiles, deleteAllTransactions, download, loadDemo, shareFile, restoreSnapshot, saveMembers, saveSettings } from '../actions';
 import { MoneyField, SelectField, TextField, useMoneyInput } from '../components/fields';
 import { useToast } from '../components/Toast';
 import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
@@ -599,8 +599,11 @@ function DataSection() {
   const notify = useToast();
   const [demoConfirm, setDemoConfirm] = useState(false);
   const [wipeText, setWipeText] = useState('');
+  const [clearText, setClearText] = useState('');
+  const [forget, setForget] = useState(false);
   const [busy, setBusy] = useState(false);
   const word = t('data.wipeWord');
+  const clearWord = t('data.clearWord');
   return (
     <section className="card" id="settings-data" aria-labelledby="dt-h">
       <h2 id="dt-h">{t('data.title')}</h2>
@@ -626,6 +629,29 @@ function DataSection() {
         }}
       >
         {t('data.demoLoad')}
+      </button>
+      <h3>{t('data.clearTitle')}</h3>
+      <p>{t('data.clearIntro')}</p>
+      <label className="check">
+        <input type="checkbox" checked={forget} onChange={(e) => setForget(e.target.checked)} />
+        {t('data.clearForget')}
+      </label>
+      <TextField label={t('data.wipeLabel', { word: clearWord })} value={clearText} onChange={(e) => setClearText(e.target.value)} autoComplete="off" />
+      <button
+        type="button"
+        className="button button-danger"
+        disabled={clearText !== clearWord || busy}
+        onClick={() => {
+          setBusy(true);
+          void deleteAllTransactions(vault, { forgetLearning: forget }).then((n) => {
+            notify(t('data.cleared', { n: String(n) }));
+            setClearText('');
+            setForget(false);
+            setBusy(false);
+          });
+        }}
+      >
+        {t('data.clear')}
       </button>
       <h3>{t('data.wipeTitle')}</h3>
       <p>{t('data.wipeIntro')}</p>
