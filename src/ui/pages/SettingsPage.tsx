@@ -262,7 +262,7 @@ function BackupSection() {
     try {
       const plain = await toPlainExport(vault.snapshot());
       const file = await encryptBackup(plain, pass);
-      const name = `casaressan-backup-${todayIso()}.json`;
+      const name = `finances-backup-${todayIso()}.json`;
       if (share) {
         setPrepared({ name, text: JSON.stringify(file), hash: plain.hash });
         setPass('');
@@ -282,7 +282,7 @@ function BackupSection() {
 
   async function plainExport() {
     const plain = await toPlainExport(vault.snapshot());
-    download(`casaressan-export-${todayIso()}.json`, JSON.stringify(plain, null, 1));
+    download(`finances-export-${todayIso()}.json`, JSON.stringify(plain, null, 1));
     notify(t('backup.exportDone'));
   }
 

@@ -6,7 +6,7 @@ A private, local-first household finance app for a household. It runs entirely i
 
 - **M1, Foundations and budget:** encrypted storage, backup and restore; accounts, categories and manual entry; a monthly budget with defaults, month overrides and rollover; dashboard v0.
 - **M2, Import and reconciliation:**
-  - statement import from  PDFs, Worldline credit-card PDFs, Revolut CSV, CAMT.053, OFX/QFX and any CSV through a saved column mapping;
+  - statement import from bank and credit-card PDF statements, a neobank CSV export, CAMT.053, OFX/QFX and any CSV through a saved column mapping;
   - deduplication and an import report;
   - automatic pairing of transfers between your accounts;
   - card statements linked to their settlement debit;
@@ -24,7 +24,7 @@ A private, local-first household finance app for a household. It runs entirely i
   - "What if" scenarios drawn against the forecast.
 
 - **M5, Tax and sharing:**
-  - a Luxembourg income-tax projection for classes 1, 1a and 2 (2025 and 2026 parameters, with sources), showing the expected refund or payment against payroll withholding, optionally posted into the forecast; every parameter can be overridden;
+  - an income-tax projection for tax classes 1, 1a and 2 (2025 and 2026 parameters, with sources), showing the expected refund or payment against payroll withholding, optionally posted into the forecast; every parameter can be overridden;
   - OFX/QFX import;
   - sharing the encrypted backup through the phone's share sheet (Files, iCloud Drive, AirDrop to the other phone).
 
@@ -84,7 +84,7 @@ Settings → Face ID → enter the passphrase once → **Turn on Face ID**. From
 
 ## Backup and restore
 
-- **Make a backup:** open **Settings → Backup**, choose a backup passphrase (reusing the vault passphrase is fine), then **Download encrypted backup**. The file `kassa-backup-YYYY-MM-DD.kassa.json` is useless without that passphrase. The dashboard reminds you when the last backup is more than 7 days old.
+- **Make a backup:** open **Settings → Backup**, choose a backup passphrase (reusing the vault passphrase is fine), then **Download encrypted backup**. The file `finances-backup-YYYY-MM-DD.json` is useless without that passphrase. The dashboard reminds you when the last backup is more than 7 days old.
 - **Full JSON export:** **Settings → Backup → Download JSON export**. This file is unencrypted and human-readable; keep it safe.
 - **Restore:** open **Settings → Restore**, choose a backup or export file, and enter its passphrase if it is encrypted. Check the preview of record counts, then **Replace all data**. The app recomputes the SHA-256 fingerprint of the restored data and confirms that it matches the file.
 - **New browser or cleared storage:** create a new vault (any passphrase), choose **Restore from a backup file**, and follow the restore steps.
@@ -102,22 +102,22 @@ Settings → Face ID → enter the passphrase once → **Turn on Face ID**. From
 1. **Set up once.**
    - In **Settings → Household**, add the people, for example the two of you.
    - In **Accounts**, create each account with its owner and the **last 4 characters of its IBAN** or card number. The app uses them to route files and recognise transfers.
-   - For an account whose statements you never import, add a **"Recognise in other statements"** hint. The Revolut Compte flexible is the example: add the hint "Compte flexible". Transfers that mention it then land there automatically.
+   - For an account whose statements you never import, add a **"Recognise in other statements"** hint. For example a savings pocket at another bank: add the words its transfers show as a hint. Transfers that mention them then land there automatically.
    - Give each credit card its **Paid from** account.
-   - Create each loan (for example Buy Way) as a **Loan** account. Enter the amount still owed as a negative opening balance, and add the hint "BUY WAY". Its monthly debit is suggested as a repayment: choose the budget category it counts in (for example "Loan repayments"), and the loan balance goes down too.
+   - Create each loan (for example a consumer loan) as a **Loan** account. Enter the amount still owed, and add the lender's name as a hint. Its monthly debit is suggested as a repayment: choose the budget category it counts in (for example "Loan repayments"), and the loan balance goes down too.
 2. **Import.** Open **Import** and choose one or more files:
 
    | File | Format |
    | --- | --- |
-   | Spuerkeess statement | PDF |
-   | Visa statement from Worldline | PDF |
-   | Revolut | CSV |
+   | Bank account statement | PDF |
+   | Credit-card statement | PDF |
+   | Neobank export | CSV |
    | Bank statement | CAMT.053 XML |
    | Bank or card export | OFX / QFX |
    | Any other export | CSV |
 
-   The app detects the format and proposes the account for each part of the file, by IBAN or card number. A Revolut file has one part per product (Current, Deposit); choose the account for each, or "Do not import". Then press **Import** and read the report: new rows, duplicates ignored, rows skipped and why, transfers paired, card statements linked.
-3. **Review.** **Inbox → To review** lists everything not yet classified. Choose a category, an income or a transfer, or split a row. "Also the N similar ones" applies the same choice to rows from the same merchant (handy for Revolut spare change). Suggestions, such as a card settlement whose card already has statements, can be accepted one by one or all at once.
+   The app detects the format and proposes the account for each part of the file, by IBAN or card number. A file can hold several products (current account, savings pocket); choose the account for each, or "Do not import". Then press **Import** and read the report: new rows, duplicates ignored, rows skipped and why, transfers paired, card statements linked.
+3. **Review.** **Inbox → To review** lists everything not yet classified. Choose a category, an income or a transfer, or split a row. "Also the N similar ones" applies the same choice to rows from the same merchant (handy for round-up spare change). Suggestions, such as a card settlement whose card already has statements, can be accepted one by one or all at once.
 4. **Reconcile.** **Inbox → Statements** compares the app's balance with each statement's closing balance. When they match and nothing is left to review, **Lock this period**. **Inbox → Import history** can undo an import.
 
 Importing the same file twice, or overlapping files, creates no duplicates.
@@ -131,9 +131,9 @@ When a CSV's layout is unknown, the import page asks you to map its columns once
 
 The app guesses common English, French and German headers and previews the result. The layout is saved under a name (**Import → Saved bank layouts**). Every later import checks the header row: if the bank changes its export, the app stops and asks you to map it again. It never guesses.
 
-To add a built-in layout for everyone, add a `MappingSpec` to `BUILT_IN_MAPPINGS` in `src/domain/import/csv.ts` (see `REVOLUT_MAPPING`). Then add a sample file to `fixtures/import/` and a test to `src/import-fixtures.test.ts`.
+To add a built-in layout for everyone, add a `MappingSpec` to `BUILT_IN_MAPPINGS` in `src/domain/import/csv.ts` (see the existing built-in mappings). Then add a sample file to `fixtures/import/` and a test to `src/import-fixtures.test.ts`.
 
-The import fixtures are synthetic, for a fictional couple Jane and John Doe. They copy the real layouts and are regenerated with `npm run fixtures:import` (needs Playwright for the PDFs).
+The import fixtures are synthetic, for a fictional household. They copy the real layouts and are regenerated with `npm run fixtures:import` (needs Playwright for the PDFs).
 
 ## Updating a tax year file
 
@@ -151,7 +151,7 @@ To add a year: copy the latest file, change the values from the consolidated LIR
 
 ```
 src/domain/    pure TypeScript: money, dates, ledger, budget engine, reconcile, plan, forecast, learn, tax (no React, no Dexie; a test enforces this)
-src/domain/import/  parsers (Spuerkeess PDF, Worldline PDF, CSV mappings, CAMT.053, OFX) and the import engine
+src/domain/import/  parsers (bank and card PDF layouts, CSV mappings, CAMT.053, OFX) and the import engine
 src/infra/     pdf.js text extraction; the optional Claude client
 src/storage/   WebCrypto, encrypted Dexie vault, backup and export format
 src/ui/        React pages and components
