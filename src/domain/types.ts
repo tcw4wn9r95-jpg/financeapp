@@ -94,9 +94,11 @@ export interface Transaction extends BaseRecord {
    */
   isMirror?: boolean;
   /**
-   * A move into the provisions account pinned to one provision or trip
-   * (its category id) instead of being shared out automatically (D-64).
+   * A move into the provisions account: the parts allocated to provisions
+   * and trips (their category ids). The rest stays plain savings (D-65).
    */
+  earmarks?: { categoryId: Id; amount: Cents }[];
+  /** Legacy single pin (D-64): the whole move for one bucket. Read as `earmarks`. */
   earmarkCategoryId?: Id;
   /** A proposed classification waiting in the inbox (status 'suggested'). */
   suggestion?: Suggestion;

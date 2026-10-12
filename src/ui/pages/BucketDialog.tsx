@@ -1,48 +1,36 @@
 import { useMemo, useState } from 'react';
-import { bucketDetail, buckets, cycleLookup, type BucketWindow } from '../../domain/buckets';
+import { bucketDetail, buckets, unallocatedMoves, type BucketWindow } from '../../domain/buckets';
 import { currentMonth, formatDate } from '../../domain/dates';
+import { formatMoney } from '../../domain/money';
 import type { Transaction } from '../../domain/types';
 import { monthName, t } from '../../i18n';
 import { Dialog } from '../components/Dialog';
 import { Money } from '../components/Money';
-import { useToast } from '../components/Toast';
-import { useBudgetInput, useSettings, useStore, useVault } from '../hooks';
+import { useBudgetInput, useSettings, useStore } from '../hooks';
+import { AllocateDialog } from './AllocateDialog';
 import { TransactionDialog } from './TransactionsPage';
 
 /**
  * What fed and emptied one provision or trip in its current cycle, with each
- * transaction a tap away from being corrected (D-64).
+ * transaction a tap away from being corrected (D-64), and each move into the
+ * provisions account allocated by hand (D-65).
  */
 export function BucketDialog({ name, window, onEdit, onClose }: { name: string; window: BucketWindow; onEdit?: () => void; onClose: () => void }) {
-  const vault = useVault();
-  const notify = useToast();
   const input = useBudgetInput();
   const settings = useSettings();
   const accounts = useStore('accounts');
-  const provisions = useStore('provisions');
-  const events = useStore('events');
   const [open, setOpen] = useState<Transaction | null>(null);
+  const [allocating, setAllocating] = useState<Transaction | null>(null);
   const month = currentMonth();
   const accountId = settings.provisionsAccountId;
-  const cycleOf = useMemo(() => cycleLookup(provisions, events), [provisions, events]);
-  const view = useMemo(() => buckets(input, month, accountId, [window], cycleOf).get(window.categoryId)!, [input, month, accountId, window, cycleOf]);
-  const detail = useMemo(() => bucketDetail(input, month, accountId, window, cycleOf), [input, month, accountId, window, cycleOf]);
+  const view = useMemo(() => buckets(input, month, accountId, [window]).get(window.categoryId)!, [input, month, accountId, window]);
+  const detail = useMemo(() => bucketDetail(input, month, accountId, window), [input, month, accountId, window]);
+  const waiting = useMemo(() => (accountId ? unallocatedMoves(input, accountId) : []), [input, accountId]);
   const accountName = (id: string) => accounts.find((a) => a.id === id)?.name ?? '?';
-  const pinTargets = [
-    ...provisions.map((p) => [p.categoryId, p.name] as const),
-    ...events.filter((e) => e.status !== 'closed' || e.categoryId === window.categoryId).map((e) => [e.categoryId, e.name] as const),
-  ];
 
-  // A transaction opened for correcting replaces this dialog until it closes.
+  // A transaction opened for correcting or allocating replaces this dialog until it closes.
   if (open) return <TransactionDialog tx={open} onClose={() => setOpen(null)} />;
-
-  async function pin(tx: Transaction, categoryId: string) {
-    const fresh = vault.get('transactions', tx.id);
-    if (!fresh) return;
-    const { earmarkCategoryId: _, ...rest } = fresh;
-    await vault.put('transactions', { ...rest, ...(categoryId ? { earmarkCategoryId: categoryId } : {}), updatedAt: new Date().toISOString() });
-    notify(t('settings.saved'));
-  }
+  if (allocating) return <AllocateDialog tx={allocating} onClose={() => setAllocating(null)} />;
 
   const txButton = (tx: Transaction, amount: number, sub: string) => (
     <button type="button" className="row-button tx-row" onClick={() => setOpen(tx)}>
@@ -52,6 +40,11 @@ export function BucketDialog({ name, window, onEdit, onClose }: { name: string; 
       </span>
       <span className="row-end"><Money cents={amount} plusSign className="row-amount tx-amount" /></span>
     </button>
+  );
+  const allocateButton = (tx: Transaction) => (
+    <div className="pin">
+      <button type="button" className="button button-small" onClick={() => setAllocating(tx)}>{t('allocate.button')}</button>
+    </div>
   );
 
   return (
@@ -65,6 +58,21 @@ export function BucketDialog({ name, window, onEdit, onClose }: { name: string; 
       <p className="hint">{t('bucket.cycleFrom', { month: monthName(window.cycleStart) })}</p>
       {!accountId && <p className="notice">{t('bucket.noAccount')}</p>}
 
+      {waiting.length > 0 && (
+        <section className="group" aria-labelledby="bk-wait">
+          <div className="group-head"><h3 id="bk-wait">{t('allocate.waitingTitle')}</h3></div>
+          <p className="hint">{t('allocate.waitingHint')}</p>
+          <ul className="rows">
+            {waiting.map(({ tx, left }) => (
+              <li key={tx.id} className="bucket-move">
+                {txButton(tx, tx.amount, t('allocate.leftOf', { left: formatMoney(left) }))}
+                {allocateButton(tx)}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {detail.months.length === 0 && <p className="notice">{t('bucket.nothingYet')}</p>}
       {detail.months.map((m) => (
         <section key={m.month} className="group" aria-label={monthName(m.month)}>
@@ -73,16 +81,10 @@ export function BucketDialog({ name, window, onEdit, onClose }: { name: string; 
             {accountId && <span className="muted">{t('bucket.forThis')} <Money cents={m.loaded} /></span>}
           </div>
           <ul className="rows">
-            {m.moves.map((tx) => (
+            {m.moves.map(({ tx, amount }) => (
               <li key={tx.id} className="bucket-move">
-                {txButton(tx, tx.amount, t('bucket.moveInto', { name: accountName(tx.accountId) }))}
-                <label className="pin">
-                  <span>{t('bucket.countsFor')}</span>
-                  <select value={tx.earmarkCategoryId ?? ''} onChange={(e) => void pin(tx, e.target.value)}>
-                    <option value="">{t('bucket.shared')}</option>
-                    {pinTargets.map(([id, n]) => <option key={id} value={id}>{t('bucket.onlyFor', { name: n })}</option>)}
-                  </select>
-                </label>
+                {txButton(tx, amount, t('allocate.partOf', { name: accountName(tx.accountId), total: formatMoney(tx.amount) }))}
+                {allocateButton(tx)}
               </li>
             ))}
             {m.spending.map((s) => (

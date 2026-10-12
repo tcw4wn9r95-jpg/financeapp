@@ -9,10 +9,10 @@ import type { Cents, EventFund, Id, MonthKey, Provision, Transaction } from './t
  * actually moved into the provisions account, and empties when its bill or
  * trip spending is paid.
  *
- * Money moved into the provisions account in a month is shared between the
- * provisions and trips in proportion to what the budget planned for each
- * that month. A move in a month with nothing planned waits for the next
- * month that has a plan.
+ * Money moved into the provisions account fills a bucket only when the user
+ * allocates it (D-65): one move can be split between several provisions and
+ * trips, and what is not allocated stays plain savings. "Fill by plan"
+ * proposes a split by what each bucket is short of its plan.
  */
 
 export interface BucketWindow {
@@ -68,82 +68,104 @@ export function movesInto(input: BudgetInput, accountId: Id): Map<MonthKey, Cent
 
 type CycleOf = (categoryId: Id, month: MonthKey) => MonthKey | undefined;
 
-/**
- * How the moves are shared between buckets, month by month. A move pinned to
- * one bucket (D-64) counts for that bucket only; the rest is shared: first
- * what each bucket is short of its plan in its current cycle, then any extra
- * ahead by that month's plan.
- */
-function shareMoves(input: BudgetInput, months: ReturnType<typeof computeBudget>, accountId: Id | undefined, cycleOf: CycleOf) {
-  const ids = input.categories.filter((c) => !c.isIncome && BUCKET_GROUPS.has(c.groupId)).map((c) => c.id);
-  const isBucket = new Set(ids);
-  const first = months[0]?.month;
-  const moves = new Map<MonthKey, Cents>();
-  const pinned = new Map<MonthKey, Map<Id, Cents>>();
-  let pool = 0;
-  for (const t of accountId ? moveTransactions(input, accountId) : []) {
-    // Moves made before the budget start count in its first month.
-    const raw = monthOf(t.date);
-    const m = first && compareMonths(raw, first) < 0 ? first : raw;
-    if (t.earmarkCategoryId && isBucket.has(t.earmarkCategoryId)) {
-      const pm = pinned.get(m) ?? new Map<Id, Cents>();
-      pm.set(t.earmarkCategoryId, (pm.get(t.earmarkCategoryId) ?? 0) + t.amount);
-      pinned.set(m, pm);
-    } else {
-      moves.set(m, (moves.get(m) ?? 0) + t.amount);
-    }
-  }
+/** The parts of a move allocated to buckets (the legacy single pin counts as the whole move). */
+export function earmarksOf(t: Transaction): { categoryId: Id; amount: Cents }[] {
+  if (t.earmarks) return t.earmarks.filter((e) => e.amount > 0);
+  return t.earmarkCategoryId ? [{ categoryId: t.earmarkCategoryId, amount: t.amount }] : [];
+}
 
-  const loadedByMonth = new Map<MonthKey, Map<Id, Cents>>();
-  const plannedByMonth = new Map<MonthKey, Map<Id, Cents>>();
-  for (const bm of months) {
-    const planned = ids.map((id) => [id, Math.max(0, bm.categories.get(id)?.assigned ?? 0)] as const);
-    plannedByMonth.set(bm.month, new Map(planned));
-    const share = new Map<Id, Cents>(pinned.get(bm.month) ?? []);
-    if (accountId) {
-      pool += moves.get(bm.month) ?? 0;
-      const needs = ids
-        .map((id) => {
-          const from = cycleOf(id, bm.month);
-          let n = 0;
-          for (const [m, p] of plannedByMonth) if (!from || compareMonths(m, from) >= 0) n += p.get(id) ?? 0;
-          for (const [m, l] of loadedByMonth) if (!from || compareMonths(m, from) >= 0) n -= l.get(id) ?? 0;
-          n -= share.get(id) ?? 0; // pinned this month
-          return [id, Math.max(0, n)] as const;
-        })
-        .filter(([, n]) => n > 0);
-      const needTotal = needs.reduce((s, [, n]) => s + n, 0);
-      if (pool > 0 && needTotal > 0) distribute(Math.min(pool, needTotal), needs, share);
-      const extra = pool - Math.min(pool, needTotal);
-      const ahead = planned.filter(([, a]) => a > 0);
-      if (extra > 0 && ahead.length > 0) {
-        distribute(extra, ahead, share);
-        pool = 0;
-      } else {
-        pool = extra; // nothing planned yet: the money waits for the next plan
-      }
-    } else {
-      for (const [id, a] of planned) if (a > 0) share.set(id, a);
-    }
-    loadedByMonth.set(bm.month, share);
-  }
-  return loadedByMonth;
+/** What is left of a move after its allocations. */
+export function unallocatedOf(t: Transaction): Cents {
+  return Math.max(0, t.amount - earmarksOf(t).reduce((s, e) => s + e.amount, 0));
 }
 
 /**
- * `windows` lists the buckets to report. `cycleOf` gives any bucket
- * category's cycle start in a given month (provisions restart after each due
- * date); categories without one count from the budget start.
+ * Moves into the provisions account nobody has allocated yet, from the budget
+ * start. Once saved, an allocation is decided even if part of it stays savings.
  */
+export function unallocatedMoves(input: BudgetInput, accountId: Id): { tx: Transaction; left: Cents }[] {
+  const start = input.startMonth;
+  return moveTransactions(input, accountId)
+    .filter((t) => t.earmarks === undefined && !t.earmarkCategoryId)
+    .filter((t) => !start || compareMonths(monthOf(t.date), start) >= 0)
+    .map((tx) => ({ tx, left: tx.amount }))
+    .sort((a, b) => b.tx.date.localeCompare(a.tx.date));
+}
+
+/**
+ * Money loaded into each bucket by month: the allocated parts of the moves
+ * (moves before the budget start count in its first month). Without a
+ * provisions account the plan stands in for real money.
+ */
+function loadedByMonthOf(input: BudgetInput, months: ReturnType<typeof computeBudget>, accountId: Id | undefined) {
+  const ids = input.categories.filter((c) => !c.isIncome && BUCKET_GROUPS.has(c.groupId)).map((c) => c.id);
+  const isBucket = new Set(ids);
+  const first = months[0]?.month;
+  const out = new Map<MonthKey, Map<Id, Cents>>();
+  if (!accountId) {
+    for (const bm of months) {
+      const share = new Map<Id, Cents>();
+      for (const id of ids) {
+        const a = Math.max(0, bm.categories.get(id)?.assigned ?? 0);
+        if (a > 0) share.set(id, a);
+      }
+      out.set(bm.month, share);
+    }
+    return out;
+  }
+  for (const t of moveTransactions(input, accountId)) {
+    const raw = monthOf(t.date);
+    const m = first && compareMonths(raw, first) < 0 ? first : raw;
+    for (const e of earmarksOf(t)) {
+      if (!isBucket.has(e.categoryId)) continue;
+      const mm = out.get(m) ?? new Map<Id, Cents>();
+      mm.set(e.categoryId, (mm.get(e.categoryId) ?? 0) + e.amount);
+      out.set(m, mm);
+    }
+  }
+  return out;
+}
+
+/**
+ * A proposed split of `amount` moved in `month`: first what each bucket is
+ * short of its plan in its current cycle up to that month (not counting
+ * `excludeTxId`'s own allocation), then any extra ahead by that month's plan.
+ */
+export function suggestAllocation(input: BudgetInput, month: MonthKey, accountId: Id, amount: Cents, cycleOf: CycleOf, excludeTxId?: Id): Map<Id, Cents> {
+  const months = computeBudget(input, month);
+  const without = excludeTxId ? { ...input, transactions: input.transactions.map((t) => (t.id === excludeTxId ? { ...t, earmarks: [], earmarkCategoryId: undefined } : t)) } : input;
+  const loaded = loadedByMonthOf(without, months, accountId);
+  const ids = input.categories.filter((c) => !c.isIncome && BUCKET_GROUPS.has(c.groupId)).map((c) => c.id);
+  const needs = ids
+    .map((id) => {
+      const from = cycleOf(id, month);
+      let n = 0;
+      for (const bm of months) {
+        if (from && compareMonths(bm.month, from) < 0) continue;
+        n += Math.max(0, bm.categories.get(id)?.assigned ?? 0) - (loaded.get(bm.month)?.get(id) ?? 0);
+      }
+      return [id, Math.max(0, n)] as const;
+    })
+    .filter(([, n]) => n > 0);
+  const out = new Map<Id, Cents>();
+  const needTotal = needs.reduce((s, [, n]) => s + n, 0);
+  if (amount > 0 && needTotal > 0) distribute(Math.min(amount, needTotal), needs, out);
+  const extra = amount - Math.min(amount, needTotal);
+  const last = months.at(-1);
+  const ahead = ids.map((id) => [id, Math.max(0, last?.categories.get(id)?.assigned ?? 0)] as const).filter(([, a]) => a > 0);
+  if (extra > 0 && ahead.length > 0) distribute(extra, ahead, out);
+  return out;
+}
+
+/** `windows` lists the buckets to report, each from the start of its current cycle. */
 export function buckets(
   input: BudgetInput,
   month: MonthKey,
   accountId: Id | undefined,
   windows: readonly BucketWindow[],
-  cycleOf: CycleOf = (id) => windows.find((w) => w.categoryId === id)?.cycleStart,
 ): Map<Id, BucketView> {
   const months = computeBudget(input, month);
-  const loadedByMonth = shareMoves(input, months, accountId, cycleOf);
+  const loadedByMonth = loadedByMonthOf(input, months, accountId);
 
   const out = new Map<Id, BucketView>();
   for (const w of windows) {
@@ -228,10 +250,10 @@ export function tripWindow(e: EventFund): BucketWindow {
 
 export interface BucketMonth {
   month: MonthKey;
-  /** This bucket's share of the money moved (pinned moves included). */
+  /** Allocated to this bucket from the moves of this month. */
   loaded: Cents;
-  /** Every move into the provisions account counted in this month. */
-  moves: Transaction[];
+  /** The moves with a part allocated to this bucket, and that part. */
+  moves: { tx: Transaction; amount: Cents }[];
   /** Paid out of the bucket (negative) or refunded into it (positive), per transaction. */
   spending: { tx: Transaction; amount: Cents }[];
 }
@@ -245,10 +267,10 @@ export interface BucketDetail {
   notCounted: Transaction[];
 }
 
-/** What fed and emptied one bucket in its current cycle, month by month, newest first (D-64). */
-export function bucketDetail(input: BudgetInput, month: MonthKey, accountId: Id | undefined, window: BucketWindow, cycleOf: CycleOf): BucketDetail {
+/** What fed and emptied one bucket in its current cycle, month by month, newest first (D-64, D-65). */
+export function bucketDetail(input: BudgetInput, month: MonthKey, accountId: Id | undefined, window: BucketWindow): BucketDetail {
   const months = computeBudget(input, month);
-  const loadedByMonth = shareMoves(input, months, accountId, cycleOf);
+  const loadedByMonth = loadedByMonthOf(input, months, accountId);
   const first = months[0]?.month;
   const shownMonth = (d: string): MonthKey => {
     const m = monthOf(d);
@@ -267,13 +289,16 @@ export function bucketDetail(input: BudgetInput, month: MonthKey, accountId: Id 
       const tx = byId.get(a.transactionId);
       if (tx && monthOf(tx.date) === bm.month) spending.push({ tx, amount: a.amount });
     }
-    const monthMoves = moves.filter((t) => shownMonth(t.date) === bm.month);
+    const monthMoves = moves
+      .filter((t) => shownMonth(t.date) === bm.month)
+      .map((tx) => ({ tx, amount: earmarksOf(tx).filter((e) => e.categoryId === window.categoryId).reduce((s, e) => s + e.amount, 0) }))
+      .filter((x) => x.amount > 0);
     const loaded = loadedByMonth.get(bm.month)?.get(window.categoryId) ?? 0;
     if (loaded || monthMoves.length || spending.length) {
       out.push({
         month: bm.month,
         loaded,
-        moves: monthMoves.sort((a, b) => b.date.localeCompare(a.date)),
+        moves: monthMoves.sort((a, b) => b.tx.date.localeCompare(a.tx.date)),
         spending: spending.sort((a, b) => b.tx.date.localeCompare(a.tx.date)),
       });
     }

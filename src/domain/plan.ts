@@ -260,10 +260,15 @@ export function provisionsMove(input: BudgetInput, month: MonthKey, accountId: I
   }
   const planned = parts.reduce((s, p) => s + p.amount, 0);
   const onBudget = new Set(input.accounts.filter((a) => a.type !== 'loan').map((a) => a.id));
+  const bucketIds = new Set(input.categories.filter((c) => !c.isIncome && groups.has(c.groupId)).map((c) => c.id));
+  // Only money allocated to provisions and trips counts as moved for them (D-65).
   const moved = input.transactions
     .filter((t) => t.accountId === accountId && t.amount > 0 && monthOf(t.date) === month)
     .filter((t) => input.allocations.some((a) => a.transactionId === t.id && a.targetType === 'transfer' && onBudget.has(input.transactions.find((x) => x.id === a.targetId)?.accountId ?? '')))
-    .reduce((s, t) => s + t.amount, 0);
+    .reduce((s, t) => {
+      const parts = t.earmarks ?? (t.earmarkCategoryId ? [{ categoryId: t.earmarkCategoryId, amount: t.amount }] : []);
+      return s + parts.filter((e) => bucketIds.has(e.categoryId)).reduce((x, e) => x + Math.max(0, e.amount), 0);
+    }, 0);
   return { planned, moved, left: Math.max(0, planned - moved), parts };
 }
 

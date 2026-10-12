@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bucketDetail, buckets, provisionCycleStart, provisionWindow } from './buckets';
+import { bucketDetail, buckets, provisionCycleStart, provisionWindow, suggestAllocation, unallocatedMoves } from './buckets';
 import { World } from './testkit';
 import type { Provision } from './types';
 
@@ -30,13 +30,20 @@ describe('provision buckets fill with real money (D-56)', () => {
     expect(v).toMatchObject({ planned: eur(400), loaded: 0, level: 0, percent: 0, behind: eur(300), plannedThisMonth: eur(100) });
   });
 
-  it('a move into the provisions account is shared by plan; paying the bill empties the bucket', () => {
+  it('a move fills nothing until it is allocated; paying the bill empties the bucket', () => {
     const { w, bank, flex } = household();
-    // July: 100 for insurance + 100 for tax planned; 200 moved.
     w.entry(bank, '2026-07-02', eur(-200), { kind: 'transfer', toAccountId: flex });
     w.entry(bank, '2026-08-02', eur(-200), { kind: 'transfer', toAccountId: flex });
     let v = buckets(w.input(), '2026-08', flex, [provisionWindow(prov(), '2026-08')]).get('ins')!;
+    expect(v).toMatchObject({ loaded: 0, level: 0, behind: eur(100) });
+    expect(unallocatedMoves(w.input(), flex).map((x) => x.left)).toEqual([eur(200), eur(200)]);
+
+    allocate(w, flex, '2026-07-02', { ins: eur(100), tax: eur(50) }); // 50 stays savings
+    allocate(w, flex, '2026-08-02', { ins: eur(100) });
+    v = buckets(w.input(), '2026-08', flex, [provisionWindow(prov(), '2026-08')]).get('ins')!;
     expect(v).toMatchObject({ loaded: eur(200), level: eur(200), behind: 0, percent: 17 });
+    // Once allocated, a move is decided: what was left out stays savings and is not asked again.
+    expect(unallocatedMoves(w.input(), flex)).toEqual([]);
     // A first-cycle bill paid from the bank in June does not touch the new cycle.
     w.spend(bank, '2026-06-15', eur(1200), 'ins');
     w.spend(flex, '2026-08-20', eur(50), 'ins');
@@ -51,42 +58,44 @@ describe('provision buckets fill with real money (D-56)', () => {
   });
 });
 
-describe('catching up', () => {
-  it('extra moved this month pays down what earlier months missed', () => {
+describe('allocating moves by hand (D-65)', () => {
+  it('"Fill by plan" proposes what each bucket is short of, then the rest ahead by plan', () => {
     const { w, bank, flex } = household();
     w.entry(bank, '2026-10-05', eur(-500), { kind: 'transfer', toAccountId: flex });
-    // Owed this cycle through October: insurance 400 (July–October), tax 400. 500 is shared by what each is short.
+    const tx = w.transactions.find((t) => t.accountId === flex)!;
+    // Owed this cycle through October: insurance 400 (July–October), tax 400.
+    expect(Object.fromEntries(suggestAllocation(w.input(), '2026-10', flex, eur(500), () => '2026-07', tx.id))).toEqual({ ins: eur(250), tax: eur(250) });
+    allocate(w, flex, '2026-10-05', { ins: eur(400) });
+    // Its own allocation is ignored when proposing again; another move only fills tax now.
+    expect(Object.fromEntries(suggestAllocation(w.input(), '2026-10', flex, eur(300), () => '2026-07'))).toEqual({ tax: eur(300) });
     const v = buckets(w.input(), '2026-10', flex, [provisionWindow(prov(), '2026-10')]).get('ins')!;
-    expect(v).toMatchObject({ loaded: eur(250), behind: eur(150) });
-    // Paying everything owed leaves nothing behind.
-    w.entry(bank, '2026-10-06', eur(-300), { kind: 'transfer', toAccountId: flex });
-    expect(buckets(w.input(), '2026-10', flex, [provisionWindow(prov(), '2026-10')]).get('ins')!.behind).toBe(0);
-  });
-});
-
-describe('seeing and correcting what feeds a bucket (D-64)', () => {
-  it('a move pinned to one provision counts for it alone; the rest is still shared', () => {
-    const { w, bank, flex } = household();
-    w.entry(bank, '2026-10-05', eur(-500), { kind: 'transfer', toAccountId: flex });
-    w.entry(bank, '2026-10-06', eur(-300), { kind: 'transfer', toAccountId: flex });
-    const pinnedTx = w.transactions.find((t) => t.accountId === flex && t.amount === eur(300))!;
-    pinnedTx.earmarkCategoryId = 'tax';
-    const windows = [provisionWindow(prov(), '2026-10'), provisionWindow(prov({ id: 'p2', categoryId: 'tax' }), '2026-10')];
-    const v = buckets(w.input(), '2026-10', flex, windows, () => '2026-07');
-    // Tax needs 400: 300 pinned, 100 of the shared 500; insurance gets the other 400.
-    expect([v.get('tax')!.loaded, v.get('ins')!.loaded]).toEqual([eur(400), eur(400)]);
+    expect(v).toMatchObject({ loaded: eur(400), behind: 0 });
   });
 
-  it('lists the moves, the spending and incoming money that does not count as a move', () => {
+  it('the detail lists the allocated part of each move, the spending and money that is not a move', () => {
     const { w, bank, flex } = household();
     w.entry(bank, '2026-08-02', eur(-200), { kind: 'transfer', toAccountId: flex });
+    allocate(w, flex, '2026-08-02', { ins: eur(120), tax: eur(80) });
     w.spend(flex, '2026-09-20', eur(50), 'ins');
     w.transactions.push({ ...base, id: 'loose', accountId: flex, date: '2026-09-25', amount: eur(80), descriptionRaw: 'From joint', merchantNorm: 'JOINT', counterparty: '', status: 'new' });
-    const d = bucketDetail(w.input(), '2026-10', flex, provisionWindow(prov(), '2026-10'), () => '2026-07');
-    expect(d.months.map((m) => [m.month, m.loaded, m.moves.length, m.spending.map((s) => s.amount)])).toEqual([
-      ['2026-09', 0, 0, [eur(-50)]],
-      ['2026-08', eur(100), 1, []],
+    const d = bucketDetail(w.input(), '2026-10', flex, provisionWindow(prov(), '2026-10'));
+    expect(d.months.map((m) => [m.month, m.loaded, m.moves.map((x) => x.amount), m.spending.map((s) => s.amount)])).toEqual([
+      ['2026-09', 0, [], [eur(-50)]],
+      ['2026-08', eur(120), [eur(120)], []],
     ]);
     expect(d.notCounted.map((t) => t.id)).toEqual(['loose']);
   });
+
+  it('a legacy single pin counts as the whole move', () => {
+    const { w, bank, flex } = household();
+    w.entry(bank, '2026-10-05', eur(-300), { kind: 'transfer', toAccountId: flex });
+    w.transactions.find((t) => t.accountId === flex)!.earmarkCategoryId = 'tax';
+    const v = buckets(w.input(), '2026-10', flex, [provisionWindow(prov({ categoryId: 'tax' }), '2026-10')]).get('tax')!;
+    expect(v.loaded).toBe(eur(300));
+  });
 });
+
+function allocate(w: World, accountId: string, date: string, parts: Record<string, number>) {
+  const t = w.transactions.find((x) => x.accountId === accountId && x.date === date)!;
+  t.earmarks = Object.entries(parts).map(([categoryId, amount]) => ({ categoryId, amount }));
+}

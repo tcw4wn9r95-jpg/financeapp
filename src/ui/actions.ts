@@ -434,6 +434,20 @@ export async function deleteAllTransactions(vault: Vault, opts: { forgetLearning
   return count;
 }
 
+/**
+ * Allocate a move into the provisions account to provisions and trips
+ * (category id → cents). Parts of 0 are dropped; the rest stays savings (D-65).
+ * An empty list is kept: it records that the whole move was meant as savings.
+ */
+export async function allocateMove(vault: Vault, transactionId: Id, parts: ReadonlyMap<Id, Cents>): Promise<void> {
+  const tx = vault.get('transactions', transactionId);
+  if (!tx) return;
+  const earmarks = [...parts].filter(([, amount]) => amount > 0).map(([categoryId, amount]) => ({ categoryId, amount }));
+  if (earmarks.reduce((s, e) => s + e.amount, 0) > tx.amount) throw new Error('over-allocated');
+  const { earmarkCategoryId: _, earmarks: _old, ...rest } = tx;
+  await vault.put('transactions', { ...rest, earmarks, updatedAt: new Date().toISOString() });
+}
+
 /** Load the anonymised demo household, shifted so its last month is this month. */
 export async function loadDemo(vault: Vault): Promise<void> {
   const mod = await import('../../fixtures/demo-household.json');

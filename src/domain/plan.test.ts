@@ -242,7 +242,10 @@ describe('monthly move to the provisions account (D-55)', () => {
     w.category('trip', 'events', 'roll');
     expect(provisionsMove(input(), '2026-10', flex)).toMatchObject({ planned: eur(200), moved: 0, left: eur(200) });
     w.entry(bank, '2026-10-03', eur(-150), { kind: 'transfer', toAccountId: flex });
-    expect(provisionsMove(input(), '2026-10', flex)).toMatchObject({ planned: eur(200), moved: eur(150), left: eur(50) });
+    // Moved but not allocated yet: it counts for no provision (D-65).
+    expect(provisionsMove(input(), '2026-10', flex)).toMatchObject({ moved: 0, left: eur(200) });
+    w.transactions.find((t) => t.accountId === flex)!.earmarks = [{ categoryId: 'carIns', amount: eur(100) }, { categoryId: 'trip', amount: eur(30) }];
+    expect(provisionsMove(input(), '2026-10', flex)).toMatchObject({ planned: eur(200), moved: eur(130), left: eur(70) });
     expect(provisionsMoveByMonth(input(), '2026-10').get('2026-10')).toBe(eur(200));
   });
 });

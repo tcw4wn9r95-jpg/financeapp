@@ -1887,3 +1887,9 @@ input[type='date']::-webkit-date-and-time-value {
   font: inherit;
   color: var(--ink);
 }
+.move-card .waiting {
+  margin-top: 0.75rem;
+}
+.move-card .waiting p {
+  margin: 0 0 0.35rem;
+}

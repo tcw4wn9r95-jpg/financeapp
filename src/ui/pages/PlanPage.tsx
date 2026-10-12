@@ -3,13 +3,14 @@ import { currentMonth, formatDate, monthOf, parseDate, todayIso } from '../../do
 import { firstBelow, type ForecastResult } from '../../domain/forecast';
 import { eventPlanParts, provisionsMove, eventStatus, formatRecurrence, monthlySetAside, nextDue, parseRecurrence, planCloseEvent, provisionSchedule, provisionStatus, type Recurrence } from '../../domain/plan';
 import { planPartAmount } from '../../domain/budget';
-import { buckets, cycleLookup, provisionWindow, tripWindow } from '../../domain/buckets';
-import { formatMoneyInput, parseMoney } from '../../domain/money';
-import type { EventFund, Provision, SubBudget } from '../../domain/types';
+import { buckets, provisionWindow, tripWindow, unallocatedMoves } from '../../domain/buckets';
+import { formatMoney, formatMoneyInput, parseMoney } from '../../domain/money';
+import type { EventFund, Provision, SubBudget, Transaction } from '../../domain/types';
 import { monthName, monthShort, t, type MessageKey } from '../../i18n';
 import { saveSettings, closeEvent, deleteEvent, deleteProvision, saveEvent, saveProvision, setDefaultFrom, defaultStartMonth } from '../actions';
 import { Dialog } from '../components/Dialog';
 import { BucketDialog } from './BucketDialog';
+import { AllocateDialog } from './AllocateDialog';
 import { DateField, MoneyField, SelectField, TextField, useDateInput, useMoneyInput } from '../components/fields';
 import { Icon } from '../components/Icon';
 import { LineChart, type Series } from '../components/LineChart';
@@ -177,9 +178,11 @@ export function ProvisionsMoveCard() {
     if (!accountId) return 0;
     const windows = [...provisions.map((p) => provisionWindow(p, month)), ...events.filter((e) => e.status !== 'closed').map(tripWindow)];
     let sum = 0;
-    for (const b of buckets(input, month, accountId, windows, cycleLookup(provisions, events)).values()) sum += b.behind;
+    for (const b of buckets(input, month, accountId, windows).values()) sum += b.behind;
     return sum;
   }, [input, month, accountId, provisions, events]);
+  const waiting = useMemo(() => (accountId ? unallocatedMoves(input, accountId) : []), [input, accountId]);
+  const [allocating, setAllocating] = useState<Transaction | null>(null);
   return (
     <section className="card move-card" aria-labelledby="move-h">
       <h2 id="move-h">{t('move.title')}</h2>
@@ -212,8 +215,28 @@ export function ProvisionsMoveCard() {
             </ul>
             <p className="hint">{t('move.reconcileHint', { name: account.name })}</p>
           </details>
+          {waiting.length > 0 && (
+            <div className="waiting">
+              <p><strong>⚠ {t('allocate.waitingCount', { n: waiting.length, name: account.name, amount: formatMoney(waiting.reduce((s, x) => s + x.left, 0)) })}</strong></p>
+              <p className="hint">{t('allocate.waitingHint')}</p>
+              <ul className="rows">
+                {waiting.map(({ tx, left }) => (
+                  <li key={tx.id}>
+                    <button type="button" className="row-button" onClick={() => setAllocating(tx)}>
+                      <span className="row-main">
+                        <span className="row-title tx-desc">{tx.descriptionRaw || t('tx.noDescription')}</span>
+                        <span className="row-sub">{formatDate(tx.date)} · {t('allocate.leftOf', { left: formatMoney(left) })}</span>
+                      </span>
+                      <span className="row-end"><span className="button button-small">{t('allocate.button')}</span></span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </>
       )}
+      {allocating && <AllocateDialog tx={allocating} onClose={() => setAllocating(null)} />}
     </section>
   );
 }
@@ -233,7 +256,7 @@ function Provisions() {
   const allEvents = useStore('events');
   // Real money in each bucket (D-56): moves into the provisions account, less what was paid.
   const bucketsView = useMemo(
-    () => buckets(input, month, settings.provisionsAccountId, provisions.map((p) => provisionWindow(p, month)), cycleLookup(provisions, allEvents)),
+    () => buckets(input, month, settings.provisionsAccountId, provisions.map((p) => provisionWindow(p, month))),
     [input, month, settings.provisionsAccountId, provisions, allEvents],
   );
 
@@ -393,7 +416,7 @@ function Events() {
   const settings = useSettings();
   const allProvisions = useStore('provisions');
   const bucketsView = useMemo(
-    () => buckets(input, month, settings.provisionsAccountId, events.map(tripWindow), cycleLookup(allProvisions, events)),
+    () => buckets(input, month, settings.provisionsAccountId, events.map(tripWindow)),
     [input, month, settings.provisionsAccountId, events, allProvisions],
   );
   const views = useMemo(
