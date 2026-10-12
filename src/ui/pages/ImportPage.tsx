@@ -15,7 +15,7 @@ import { useToast } from '../components/Toast';
 import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { learnContext, writeLearn } from '../learnActions';
 import { learnOnImport } from '../../domain/learn';
-import { applyImport, availableMappings, ledgerView, parseXml, readImportFile, saveMapping } from '../importActions';
+import { applyImport, availableMappings, FileReadError, ledgerView, parseXml, readImportFile, saveMapping } from '../importActions';
 import { accountTypeLabel } from '../labels';
 import { href } from '../router';
 import { AccountDialog } from './AccountsPage';
@@ -59,8 +59,9 @@ export function ImportPage() {
       try {
         const content = await readImportFile(item.file);
         parseItem(item.id, item.file, content);
-      } catch {
-        update(item.id, { id: item.id, file: item.file, state: 'error', message: t('import.error.unreadable') });
+      } catch (e) {
+        const detail = e instanceof FileReadError ? e.detail : e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+        update(item.id, { id: item.id, file: item.file, state: 'error', message: `${t('import.error.unreadable')} ${t('import.error.detail', { detail })}` });
       }
     }
   }

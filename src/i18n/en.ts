@@ -436,6 +436,7 @@ export const en = {
   'import.error.badXml': 'This XML file is damaged.',
   'import.error.missingColumn': 'The mapping lacks a required column ({detail}).',
   'import.error.unreadable': 'This file could not be read.',
+  'import.error.detail': '(Technical detail, useful for a bug report: {detail})',
 
   // mapping
   'mapping.intro': 'This CSV layout is new. Tell it which column holds what; the layout is saved for next time.',

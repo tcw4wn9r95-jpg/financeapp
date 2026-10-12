@@ -253,3 +253,8 @@ This fixes provisions that started in the past showing as complete although noth
 - **Filing a purchase:** money sent to an ETF or broker is filed under it like any other budget spending, so its monthly amount is planned and the forecast treats it as a fixed monthly outflow.
 - **Totals:** the Budget page (on the Investments group) and the Dashboard show what has been put in, in total, this year and this month. Sales filed back under the category count back.
 - **Not tracked:** the market value of the investments.
+
+**D-58 Reading PDFs on phones.**
+- pdf.js runs in a Web Worker. If that fails (some mobile browsers refuse the worker), the file is read again on the main thread, using the worker module imported directly. It is slower, but text extraction of a statement is small work.
+- PDFs are recognised by their content (`%PDF-`), not only by the file name, because files shared from other apps can arrive without an extension.
+- When a file still cannot be read, the import shows the technical reason, so a bug report can say what failed.

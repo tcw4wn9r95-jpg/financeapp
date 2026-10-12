@@ -8,18 +8,46 @@ import { pdfToLines, type PdfJsLike } from '../infra/pdf';
 import type { Vault, WriteOp } from '../storage/vault';
 
 /** pdf.js is large: load it only when a PDF is imported. */
-async function loadPdfJs(): Promise<PdfJsLike> {
-  const [pdfjs, worker] = await Promise.all([import('pdfjs-dist/legacy/build/pdf.mjs'), import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url')]);
-  pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+async function loadPdfJs(mainThread: boolean): Promise<PdfJsLike> {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  if (mainThread) {
+    // Read the PDF on the page itself, without a Web Worker (some phones refuse the worker).
+    const g = globalThis as { pdfjsWorker?: unknown };
+    if (!g.pdfjsWorker) g.pdfjsWorker = await import('pdfjs-dist/legacy/build/pdf.worker.mjs');
+  } else {
+    const worker = await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url');
+    pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+  }
   return pdfjs as unknown as PdfJsLike;
 }
 
-export async function readImportFile(file: File): Promise<FileContent> {
-  if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') {
-    const pdfjs = await loadPdfJs();
-    return { kind: 'pdf', name: file.name, lines: await pdfToLines(pdfjs, new Uint8Array(await file.arrayBuffer())) };
+/** A file that could not be read, with the technical reason for the screen. */
+export class FileReadError extends Error {
+  constructor(public readonly detail: string) {
+    super(detail);
   }
-  return { kind: 'text', name: file.name, text: await file.text() };
+}
+
+const describe = (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : String(e)).slice(0, 200);
+
+export async function readImportFile(file: File): Promise<FileContent> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  // By content, not only by name: phones sometimes hand over files without an extension.
+  const isPdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf' || String.fromCharCode(...bytes.subarray(0, 5)) === '%PDF-';
+  if (isPdf) {
+    let first: unknown;
+    try {
+      return { kind: 'pdf', name: file.name, lines: await pdfToLines(await loadPdfJs(false), bytes.slice()) };
+    } catch (e) {
+      first = e;
+    }
+    try {
+      return { kind: 'pdf', name: file.name, lines: await pdfToLines(await loadPdfJs(true), bytes.slice()) };
+    } catch (e) {
+      throw new FileReadError(`${describe(e)} (worker: ${describe(first)})`);
+    }
+  }
+  return { kind: 'text', name: file.name, text: new TextDecoder().decode(bytes) };
 }
 
 export const parseXml = (xml: string): Document => new DOMParser().parseFromString(xml, 'application/xml');
