@@ -636,6 +636,11 @@ export const en = {
   'plan.closed': '{name} closed.',
   // ---------------------------------------------------------------- M4
   'nav.rules': 'Rules',
+  'bucket.inBucket': '{pct}% in the bucket',
+  'bucket.budgeted': '{pct}% budgeted (choose the provisions account above to count real money)',
+  'bucket.behind': 'Not moved yet:',
+  'bucket.loaded': 'Moved in',
+  'move.catchUp': 'To catch up (planned earlier, not moved)',
   'move.title': 'Money to set aside',
   'move.account': 'Keep provisions and trips in',
   'move.accountHint': 'The savings account where you park money for bills and trips (e.g. Compte flexible).',

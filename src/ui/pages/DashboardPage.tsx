@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { accountBalances, isOnBudget } from '../../domain/budget';
 import { compareMonths, currentMonth, formatDate, todayIso } from '../../domain/dates';
 import { eventStatus, provisionStatus, provisionsMove } from '../../domain/plan';
+import { buckets, cycleLookup, provisionWindow, tripWindow } from '../../domain/buckets';
 import { LineChart } from '../components/LineChart';
 import { CATEGORY_GROUPS, type CategoryGroup } from '../../domain/types';
 import { monthName, t } from '../../i18n';
@@ -28,12 +29,24 @@ export function DashboardPage() {
   const cash = open.filter(isOnBudget).reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
 
   const budgetInput = useBudgetInput();
+  const provisions = useStore('provisions');
+  const events = useStore('events');
   const moveLeft = useMemo(() => {
     const acc = accounts.find((a) => a.id === settings.provisionsAccountId);
     if (!acc) return null;
     const m = provisionsMove(budgetInput, month, acc.id);
-    return m.left > 0 ? { name: acc.name, left: m.left } : null;
-  }, [accounts, settings.provisionsAccountId, budgetInput, month]);
+    // Plus what earlier months planned but nobody moved (D-56).
+    const windows = [...provisions.map((p) => provisionWindow(p, month)), ...events.filter((e) => e.status !== 'closed').map(tripWindow)];
+    let behind = 0;
+    for (const b of buckets(budgetInput, month, acc.id, windows, cycleLookup(provisions, events)).values()) behind += b.behind;
+    const left = m.left + behind;
+    return left > 0 ? { name: acc.name, left } : null;
+  }, [accounts, settings.provisionsAccountId, budgetInput, month, provisions, events]);
+
+  const tripPct = (id: string) => {
+    const b = bucketView.get(id);
+    return b && b.target > 0 ? Math.max(0, Math.min(100, Math.round((b.loaded / b.target) * 100))) : 0;
+  };
 
   const lastBackup = settings.lastBackupAt ? new Date(settings.lastBackupAt) : null;
   const backupDue = !lastBackup || Date.now() - lastBackup.getTime() > BACKUP_NAG_DAYS * 86_400_000;
@@ -55,14 +68,17 @@ export function DashboardPage() {
   }, [budget, categories]);
 
   const input = useBudgetInput();
-  const provisions = useStore('provisions');
-  const events = useStore('events');
   const allocations = useStore('allocations');
   const fc = useForecast(4);
   const days90 = fc.days.slice(0, 91);
   const low90 = days90.reduce((lo, d) => (d.balance < lo.balance ? d : lo), days90[0]!);
   const provisionRows = useMemo(() => provisions.map((p) => provisionStatus(p, input, month, todayIso())).sort((a, b) => a.nextDue.localeCompare(b.nextDue)), [provisions, input, month]);
   const eventRows = useMemo(() => events.filter((e) => e.status !== 'closed').map((e) => eventStatus(e, input, month, allocations)), [events, input, month, allocations]);
+  // Real money in each bucket (D-56).
+  const bucketView = useMemo(
+    () => buckets(input, month, settings.provisionsAccountId, [...provisions.map((p) => provisionWindow(p, month)), ...events.map(tripWindow)], cycleLookup(provisions, events)),
+    [input, month, settings.provisionsAccountId, provisions, events],
+  );
   const linked = new Set([...provisions.map((p) => p.categoryId), ...events.map((e) => e.categoryId)]);
 
   const funds = categories
@@ -200,19 +216,19 @@ export function DashboardPage() {
                 <span className="row-main">
                   <span className="row-title">{r.provision.name}</span>
                   <span className="row-sub">{t('dashboard.due', { date: formatDate(r.nextDue) })} · <Money cents={r.provision.amount} /></span>
-                  <span className="row-bar" aria-hidden="true"><span style={{ width: `${r.percent}%` }} /></span>
+                  <span className="row-bar" aria-hidden="true"><span style={{ width: `${bucketView.get(r.provision.categoryId)?.percent ?? 0}%` }} /></span>
                 </span>
-                <span className="row-end"><Money cents={r.available} className="row-amount" /></span>
+                <span className="row-end"><Money cents={bucketView.get(r.provision.categoryId)?.level ?? 0} className="row-amount" /></span>
               </li>
             ))}
             {eventRows.map((v) => (
               <li key={v.event.id} className="row-static">
                 <span className="row-main">
                   <span className="row-title">{v.event.name}</span>
-                  <span className="row-sub">{formatDate(v.event.targetDate)} · {t('dashboard.funded', { pct: v.fundedPercent })}</span>
-                  <span className="row-bar" aria-hidden="true"><span style={{ width: `${Math.min(100, v.fundedPercent)}%` }} /></span>
+                  <span className="row-sub">{formatDate(v.event.targetDate)} · {t('dashboard.funded', { pct: tripPct(v.event.categoryId) })}</span>
+                  <span className="row-bar" aria-hidden="true"><span style={{ width: `${tripPct(v.event.categoryId)}%` }} /></span>
                 </span>
-                <span className="row-end"><Money cents={v.available} className="row-amount" /></span>
+                <span className="row-end"><Money cents={bucketView.get(v.event.categoryId)?.level ?? 0} className="row-amount" /></span>
               </li>
             ))}
             {budget && funds.filter((c) => !linked.has(c.id)).map((c) => (

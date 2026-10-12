@@ -3,6 +3,7 @@ import { currentMonth, formatDate, monthOf, parseDate, todayIso } from '../../do
 import { firstBelow, type ForecastResult } from '../../domain/forecast';
 import { eventPlanParts, provisionsMove, eventStatus, formatRecurrence, monthlySetAside, nextDue, parseRecurrence, planCloseEvent, provisionSchedule, provisionStatus, type Recurrence } from '../../domain/plan';
 import { planPartAmount } from '../../domain/budget';
+import { buckets, cycleLookup, provisionWindow, tripWindow } from '../../domain/buckets';
 import { formatMoneyInput, parseMoney } from '../../domain/money';
 import type { EventFund, Provision, SubBudget } from '../../domain/types';
 import { monthName, monthShort, t, type MessageKey } from '../../i18n';
@@ -168,6 +169,16 @@ export function ProvisionsMoveCard() {
   const account = accounts.find((a) => a.id === accountId);
   const month = currentMonth();
   const move = useMemo(() => (accountId ? provisionsMove(input, month, accountId) : null), [input, month, accountId]);
+  const provisions = useStore('provisions');
+  const events = useStore('events');
+  // Planned in earlier months of the current cycles but never moved (D-56).
+  const catchUp = useMemo(() => {
+    if (!accountId) return 0;
+    const windows = [...provisions.map((p) => provisionWindow(p, month)), ...events.filter((e) => e.status !== 'closed').map(tripWindow)];
+    let sum = 0;
+    for (const b of buckets(input, month, accountId, windows, cycleLookup(provisions, events)).values()) sum += b.behind;
+    return sum;
+  }, [input, month, accountId, provisions, events]);
   return (
     <section className="card move-card" aria-labelledby="move-h">
       <h2 id="move-h">{t('move.title')}</h2>
@@ -183,8 +194,8 @@ export function ProvisionsMoveCard() {
       {move && account && (
         <>
           <p className="move-amount">
-            {move.left > 0 ? (
-              <>{t('move.moveNow', { month: monthName(month) })} <strong><Money cents={move.left} /></strong> {t('move.to', { name: account.name })}</>
+            {move.left + catchUp > 0 ? (
+              <>{t('move.moveNow', { month: monthName(month) })} <strong><Money cents={move.left + catchUp} /></strong> {t('move.to', { name: account.name })}</>
             ) : (
               <>✓ {t('move.done', { month: monthName(month) })}</>
             )}
@@ -196,6 +207,7 @@ export function ProvisionsMoveCard() {
                 <li key={p.categoryId} className="split-row"><span>{categories.find((c) => c.id === p.categoryId)?.name ?? '?'}</span><Money cents={p.amount} /></li>
               ))}
               {move.moved > 0 && <li className="split-row"><span>{t('move.alreadyMoved')}</span><Money cents={-move.moved} /></li>}
+              {catchUp > 0 && <li className="split-row"><strong>{t('move.catchUp')}</strong><strong><Money cents={catchUp} /></strong></li>}
             </ul>
             <p className="hint">{t('move.reconcileHint', { name: account.name })}</p>
           </details>
@@ -215,6 +227,13 @@ function Provisions() {
   const today = todayIso();
   const rows = provisions.map((p) => provisionStatus(p, input, month, today)).sort((a, b) => a.nextDue.localeCompare(b.nextDue));
   const totalMonthly = rows.reduce((s, r) => s + r.assignedThisMonth, 0);
+  const settings = useSettings();
+  const allEvents = useStore('events');
+  // Real money in each bucket (D-56): moves into the provisions account, less what was paid.
+  const bucketsView = useMemo(
+    () => buckets(input, month, settings.provisionsAccountId, provisions.map((p) => provisionWindow(p, month)), cycleLookup(provisions, allEvents)),
+    [input, month, settings.provisionsAccountId, provisions, allEvents],
+  );
 
   return (
     <>
@@ -243,37 +262,28 @@ function Provisions() {
                     <span className="row-sub">
                       <Money cents={r.provision.amount} /> · {formatDate(r.nextDue)} · {recurrenceLabel(r.provision.recurrence)}
                     </span>
-                    <span className="row-bar" aria-hidden="true"><span style={{ width: `${r.percent}%` }} /></span>
-                    <span className="row-sub">
-                      {r.provision.startDate && monthOf(r.provision.startDate) > currentMonth() ? (
-                        t('plan.startsIn', { month: monthName(monthOf(r.provision.startDate)) })
-                      ) : (
+                    {(() => {
+                      const bk = bucketsView.get(r.provision.categoryId)!;
+                      const notStarted = !!r.provision.startDate && monthOf(r.provision.startDate) > month;
+                      return (
                         <>
-                      {t('plan.setAsideNow', { pct: r.percent })} · {t('plan.perMonth')} <Money cents={r.assignedThisMonth} />
+                          <span className="row-bar" aria-hidden="true"><span style={{ width: `${bk.percent}%` }} /></span>
+                          <span className="row-sub">
+                            {notStarted ? (
+                              t('plan.startsIn', { month: monthName(monthOf(r.provision.startDate!)) })
+                            ) : (
+                              <>
+                                {bk.tracked ? t('bucket.inBucket', { pct: bk.percent }) : t('bucket.budgeted', { pct: bk.percent })} · <Money cents={r.assignedThisMonth} /> {t('plan.perMonthShort')}
+                                {bk.tracked && bk.behind > 0 && <> · <strong className="bad">{t('bucket.behind')} <Money cents={bk.behind} /></strong></>}
+                              </>
+                            )}
+                          </span>
                         </>
-                      )}
-                      {Math.abs(r.suggested - r.assignedThisMonth) >= 100 && (
-                        <> · <strong>{t('plan.suggested')} <Money cents={r.suggested} /></strong></>
-                      )}
-                    </span>
+                      );
+                    })()}
                   </span>
-                  <span className="row-end"><Money cents={r.available} className="row-amount" /></span>
+                  <span className="row-end"><Money cents={bucketsView.get(r.provision.categoryId)!.level} className="row-amount" /></span>
                 </button>
-                {Math.abs(r.suggested - r.assignedThisMonth) >= 100 && (
-                  <div className="row-actions">
-                    <button
-                      type="button"
-                      className="button button-small"
-                      onClick={() =>
-                        void setDefaultFrom(vault, r.provision.categoryId, r.suggested, defaultStartMonth(vault)).then(() =>
-                          notify(t('plan.applied', { name: r.provision.name })),
-                        )
-                      }
-                    >
-                      {t('plan.useSuggested', { amount: '' })} <Money cents={r.suggested} />
-                    </button>
-                  </div>
-                )}
               </li>
             ))}
           </ul>
@@ -366,6 +376,12 @@ function Events() {
   const [editing, setEditing] = useState<EventFund | 'new' | null>(null);
   const [closing, setClosing] = useState<EventFund | null>(null);
   const month = currentMonth();
+  const settings = useSettings();
+  const allProvisions = useStore('provisions');
+  const bucketsView = useMemo(
+    () => buckets(input, month, settings.provisionsAccountId, events.map(tripWindow), cycleLookup(allProvisions, events)),
+    [input, month, settings.provisionsAccountId, events, allProvisions],
+  );
   const views = useMemo(
     () => events.map((e) => eventStatus(e, input, month, allocations)).sort((a, b) => Number(a.event.status === 'closed') - Number(b.event.status === 'closed') || a.event.targetDate.localeCompare(b.event.targetDate)),
     [events, input, month, allocations],
@@ -390,11 +406,25 @@ function Events() {
           <p className="muted">
             {formatDate(v.event.targetDate)} · {t('plan.target')} <Money cents={v.event.targetAmount} />
           </p>
-          <span className="row-bar" aria-hidden="true"><span style={{ width: `${Math.min(100, v.fundedPercent)}%` }} /></span>
+          {(() => {
+            const bk = bucketsView.get(v.event.categoryId)!;
+            const closed = v.event.status === 'closed';
+            const pct = closed ? v.fundedPercent : bk.target > 0 ? Math.max(0, Math.min(100, Math.round(((bk.loaded) / bk.target) * 100))) : 0;
+            return (
+              <>
+                <span className="row-bar" aria-hidden="true"><span style={{ width: `${Math.min(100, pct)}%` }} /></span>
+                <ul className="plain-list facts">
+                  <li className="split-row"><span>{bk.tracked && !closed ? t('bucket.loaded') : t('plan.funded')}</span><span>{pct}%</span></li>
+                  <li className="split-row"><span>{t('plan.spent')}</span><Money cents={v.spent} /></li>
+                  <li className="split-row"><span>{t('plan.leftInFund')}</span><strong><Money cents={closed ? v.available : bk.level} /></strong></li>
+                  {bk.tracked && !closed && bk.behind > 0 && (
+                    <li className="split-row"><span className="bad">{t('bucket.behind')}</span><strong className="bad"><Money cents={bk.behind} /></strong></li>
+                  )}
+                </ul>
+              </>
+            );
+          })()}
           <ul className="plain-list facts">
-            <li className="split-row"><span>{t('plan.funded')}</span><span>{v.fundedPercent}%</span></li>
-            <li className="split-row"><span>{t('plan.spent')}</span><Money cents={v.spent} /></li>
-            <li className="split-row"><span>{t('plan.leftInFund')}</span><strong><Money cents={v.available} /></strong></li>
             {v.event.status !== 'closed' && v.suggested > 0 && (
               <li className="split-row"><span>{t('plan.budgetedThisMonth')}</span><Money cents={v.suggested} /></li>
             )}

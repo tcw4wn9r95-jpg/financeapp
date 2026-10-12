@@ -239,3 +239,11 @@ Single months can still be changed on the Budget page. The provisions list shows
 - plans replace the monthly defaults for trip categories, and a manual change of one month on the Budget page still wins.
 
 **D-55 The monthly move to the provisions account.** In Plan → Provisions you choose the savings account where provision and trip money is kept. The card (and a Dashboard line) shows what to move this month: everything provisions and trips are budgeted this month, minus transfers already made into that account from other on-budget accounts this month. When a transfer of that amount (±1 €) appears in a statement, it is suggested as a transfer to that account, so accepting it is one tap.
+
+**D-56 Provisions and trips are buckets of real money.** The budget's plan says how much each provision and trip should get each month, but a bucket only fills with money actually moved into the provisions account (D-55), and it empties when the bill or trip spending is paid.
+- **Sharing moves:** money moved into the account in a month first covers what each bucket is short of its plan in its current cycle, in proportion to the shortfall. Anything beyond that goes ahead by this month's plan. A move in a month with nothing planned waits for the next plan.
+- **Cycles:** a recurring provision's cycle starts after each due date, so a shortfall from a past cycle (a bill already paid from elsewhere) is not owed again.
+- **What the screens show:** each bucket shows its level (moved in minus paid), its percentage of the target, and "Not moved yet" (planned in earlier months of the cycle but not moved). The monthly move adds that catch-up to this month's amount.
+- **No provisions account chosen:** the plan stands in for the money and the screen says so.
+
+This fixes provisions that started in the past showing as complete although nothing was moved.
