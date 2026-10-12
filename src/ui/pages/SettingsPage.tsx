@@ -18,6 +18,7 @@ import { MoneyField, SelectField, TextField, useMoneyInput } from '../components
 import { useToast } from '../components/Toast';
 import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { href, useRoute } from '../router';
+import { refreshApp } from '../components/UpdateBanner';
 import { passkeysAvailable, PasskeyError, registerPasskey } from '../../infra/passkey';
 import { DEFAULT_THRESHOLD } from '../../domain/learn';
 
@@ -604,6 +605,7 @@ function DataSection() {
     <section className="card" id="settings-data" aria-labelledby="dt-h">
       <h2 id="dt-h">{t('data.title')}</h2>
       <p className="hint">{t('data.version', { v: typeof __APP_BUILT__ === 'string' ? __APP_BUILT__ : 'dev' })}</p>
+      <button type="button" className="button button-quiet button-small" onClick={() => void refreshApp()}>{t('update.refreshNow')}</button>
       <h3>{t('data.demoTitle')}</h3>
       <p>{t('data.demoIntro')}</p>
       <label className="check">

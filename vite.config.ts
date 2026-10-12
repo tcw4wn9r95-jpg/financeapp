@@ -2,6 +2,10 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
+/** Build time shown in Settings, and a unique id the app compares with /version.json to spot updates. */
+const BUILT_AT = new Date().toISOString().slice(0, 16).replace('T', ' ');
+const BUILD_ID = Date.now().toString(36);
+
 /**
  * Strict Content-Security-Policy, injected at build time only (the Vite dev
  * server needs inline styles for hot reload). Pages cannot set HTTP headers, so
@@ -41,7 +45,7 @@ function serviceWorker(): Plugin {
     generateBundle(_opts, bundle) {
       const files = ['./', './index.html', ...Object.keys(bundle).map((f) => `./${f}`)];
       const extra = ['./manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];
-      const version = Date.now().toString(36);
+      const version = BUILD_ID;
       const source = `// Generated at build time. Precaches the app shell; never caches API calls.
 const CACHE = 'kassa-${version}';
 const ASSETS = ${JSON.stringify([...new Set([...files, ...extra])])};
@@ -57,6 +61,8 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  // The update check must always reach the server.
+  if (url.pathname.endsWith('/version.json')) return;
   if (e.request.mode === 'navigate') {
     // The page itself: network first so a new version shows on the next launch;
     // the cached copy when offline or when the network takes over 3 seconds.
@@ -83,15 +89,15 @@ self.addEventListener('fetch', (e) => {
 });
 `;
       this.emitFile({ type: 'asset', fileName: 'sw.js', source });
+      this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ id: BUILD_ID, built: BUILT_AT }) });
     },
   };
 }
 
-const BUILT_AT = new Date().toISOString().slice(0, 16).replace('T', ' ');
 
 export default defineConfig({
   base: './',
-  define: { __APP_BUILT__: JSON.stringify(BUILT_AT) },
+  define: { __APP_BUILT__: JSON.stringify(BUILT_AT), __APP_BUILD_ID__: JSON.stringify(BUILD_ID) },
   plugins: [react(), csp(), serviceWorker()],
   build: {
     target: 'es2022',

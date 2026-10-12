@@ -638,6 +638,10 @@ export const en = {
   'plan.closed': '{name} closed.',
   // ---------------------------------------------------------------- M4
   'nav.rules': 'Rules',
+  'update.available': 'A new version is available ({built} UTC).',
+  'update.refresh': 'Refresh',
+  'update.refreshing': 'Refreshing…',
+  'update.refreshNow': 'Reload the app now',
   'invest.name': 'Investments',
   'invest.total': 'Invested so far',
   'invest.thisYear': 'this year',

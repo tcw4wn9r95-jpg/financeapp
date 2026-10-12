@@ -258,3 +258,8 @@ This fixes provisions that started in the past showing as complete although noth
 - pdf.js runs in a Web Worker. If that fails (some mobile browsers refuse the worker), the file is read again on the main thread, using the worker module imported directly. It is slower, but text extraction of a statement is small work.
 - PDFs are recognised by their content (`%PDF-`), not only by the file name, because files shared from other apps can arrive without an extension.
 - When a file still cannot be read, the import shows the technical reason, so a bug report can say what failed.
+
+**D-59 Update banner.** Every build publishes `version.json` with a unique id. The service worker never caches it.
+- **When it checks:** the app compares that file with the build it is running when it opens, whenever it comes back to the foreground, and every 10 minutes. When they differ, a banner offers **Refresh**.
+- **What Refresh does:** it updates the service worker, clears the cached files and reloads. The encrypted data in IndexedDB is untouched; the vault only needs unlocking again.
+- **Settings → Data** shows the running build time and has a manual "Reload the app now".

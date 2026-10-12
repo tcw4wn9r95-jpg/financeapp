@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { t, type MessageKey } from '../i18n';
 import { ensureInvestments } from './actions';
+import { UpdateBanner } from './components/UpdateBanner';
 import { Icon, type IconName } from './components/Icon';
 import { useSettings, useStore, useVault, useVaultVersion } from './hooks';
 import { href, useRoute } from './router';
@@ -42,8 +43,12 @@ export function App() {
   if (recoveryKey && vault.status === 'unlocked') {
     return <RecoveryKeyStep recoveryKey={recoveryKey} onDone={() => setRecoveryKey(null)} />;
   }
-  if (vault.status !== 'unlocked') return <LockScreen onCreated={setRecoveryKey} />;
-  return <Shell />;
+  return (
+    <>
+      <UpdateBanner />
+      {vault.status !== 'unlocked' ? <LockScreen onCreated={setRecoveryKey} /> : <Shell />}
+    </>
+  );
 }
 
 function Shell() {

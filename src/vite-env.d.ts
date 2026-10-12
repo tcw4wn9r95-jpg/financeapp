@@ -7,3 +7,4 @@ declare const __APP_BUILT__: string;
 declare module 'pdfjs-dist/legacy/build/pdf.worker.mjs' {
   export const WorkerMessageHandler: unknown;
 }
+declare const __APP_BUILD_ID__: string;
