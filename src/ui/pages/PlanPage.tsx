@@ -1,10 +1,12 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { currentMonth, formatDate, monthOf, parseDate, todayIso } from '../../domain/dates';
 import { firstBelow, type ForecastResult } from '../../domain/forecast';
-import { eventStatus, formatRecurrence, monthlySetAside, nextDue, parseRecurrence, planCloseEvent, provisionSchedule, provisionStatus, type Recurrence } from '../../domain/plan';
+import { eventPlanParts, provisionsMove, eventStatus, formatRecurrence, monthlySetAside, nextDue, parseRecurrence, planCloseEvent, provisionSchedule, provisionStatus, type Recurrence } from '../../domain/plan';
+import { planPartAmount } from '../../domain/budget';
+import { formatMoneyInput, parseMoney } from '../../domain/money';
 import type { EventFund, Provision, SubBudget } from '../../domain/types';
 import { monthName, monthShort, t, type MessageKey } from '../../i18n';
-import { closeEvent, deleteEvent, deleteProvision, saveEvent, saveProvision, setDefaultFrom, defaultStartMonth } from '../actions';
+import { saveSettings, closeEvent, deleteEvent, deleteProvision, saveEvent, saveProvision, setDefaultFrom, defaultStartMonth } from '../actions';
 import { Dialog } from '../components/Dialog';
 import { DateField, MoneyField, SelectField, TextField, useDateInput, useMoneyInput } from '../components/fields';
 import { Icon } from '../components/Icon';
@@ -153,6 +155,56 @@ function recurrenceLabel(r: string): string {
   return p ? t('plan.rec.custom', { n: p.interval, unit: p.freq === 'YEARLY' ? t('plan.rec.years') : t('plan.rec.months') }) : t('plan.rec.none');
 }
 
+/** This month's move to the savings account that holds provisions and trips (D-55). */
+export function ProvisionsMoveCard() {
+  const vault = useVault();
+  const notify = useToast();
+  const settings = useSettings();
+  const input = useBudgetInput();
+  const accounts = useStore('accounts');
+  const categories = useStore('categories');
+  const savings = accounts.filter((a) => !a.closedAt && a.type !== 'loan' && a.type !== 'card');
+  const accountId = settings.provisionsAccountId;
+  const account = accounts.find((a) => a.id === accountId);
+  const month = currentMonth();
+  const move = useMemo(() => (accountId ? provisionsMove(input, month, accountId) : null), [input, month, accountId]);
+  return (
+    <section className="card move-card" aria-labelledby="move-h">
+      <h2 id="move-h">{t('move.title')}</h2>
+      <SelectField
+        label={t('move.account')}
+        value={accountId ?? ''}
+        onChange={(e) => void saveSettings(vault, { provisionsAccountId: e.target.value || undefined }).then(() => notify(t('settings.saved')))}
+        hint={t('move.accountHint')}
+      >
+        <option value="">{t('move.none')}</option>
+        {savings.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+      </SelectField>
+      {move && account && (
+        <>
+          <p className="move-amount">
+            {move.left > 0 ? (
+              <>{t('move.moveNow', { month: monthName(month) })} <strong><Money cents={move.left} /></strong> {t('move.to', { name: account.name })}</>
+            ) : (
+              <>✓ {t('move.done', { month: monthName(month) })}</>
+            )}
+          </p>
+          <details>
+            <summary>{t('move.breakdown', { planned: '' })} <Money cents={move.planned} /></summary>
+            <ul className="plain-list">
+              {move.parts.map((p) => (
+                <li key={p.categoryId} className="split-row"><span>{categories.find((c) => c.id === p.categoryId)?.name ?? '?'}</span><Money cents={p.amount} /></li>
+              ))}
+              {move.moved > 0 && <li className="split-row"><span>{t('move.alreadyMoved')}</span><Money cents={-move.moved} /></li>}
+            </ul>
+            <p className="hint">{t('move.reconcileHint', { name: account.name })}</p>
+          </details>
+        </>
+      )}
+    </section>
+  );
+}
+
 function Provisions() {
   const vault = useVault();
   const notify = useToast();
@@ -166,6 +218,7 @@ function Provisions() {
 
   return (
     <>
+      <ProvisionsMoveCard />
       <div className="page-head">
         <p className="muted">{t('plan.provisionsIntro')}</p>
         <button type="button" className="button button-primary button-small" onClick={() => setEditing('new')}>
@@ -343,7 +396,7 @@ function Events() {
             <li className="split-row"><span>{t('plan.spent')}</span><Money cents={v.spent} /></li>
             <li className="split-row"><span>{t('plan.leftInFund')}</span><strong><Money cents={v.available} /></strong></li>
             {v.event.status !== 'closed' && v.suggested > 0 && (
-              <li className="split-row"><span>{t('plan.suggestedMonthly')}</span><Money cents={v.suggested} /></li>
+              <li className="split-row"><span>{t('plan.budgetedThisMonth')}</span><Money cents={v.suggested} /></li>
             )}
             {v.event.status === 'closed' && v.event.closeDisposition && (
               <li className="split-row"><span>{v.event.closeDisposition.amount >= 0 ? t('plan.surplusMoved') : t('plan.deficitCovered')}</span><Money cents={Math.abs(v.event.closeDisposition.amount)} /></li>
@@ -355,7 +408,10 @@ function Events() {
               <ul className="plain-list facts">
                 {v.bySubBudget.map((b) => (
                   <li key={b.name} className="split-row">
-                    <span>{b.name}</span>
+                    <span>
+                      {b.name}
+                      <span className="muted"> · {b.paid ? t('plan.paidShort') : t('plan.byDate', { date: formatDate(b.due) })}</span>
+                    </span>
                     <span>
                       <Money cents={b.spent} /> / <Money cents={b.budget} />
                       {b.spent > b.budget && <span className="badge badge-warn">⚠ {t('budget.over')}</span>}
@@ -383,57 +439,95 @@ function Events() {
   );
 }
 
+interface PartDraft {
+  name: string;
+  amount: string;
+  due: string;
+  paidMonth?: string;
+}
+
 function EventDialog({ existing, onClose }: { existing: EventFund | undefined; onClose: () => void }) {
   const vault = useVault();
   const notify = useToast();
   const [name, setName] = useState(existing?.name ?? '');
   const amount = useMoneyInput(existing?.targetAmount);
   const date = useDateInput(existing?.targetDate ?? todayIso());
-  const [subs, setSubs] = useState<{ name: string; amount: string }[]>(
-    existing?.subBudgets.map((s) => ({ name: s.name, amount: String(s.amount / 100).replace('.', ',') })) ?? [],
+  const start = useDateInput(existing?.startDate ?? (existing ? existing.createdAt.slice(0, 10) : todayIso()));
+  const [subs, setSubs] = useState<PartDraft[]>(
+    existing?.subBudgets.map((s) => ({ name: s.name, amount: formatMoneyInput(s.amount), due: s.dueDate ?? '', ...(s.paidMonth ? { paidMonth: s.paidMonth } : {}) })) ?? [],
   );
   const [error, setError] = useState<string>();
-  const suggestion = amount.cents && date.iso ? monthlySetAside(amount.cents, 0, currentMonth(), date.iso) : null;
+
+  const parsed = subs
+    .filter((s) => s.name.trim())
+    .map((s): SubBudget | null => {
+      const cents = s.amount.trim() ? parseMoney(s.amount) : 0;
+      if (cents === null || cents < 0) return null;
+      return { name: s.name.trim(), amount: cents, ...(s.due ? { dueDate: s.due } : {}), ...(s.paidMonth ? { paidMonth: s.paidMonth } : {}) };
+    });
+  const valid = parsed.every((x) => x !== null);
+  const subBudgets = parsed.filter((x): x is SubBudget => x !== null);
+  const partsTotal = subBudgets.reduce((s, x) => s + x.amount, 0);
+  const preview =
+    amount.cents && date.iso && start.iso && valid
+      ? eventPlanParts({ ...(existing ?? ({ createdAt: `${todayIso()}T00:00:00Z` } as EventFund)), name, targetAmount: amount.cents, targetDate: date.iso, startDate: start.iso, subBudgets })
+      : null;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) return setError(t('plan.nameRequired'));
     if (!amount.cents || amount.cents <= 0) return setError(t('tx.amountRequired'));
-    if (!date.iso) return setError(t('field.dateInvalid'));
-    const subBudgets: SubBudget[] = [];
-    for (const s of subs) {
-      if (!s.name.trim()) continue;
-      const cents = Math.round(Number(s.amount.replace(/\./g, '').replace(',', '.')) * 100);
-      if (!Number.isFinite(cents) || cents < 0) return setError(t('field.moneyInvalid'));
-      subBudgets.push({ name: s.name.trim(), amount: cents });
-    }
-    await saveEvent(vault, { name: name.trim(), targetAmount: amount.cents, targetDate: date.iso, subBudgets }, suggestion ?? 0, existing);
+    if (!date.iso || !start.iso) return setError(t('field.dateInvalid'));
+    if (!valid) return setError(t('field.moneyInvalid'));
+    if (partsTotal > amount.cents) return setError(t('plan.partsOverTarget'));
+    await saveEvent(vault, { name: name.trim(), targetAmount: amount.cents, targetDate: date.iso, startDate: start.iso, subBudgets }, existing);
     notify(t('plan.saved', { name: name.trim() }));
     onClose();
   }
 
+  const set = (i: number, patch: Partial<PartDraft>) => setSubs(subs.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   return (
     <Dialog open title={existing ? t('plan.editEvent') : t('plan.newEvent')} onClose={onClose}>
       <form onSubmit={submit} noValidate>
         <TextField label={t('plan.name')} value={name} onChange={(e) => setName(e.target.value)} placeholder={t('plan.eventExample')} autoFocus />
-        <MoneyField label={t('plan.targetAmount')} state={amount} />
+        <DateField label={t('plan.startDate')} state={start} hint={t('plan.startDateHint')} />
         <DateField label={t('plan.eventDate')} state={date} />
+        <MoneyField label={t('plan.targetAmount')} state={amount} hint={t('plan.tripTotalHint')} />
         <fieldset>
-          <legend>{t('plan.subBudgetsOptional')}</legend>
+          <legend>{t('plan.parts')}</legend>
+          <p className="hint">{t('plan.partsHint')}</p>
           {subs.map((s, i) => (
-            <div key={i} className="split-line">
-              <label className="visually-hidden" htmlFor={`sb-n-${i}`}>{t('plan.subName', { n: i + 1 })}</label>
-              <input id={`sb-n-${i}`} value={s.name} placeholder={t('plan.subExample')} onChange={(e) => setSubs(subs.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
-              <label className="visually-hidden" htmlFor={`sb-a-${i}`}>{t('plan.subAmount', { n: i + 1 })}</label>
-              <input id={`sb-a-${i}`} inputMode="decimal" value={s.amount} placeholder="0,00" onChange={(e) => setSubs(subs.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))} />
+            <div key={i} className="card part-card">
+              <TextField label={t('plan.subName', { n: i + 1 })} value={s.name} placeholder={t('plan.subExample')} onChange={(e) => set(i, { name: e.target.value })} />
+              <TextField label={t('plan.subAmount', { n: i + 1 })} inputMode="decimal" value={s.amount} placeholder="0,00" onChange={(e) => set(i, { amount: e.target.value })} />
+              <TextField label={t('plan.partDue')} type="date" value={s.due} onChange={(e) => set(i, { due: e.target.value })} hint={t('plan.partDueHint')} />
+              {existing && (
+                <label className="check">
+                  <input type="checkbox" checked={!!s.paidMonth} onChange={(e) => set(i, e.target.checked ? { paidMonth: currentMonth() } : { paidMonth: undefined })} />
+                  {t('plan.partPaid')}
+                </label>
+              )}
+              <button type="button" className="button button-quiet button-small" onClick={() => setSubs(subs.filter((_, j) => j !== i))}>{t('plan.removePart')}</button>
             </div>
           ))}
-          <button type="button" className="button button-quiet button-small" onClick={() => setSubs([...subs, { name: '', amount: '' }])}>+ {t('plan.addSub')}</button>
+          <button type="button" className="button button-quiet button-small" onClick={() => setSubs([...subs, { name: '', amount: '', due: '' }])}>+ {t('plan.addSub')}</button>
         </fieldset>
-        {suggestion !== null && (
-          <p className="notice">
-            {t('plan.willSave')} <strong><Money cents={suggestion} /></strong> {t('plan.perMonthLong')}
-          </p>
+        {preview && (
+          <div className="notice" role="status">
+            <p><strong>{t('plan.tripPlan')}</strong></p>
+            <ul className="plain-list">
+              {preview.map((p) => {
+                const first = planPartAmount(p, p.start, 0);
+                return (
+                  <li key={p.key || 'rest'} className="split-row">
+                    <span>{p.key || (subBudgets.length ? t('plan.restOfTrip') : name || t('plan.trip'))} · {t('plan.until', { month: monthName(p.due) })}</span>
+                    <span>{p.doneMonth ? t('plan.paidShort') : <><Money cents={first} /> {t('plan.perMonthShort')}</>}</span>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="hint">{t('plan.tripPlanHint')}</p>
+          </div>
         )}
         {error && <p className="error" role="alert">⚠ {error}</p>}
         <div className="row">

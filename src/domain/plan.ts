@@ -1,4 +1,4 @@
-import { computeBudget, type BudgetInput } from './budget';
+import { computeBudget, type BudgetInput, type PlanPart } from './budget';
 import { addMonths, daysInMonth, monthDiff, monthOf } from './dates';
 import type { Allocation, Cents, EventFund, Id, IsoDate, MonthKey, Provision } from './types';
 
@@ -147,7 +147,7 @@ export interface EventStatusView {
   /** Positive = under budget (surplus), negative = over. */
   overUnder: Cents;
   suggested: Cents;
-  bySubBudget: { name: string; budget: Cents; spent: Cents }[];
+  bySubBudget: { name: string; budget: Cents; spent: Cents; due: IsoDate; paid: boolean }[];
   unassignedSpent: Cents;
 }
 
@@ -167,10 +167,14 @@ export function eventStatus(e: EventFund, input: BudgetInput, month: MonthKey, a
   const bySubBudget = e.subBudgets.map((sb) => ({
     name: sb.name,
     budget: sb.amount,
+    due: sb.dueDate ?? e.targetDate,
+    paid: !!sb.paidMonth,
     spent: -allocs.filter((a) => a.subBudget === sb.name).reduce((s, a) => s + a.amount, 0),
   }));
   const unassignedSpent = spent - bySubBudget.reduce((s, b) => s + b.spent, 0);
-  const suggested = e.status === 'closed' ? 0 : monthlySetAside(e.targetAmount, available + spent, month, e.targetDate);
+  // With a plan (D-54) this month's amount comes from it; otherwise the even split to the date.
+  const planned = input.plans?.has(e.categoryId) ? months.at(-1)?.categories.get(e.categoryId)?.defaultAmount : undefined;
+  const suggested = e.status === 'closed' ? 0 : planned ?? monthlySetAside(e.targetAmount, available + spent, month, e.targetDate);
   return {
     event: e,
     contributed,
@@ -183,6 +187,32 @@ export function eventStatus(e: EventFund, input: BudgetInput, month: MonthKey, a
     bySubBudget,
     unassignedSpent,
   };
+}
+
+/**
+ * A trip as a plan (D-54): one part per sub-budget, each needed by its own
+ * date, plus "the rest" (target minus the parts) by the trip date. A closed
+ * trip's parts all end in the month it was closed, so its history stays.
+ */
+export function eventPlanParts(e: EventFund): PlanPart[] {
+  const start = monthOf(e.startDate ?? e.createdAt.slice(0, 10));
+  const closed = e.closedAt ? monthOf(e.closedAt.slice(0, 10)) : undefined;
+  const tripDue = monthOf(e.targetDate);
+  const part = (key: string, amount: Cents, due: MonthKey, paid?: MonthKey): PlanPart => {
+    const done = [paid, closed].filter((x): x is MonthKey => !!x).sort()[0];
+    const p: PlanPart = { key, amount, start, due: due < start ? start : due };
+    if (done) p.doneMonth = done;
+    return p;
+  };
+  const parts = e.subBudgets.filter((sb) => sb.amount > 0).map((sb) => part(sb.name, sb.amount, sb.dueDate ? monthOf(sb.dueDate) : tripDue, sb.paidMonth));
+  const rest = e.targetAmount - e.subBudgets.reduce((s, sb) => s + Math.max(0, sb.amount), 0);
+  if (rest > 0) parts.push(part('', rest, tripDue));
+  return parts;
+}
+
+/** Plans for every trip, for the budget engine. */
+export function eventPlans(events: readonly EventFund[]): Map<Id, PlanPart[]> {
+  return new Map(events.map((e) => [e.categoryId, eventPlanParts(e)]));
 }
 
 export interface CloseEventPlan {
@@ -212,4 +242,40 @@ export function planCloseEvent(
     { categoryId: targetCategoryId, month, amount: (tg?.assigned ?? 0) + moved, note },
   ];
   return { overrides, moved };
+}
+
+/**
+ * How much to move to the provisions account in a month (D-55): what the
+ * budget sets aside for provisions and trips that month, less what was
+ * already moved there from other on-budget accounts.
+ */
+export function provisionsMove(input: BudgetInput, month: MonthKey, accountId: Id): { planned: Cents; moved: Cents; left: Cents; parts: { categoryId: Id; amount: Cents }[] } {
+  const b = computeBudget(input, month).at(-1);
+  const groups = new Set(['provisions', 'events']);
+  const parts: { categoryId: Id; amount: Cents }[] = [];
+  for (const c of input.categories) {
+    if (c.isIncome || !groups.has(c.groupId)) continue;
+    const a = b?.categories.get(c.id)?.assigned ?? 0;
+    if (a > 0) parts.push({ categoryId: c.id, amount: a });
+  }
+  const planned = parts.reduce((s, p) => s + p.amount, 0);
+  const onBudget = new Set(input.accounts.filter((a) => a.type !== 'loan').map((a) => a.id));
+  const moved = input.transactions
+    .filter((t) => t.accountId === accountId && t.amount > 0 && monthOf(t.date) === month)
+    .filter((t) => input.allocations.some((a) => a.transactionId === t.id && a.targetType === 'transfer' && onBudget.has(input.transactions.find((x) => x.id === a.targetId)?.accountId ?? '')))
+    .reduce((s, t) => s + t.amount, 0);
+  return { planned, moved, left: Math.max(0, planned - moved), parts };
+}
+
+/** Planned provisions moves by month, for recognising the transfer when it is imported. */
+export function provisionsMoveByMonth(input: BudgetInput, through: MonthKey): Map<MonthKey, Cents> {
+  const out = new Map<MonthKey, Cents>();
+  const groups = new Set(['provisions', 'events']);
+  const ids = new Set(input.categories.filter((c) => !c.isIncome && groups.has(c.groupId)).map((c) => c.id));
+  for (const m of computeBudget(input, through)) {
+    let sum = 0;
+    for (const [id, cm] of m.categories) if (ids.has(id) && cm.assigned > 0) sum += cm.assigned;
+    out.set(m.month, sum);
+  }
+  return out;
 }

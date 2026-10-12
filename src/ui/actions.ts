@@ -486,8 +486,7 @@ export async function deleteProvision(vault: Vault, p: Provision): Promise<void>
 
 export async function saveEvent(
   vault: Vault,
-  draft: Pick<EventFund, 'name' | 'targetAmount' | 'targetDate' | 'subBudgets'>,
-  monthly: Cents,
+  draft: Pick<EventFund, 'name' | 'targetAmount' | 'targetDate' | 'subBudgets'> & { startDate: IsoDate },
   existing?: EventFund,
 ): Promise<void> {
   const ops: WriteOp[] = [];
@@ -517,7 +516,8 @@ export async function saveEvent(
     updatedAt: now,
   };
   ops.push({ type: 'put', store: 'events', record });
-  if (record.status !== 'closed') ops.push(...defaultOps(vault, categoryId, monthly, defaultStartMonth(vault)));
+  // The trip's dated parts budget it now (D-54): monthly defaults no longer apply.
+  for (const d of vault.list('budgetDefaults')) if (d.categoryId === categoryId) ops.push({ type: 'delete', store: 'budgetDefaults', id: d.id });
   await vault.write(ops);
 }
 

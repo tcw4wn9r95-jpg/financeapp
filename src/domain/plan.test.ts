@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { budgetForMonth } from './budget';
 import { firstBelow, forecast, recurringTransfers, scheduleItems } from './forecast';
-import { eventStatus, monthlySetAside, nextDue, occurrences, planCloseEvent, provisionSchedule, provisionStatus } from './plan';
+import { eventPlanParts, eventPlans, provisionsMove, provisionsMoveByMonth, eventStatus, monthlySetAside, nextDue, occurrences, planCloseEvent, provisionSchedule, provisionStatus } from './plan';
 import { World } from './testkit';
 import type { EventFund, Provision } from './types';
 
@@ -75,7 +75,7 @@ describe('events and trips (F4)', () => {
     };
     const s = eventStatus(e, w.input(), '2026-06', w.allocations);
     expect(s).toMatchObject({ contributed: eur(3000), spent: eur(2740), available: eur(260), overUnder: eur(260), fundedPercent: 100 });
-    expect(s.bySubBudget).toEqual([{ name: 'Flights', budget: eur(700), spent: eur(650) }]);
+    expect(s.bySubBudget).toEqual([{ name: 'Flights', budget: eur(700), spent: eur(650), due: '2026-06-30', paid: false }]);
 
     const plan = planCloseEvent(e, w.input(), '2026-06', 'savings');
     expect(plan.moved).toBe(eur(260));
@@ -177,5 +177,72 @@ describe('provision schedule: start, target date, target amount (D-49)', () => {
     expect(provisionSchedule(provision({ amount: eur(1000), dueDate: '2026-03-31', recurrence: 'FREQ=MONTHLY;INTERVAL=3', startDate: '2026-01-10' }), '2026-01')).toEqual([
       { from: '2026-01', amount: 33334 },
     ]);
+  });
+});
+
+describe('trip parts with their own dates (D-54)', () => {
+  const trip = (over: Partial<EventFund> = {}): EventFund => ({
+    ...base, createdAt: '2026-10-01T00:00:00.000Z', id: 'e1', name: 'Japan', targetAmount: eur(3000), targetDate: '2027-12-10', startDate: '2026-10-01',
+    subBudgets: [{ name: 'Flights', amount: eur(800), dueDate: '2027-06-15' }], fundedBalance: 0, status: 'saving', categoryId: 'trip', ...over,
+  });
+  function world(e: EventFund) {
+    const w = new World('2026-01');
+    const card = w.account('card', 'card', 0);
+    w.account('bank', 'current', eur(10000));
+    w.category('trip', 'events', 'roll');
+    return { w, card, input: () => ({ ...w.input(), plans: eventPlans([e]) }) };
+  }
+  const assigned = (input: ReturnType<ReturnType<typeof world>['input']>, m: string) => budgetForMonth(input, m)!.categories.get('trip')!.assigned;
+
+  it('flights are saved for by June 2027, the rest by December 2027; nothing before the start', () => {
+    const e = trip();
+    expect(eventPlanParts(e)).toEqual([
+      { key: 'Flights', amount: eur(800), start: '2026-10', due: '2027-06' },
+      { key: '', amount: eur(2200), start: '2026-10', due: '2027-12' },
+    ]);
+    const { input } = world(e);
+    expect(assigned(input(), '2026-09')).toBe(0);
+    // 800 / 9 months + 2,200 / 15 months, each rounded up to the cent.
+    expect(assigned(input(), '2026-10')).toBe(8889 + 14667);
+    let total = 0;
+    for (const m of ['2026-10', '2026-11', '2026-12', '2027-01', '2027-02', '2027-03', '2027-04', '2027-05', '2027-06', '2027-07', '2027-08', '2027-09', '2027-10', '2027-11', '2027-12']) total += assigned(input(), m);
+    expect(total).toBe(eur(3000));
+    expect(assigned(input(), '2028-01')).toBe(0);
+  });
+
+  it('buying the tickets early stops saving for flights; the rest carries on', () => {
+    const e = trip();
+    const { w, card, input } = world(e);
+    w.spend(card, '2027-02-20', eur(800), 'trip');
+    w.allocations.at(-1)!.subBudget = 'Flights';
+    const march = assigned(input(), '2027-03');
+    const restOnly = budgetForMonth({ ...w.input(), plans: eventPlans([trip({ subBudgets: [] , targetAmount: eur(2200) })]) }, '2027-03')!.categories.get('trip')!.assigned;
+    expect(march).toBe(restOnly);
+  });
+
+  it('a part marked paid stops after that month', () => {
+    const e = trip({ subBudgets: [{ name: 'Flights', amount: eur(800), dueDate: '2027-06-15', paidMonth: '2026-12' }] });
+    const { input } = world(e);
+    const rest = 14667;
+    expect(assigned(input(), '2026-12')).toBe(8889 + rest);
+    expect(assigned(input(), '2027-01')).toBe(rest);
+  });
+});
+
+describe('monthly move to the provisions account (D-55)', () => {
+  it('is what provisions and trips get this month, less what was already moved there', () => {
+    const w = new World('2026-01');
+    const bank = w.account('bank', 'current', eur(5000));
+    const flex = w.account('flex', 'savings', 0);
+    w.category('carIns', 'provisions', 'roll');
+    w.category('groceries', 'variable', 'roll');
+    w.setDefault('carIns', eur(100));
+    w.setDefault('groceries', eur(400));
+    const input = () => ({ ...w.input(), plans: eventPlans([{ ...base, createdAt: '2026-10-01T00:00:00Z', id: 'e', name: 'Trip', targetAmount: eur(1200), targetDate: '2027-09-30', startDate: '2026-10-01', subBudgets: [], fundedBalance: 0, status: 'saving', categoryId: 'trip' }]) });
+    w.category('trip', 'events', 'roll');
+    expect(provisionsMove(input(), '2026-10', flex)).toMatchObject({ planned: eur(200), moved: 0, left: eur(200) });
+    w.entry(bank, '2026-10-03', eur(-150), { kind: 'transfer', toAccountId: flex });
+    expect(provisionsMove(input(), '2026-10', flex)).toMatchObject({ planned: eur(200), moved: eur(150), left: eur(50) });
+    expect(provisionsMoveByMonth(input(), '2026-10').get('2026-10')).toBe(eur(200));
   });
 });

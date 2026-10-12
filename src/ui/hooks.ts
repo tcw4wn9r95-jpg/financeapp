@@ -1,4 +1,5 @@
 import { taxCashItems } from './taxParams';
+import { eventPlans } from '../domain/plan';
 import { createContext, useContext, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { computeBudget, type BudgetInput, type BudgetMonth } from '../domain/budget';
 import { compareMonths, todayIso } from '../domain/dates';
@@ -41,9 +42,12 @@ export function useBudgetInput(): BudgetInput {
   const accounts = useStore('accounts');
   const transactions = useStore('transactions');
   const allocations = useStore('allocations');
+  const events = useStore('events');
   return useMemo(
     () => ({
       startMonth: settings.budgetStartMonth,
+      // Trips are budgeted by their dated parts (D-54).
+      plans: eventPlans(events),
       categories,
       defaults,
       overrides,
@@ -52,7 +56,7 @@ export function useBudgetInput(): BudgetInput {
       allocations,
       ...(settings.sweepTargetCategoryId ? { sweepTargetCategoryId: settings.sweepTargetCategoryId } : {}),
     }),
-    [settings.budgetStartMonth, settings.sweepTargetCategoryId, categories, defaults, overrides, accounts, transactions, allocations],
+    [settings.budgetStartMonth, settings.sweepTargetCategoryId, categories, defaults, overrides, accounts, transactions, allocations, events],
   );
 }
 

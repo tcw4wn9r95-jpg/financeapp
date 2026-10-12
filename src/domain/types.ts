@@ -196,6 +196,10 @@ export interface Provision extends BaseRecord {
 export interface SubBudget {
   name: string;
   amount: Cents;
+  /** When this part is needed (e.g. tickets bought in June for a December trip). Default: the trip date (D-54). */
+  dueDate?: IsoDate;
+  /** Marked paid: no more saving for this part after this month. */
+  paidMonth?: MonthKey;
 }
 
 export type EventStatus = 'saving' | 'active' | 'closed';
@@ -204,6 +208,8 @@ export interface EventFund extends BaseRecord {
   name: string;
   targetAmount: Cents;
   targetDate: IsoDate;
+  /** When saving starts (D-54). Default: the month the trip was created. */
+  startDate?: IsoDate;
   subBudgets: SubBudget[];
   fundedBalance: Cents;
   status: EventStatus;
@@ -374,6 +380,8 @@ export interface Settings {
   minimumBuffer?: Cents;
   /** History matches at or above this confidence are applied without review (default 0.92). */
   autoApplyThreshold?: number;
+  /** Savings account where the money for provisions and trips is kept (D-55). */
+  provisionsAccountId?: Id;
   /** "Keep as is" on the hint about monthly amounts starting after the budget start. */
   lateAmountsKept?: boolean;
   /** Merchants whose rule proposal was dismissed. */

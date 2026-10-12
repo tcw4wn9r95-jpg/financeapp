@@ -149,6 +149,8 @@ export interface LearnContext {
   accounts: readonly Account[];
   categories: readonly Category[];
   threshold: number;
+  /** The monthly move to the provisions account, to recognise it (D-55). */
+  provisionsMove?: { accountId: Id; byMonth: ReadonlyMap<string, Cents> };
 }
 
 export type Decision =
@@ -176,6 +178,14 @@ export function decide(t: Transaction, ctx: LearnContext): Decision | undefined 
     const reason = `Rule: ${describeRule(rule)}`;
     if (rule.action.targetType === 'transfer') return { apply: false, suggestion: { ...rule.action, confidence: 1, decidedBy: 'rule', reason } };
     return { apply: true, target: rule.action, confidence: 1, decidedBy: 'rule', reason, ruleId: rule.id };
+  }
+  const pm = ctx.provisionsMove;
+  if (pm && t.amount < 0 && t.accountId !== pm.accountId) {
+    const planned = pm.byMonth.get(t.date.slice(0, 7)) ?? 0;
+    const target = ctx.accounts.find((a) => a.id === pm.accountId);
+    if (target && planned > 0 && Math.abs(-t.amount - planned) <= 100) {
+      return { apply: false, suggestion: { targetType: 'transfer', targetId: pm.accountId, confidence: 0.95, decidedBy: 'rule', reason: `Monthly provisions move to ${target.name}` } };
+    }
   }
   const h = historyMatch(t, ctx.examples);
   if (h && usable(h, ctx, t)) {

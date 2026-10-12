@@ -263,3 +263,12 @@ describe('on import', () => {
     expect(rules[0]!.hits).toBe(1);
   });
 });
+
+describe('the monthly provisions move is recognised (D-55)', () => {
+  it('a transfer of the planned amount is suggested as a move to the provisions account', () => {
+    const c = ctx({ provisionsMove: { accountId: 'sav', byMonth: new Map([['2026-03', eur(350)]]) } });
+    const out = learn([tx('Transfer to my other account', -350.4, { date: '2026-03-02' })], c, testClock());
+    expect(out.transactions[0]!.suggestion).toMatchObject({ targetType: 'transfer', targetId: 'sav', decidedBy: 'rule' });
+    expect(learn([tx('Transfer', -500, { date: '2026-03-02' })], c, testClock()).suggested).toBe(0);
+  });
+});

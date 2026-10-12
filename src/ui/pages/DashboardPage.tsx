@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { accountBalances, isOnBudget } from '../../domain/budget';
 import { compareMonths, currentMonth, formatDate, todayIso } from '../../domain/dates';
-import { eventStatus, provisionStatus } from '../../domain/plan';
+import { eventStatus, provisionStatus, provisionsMove } from '../../domain/plan';
 import { LineChart } from '../components/LineChart';
 import { CATEGORY_GROUPS, type CategoryGroup } from '../../domain/types';
 import { monthName, t } from '../../i18n';
@@ -26,6 +26,14 @@ export function DashboardPage() {
   const balances = useMemo(() => accountBalances(accounts, transactions, todayIso()), [accounts, transactions]);
   const open = accounts.filter((a) => !a.closedAt);
   const cash = open.filter(isOnBudget).reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
+
+  const budgetInput = useBudgetInput();
+  const moveLeft = useMemo(() => {
+    const acc = accounts.find((a) => a.id === settings.provisionsAccountId);
+    if (!acc) return null;
+    const m = provisionsMove(budgetInput, month, acc.id);
+    return m.left > 0 ? { name: acc.name, left: m.left } : null;
+  }, [accounts, settings.provisionsAccountId, budgetInput, month]);
 
   const lastBackup = settings.lastBackupAt ? new Date(settings.lastBackupAt) : null;
   const backupDue = !lastBackup || Date.now() - lastBackup.getTime() > BACKUP_NAG_DAYS * 86_400_000;
@@ -83,6 +91,13 @@ export function DashboardPage() {
         <a className="action-row" href={href('inbox')}>
           <span className="nav-count">{inbox}</span>
           <span>{t('dashboard.inboxCount', { n: inbox })}</span>
+          <Icon name="chevronRight" size={18} />
+        </a>
+      )}
+      {moveLeft && (
+        <a className="action-row" href={href('plan', { tab: 'provisions' })}>
+          <span aria-hidden="true">→</span>
+          <span>{t('move.dashboard', { name: moveLeft.name })} <strong><Money cents={moveLeft.left} /></strong></span>
           <Icon name="chevronRight" size={18} />
         </a>
       )}

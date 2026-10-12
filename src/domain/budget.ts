@@ -1,4 +1,4 @@
-import { compareMonths, monthOf, monthRange } from './dates';
+import { compareMonths, monthDiff, monthOf, monthRange } from './dates';
 import { assertCents } from './money';
 import type {
   Account,
@@ -43,6 +43,22 @@ export interface BudgetInput {
   transactions: readonly Transaction[];
   allocations: readonly Allocation[];
   sweepTargetCategoryId?: Id;
+  /** Categories budgeted by a plan of dated parts (trips) instead of defaults (D-54). */
+  plans?: ReadonlyMap<Id, readonly PlanPart[]>;
+}
+
+/**
+ * One part of a plan, e.g. a trip's flights: `amount` needed by `due`, saved
+ * from `start`. Each month assigns what is still missing divided by the months
+ * left. A part stops when its spending (allocations tagged with `key`; ''
+ * means untagged) reaches its amount, after `doneMonth`, or after `due`.
+ */
+export interface PlanPart {
+  key: string;
+  amount: Cents;
+  start: MonthKey;
+  due: MonthKey;
+  doneMonth?: MonthKey;
 }
 
 export interface CategoryMonth {
@@ -199,6 +215,10 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       ? input.sweepTargetCategoryId
       : undefined;
 
+  const plans = input.plans ?? new Map<Id, readonly PlanPart[]>();
+  const partSpend = planSpending(input, plans);
+  const partAssigned = new Map<string, Cents>();
+
   const result: BudgetMonth[] = [];
   let ready = 0;
   let carry = new Map<Id, Cents>();
@@ -213,9 +233,19 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
     let activityTotal = 0;
 
     for (const c of expense) {
-      const def = defaultFor(input.defaults, c.id, month);
+      const plan = plans.get(c.id);
       const ovr = overrideFor(input.overrides, c.id, month);
-      const defaultAmount = def?.monthlyAmount ?? 0;
+      let defaultAmount = 0;
+      if (plan) {
+        for (const part of plan) {
+          const k = `${c.id}\u0000${part.key}`;
+          const a = planPartAmount(part, month, partAssigned.get(k) ?? 0, partSpend.get(k));
+          if (a > 0) partAssigned.set(k, (partAssigned.get(k) ?? 0) + a);
+          defaultAmount += a;
+        }
+      } else {
+        defaultAmount = defaultFor(input.defaults, c.id, month)?.monthlyAmount ?? 0;
+      }
       const assigned = ovr ? ovr.amount : defaultAmount;
       const carryIn = carry.get(c.id) ?? 0;
       const catActivity = act.byCategory.get(c.id) ?? 0;
@@ -273,6 +303,39 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
     returned = nextReturned;
   }
   return result;
+}
+
+/** What a plan part assigns in a month, given what it already got and what was spent on it before. */
+export function planPartAmount(part: PlanPart, month: MonthKey, assignedSoFar: Cents, spentByMonth?: ReadonlyMap<MonthKey, Cents>): Cents {
+  if (compareMonths(month, part.start) < 0 || compareMonths(month, part.due) > 0) return 0;
+  if (part.doneMonth && compareMonths(month, part.doneMonth) > 0) return 0;
+  let spentBefore = 0;
+  for (const [m, v] of spentByMonth ?? []) if (compareMonths(m, month) < 0) spentBefore += v;
+  if (spentBefore >= part.amount) return 0; // milestone reached: this part is paid
+  const left = part.amount - assignedSoFar;
+  if (left <= 0) return 0;
+  return Math.ceil(left / (monthDiff(month, part.due) + 1));
+}
+
+/** Spending per plan part and month (positive cents), keyed "categoryId\0partKey". */
+function planSpending(input: BudgetInput, plans: ReadonlyMap<Id, readonly PlanPart[]>): Map<string, Map<MonthKey, Cents>> {
+  const out = new Map<string, Map<MonthKey, Cents>>();
+  if (plans.size === 0) return out;
+  const dates = new Map(input.transactions.map((t) => [t.id, t.date]));
+  for (const a of input.allocations) {
+    if (a.targetType !== 'category') continue;
+    const plan = plans.get(a.targetId);
+    if (!plan) continue;
+    const date = dates.get(a.transactionId);
+    if (!date) continue;
+    const key = plan.some((p) => p.key === a.subBudget && p.key !== '') ? a.subBudget! : '';
+    const k = `${a.targetId}\u0000${key}`;
+    const m = monthOf(date);
+    const bucket = out.get(k) ?? new Map<MonthKey, Cents>();
+    bucket.set(m, (bucket.get(m) ?? 0) - a.amount);
+    out.set(k, bucket);
+  }
+  return out;
 }
 
 /** Convenience: the budget for one month (computes the history it depends on). */

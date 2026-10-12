@@ -231,3 +231,11 @@ Single months can still be changed on the Budget page. The provisions list shows
 **D-52 Updates reach the phone.** The service worker now loads the page from the network first: the cached copy is used when offline, or after 3 seconds. Built files are content-hashed and stay cache-first. The app also checks for a new version whenever it comes back to the foreground. Settings → Data shows the build time.
 
 **D-53 Provision form.** The fields read Start date → End date → Target amount. The monthly amount is shown large before saving. New provisions are one-off by default, and a yearly bill can still be set to repeat.
+
+**D-54 Trips budget themselves by dated parts.** A trip has a start date, a trip date, a total, and optional parts (flights, lodging…), each with its own "needed by" date. The budget engine turns these into a plan:
+- every part, plus the rest of the total, assigns each month what is still missing divided by the months left to its date;
+- a part stops when the spending tagged to it reaches its amount (tickets bought early), when it is marked paid, or after its date;
+- months before the start get nothing; a closed trip's parts end in the month it closed, so its history stays;
+- plans replace the monthly defaults for trip categories, and a manual change of one month on the Budget page still wins.
+
+**D-55 The monthly move to the provisions account.** In Plan → Provisions you choose the savings account where provision and trip money is kept. The card (and a Dashboard line) shows what to move this month: everything provisions and trips are budgeted this month, minus transfers already made into that account from other on-budget accounts this month. When a transfer of that amount (±1 €) appears in a statement, it is suggested as a transfer to that account, so accepting it is one tap.

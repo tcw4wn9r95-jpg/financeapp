@@ -1784,3 +1784,12 @@ input[type='date']::-webkit-date-and-time-value {
   font-size: 1.35rem;
   margin-bottom: 0.25rem !important;
 }
+
+.move-amount {
+  font-size: 1.1rem;
+  margin: 0.25rem 0 0.5rem;
+}
+.part-card {
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+}

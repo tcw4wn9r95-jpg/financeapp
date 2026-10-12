@@ -14,6 +14,9 @@ import {
   type Target,
 } from '../domain/learn';
 import { inbox, type Changes } from '../domain/reconcile';
+import type { BudgetInput } from '../domain/budget';
+import { currentMonth } from '../domain/dates';
+import { eventPlans, provisionsMoveByMonth } from '../domain/plan';
 import type { Id, Rule, RuleConditions, Transaction } from '../domain/types';
 import { askClaude, MAX_BATCH } from '../infra/claude';
 import type { Vault, WriteOp } from '../storage/vault';
@@ -23,12 +26,33 @@ import { applyChanges } from './importActions';
 /** Writes for the learning layer (M4); the logic lives in /src/domain/learn.ts. */
 
 export function learnContext(vault: Vault): LearnContext {
-  return {
+  const settings = getSettings(vault);
+  const ctx: LearnContext = {
     rules: vault.list('rules'),
     examples: vault.list('trainingExamples'),
     accounts: vault.list('accounts'),
     categories: vault.list('categories'),
-    threshold: getSettings(vault).autoApplyThreshold ?? DEFAULT_THRESHOLD,
+    threshold: settings.autoApplyThreshold ?? DEFAULT_THRESHOLD,
+  };
+  if (settings.provisionsAccountId) {
+    ctx.provisionsMove = { accountId: settings.provisionsAccountId, byMonth: provisionsMoveByMonth(budgetInputFromVault(vault), currentMonth()) };
+  }
+  return ctx;
+}
+
+/** The budget input as the hooks build it, straight from the vault (for actions outside React). */
+export function budgetInputFromVault(vault: Vault): BudgetInput {
+  const settings = getSettings(vault);
+  return {
+    startMonth: settings.budgetStartMonth,
+    categories: vault.list('categories'),
+    defaults: vault.list('budgetDefaults'),
+    overrides: vault.list('budgetOverrides'),
+    accounts: vault.list('accounts'),
+    transactions: vault.list('transactions'),
+    allocations: vault.list('allocations'),
+    plans: eventPlans(vault.list('events')),
+    ...(settings.sweepTargetCategoryId ? { sweepTargetCategoryId: settings.sweepTargetCategoryId } : {}),
   };
 }
 
