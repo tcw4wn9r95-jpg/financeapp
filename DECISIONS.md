@@ -268,3 +268,12 @@ This fixes provisions that started in the past showing as complete although noth
 - The app adds stream iteration where it is missing.
 - Because a worker cannot receive that fix, browsers lacking it read PDFs on the main thread; other browsers keep the worker.
 - Reproduced by removing `ReadableStream.prototype[Symbol.asyncIterator]` in Chromium.
+
+**D-61 Flexible savings (money-market fund) export.** The CSV has `Date, Description, "Value, EUR", Price per share, Quantity of shares`, US dates ("Oct 12, 2026, 2:06:56 AM"), thousands commas and up to 4 decimals, and no balances. It is read as follows:
+- **BUY / SELL:** money in from and out to the current account, so they pair with it as transfers.
+- **Return WITHDRAWN:** money out, a transfer.
+- **Return PAID and Service Fee** (daily): one row per month, interest net of fees, with gross and fees in the details.
+- **Return Reinvested (−x) plus the BUY of x within a week:** returns turned into shares. They cancel out and are skipped.
+- **Incomplete months:** a month at either end of the file without its first or last days is held back, so a later export that covers it fully is not counted twice. The report shows what it holds so far.
+
+Because there are no balances, the import report asks for today's balance from the bank app. The opening balance is then today's balance, minus everything the app has for the account up to today, minus the interest held back. The file is offered to an account whose name or hints share a word with "Flexible savings". The fixture is synthetic; the household's own export is never added to the repository.

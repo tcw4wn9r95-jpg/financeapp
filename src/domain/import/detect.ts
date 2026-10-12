@@ -1,6 +1,7 @@
 import { isCamt053, parseCamt053 } from './camt053';
 import { findMapping, parseCsv, readCsv, type MappingSpec } from './csv';
 import { isOfx, parseOfx } from './ofx';
+import { isSavingsFundCsv, parseSavingsFund } from './savingsFund';
 import { isSpuerkeessStatement, parseSpuerkeess } from './spuerkeess';
 import { ImportParseError, type ParseResult } from './types';
 import { isWorldlineStatement, parseWorldline } from './worldline';
@@ -33,6 +34,7 @@ export function detectAndParse<M extends MappingSpec>(file: FileContent, mapping
   const table = readCsv(text);
   const header = table.find((r) => r.some((c) => c !== ''));
   if (!header || header.length < 2) throw new ImportParseError('unknownFormat');
+  if (isSavingsFundCsv(header)) return { kind: 'parsed', result: parseSavingsFund(text) };
   const mapping = findMapping(header, mappings);
   if (!mapping) return { kind: 'needsMapping', header, sample: table.slice(1, 6) };
   return { kind: 'parsed', result: parseCsv(text, mapping), mapping };

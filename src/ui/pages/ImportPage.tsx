@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { currentMonth, formatDate } from '../../domain/dates';
+import { currentMonth, formatDate, todayIso } from '../../domain/dates';
 import { coverage } from '../../domain/coverage';
 import { guessColumns, parseCsv, type MappingSpec } from '../../domain/import/csv';
 import { detectAndParse, type FileContent } from '../../domain/import/detect';
@@ -9,7 +9,7 @@ import { systemClock } from '../../domain/ledger';
 import type { BankMapping, Id, ImportReport } from '../../domain/types';
 import { monthName, t, type MessageKey } from '../../i18n';
 import { getSettings } from '../actions';
-import { SelectField, TextField } from '../components/fields';
+import { MoneyField, SelectField, TextField, useMoneyInput } from '../components/fields';
 import { Money } from '../components/Money';
 import { useToast } from '../components/Toast';
 import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
@@ -105,7 +105,7 @@ export function ImportPage() {
               }
             />
           )}
-          {item.state === 'done' && <Report report={item.report} />}
+          {item.state === 'done' && <Report report={item.report} accountIds={item.accountIds} />}
         </section>
       ))}
       <SavedMappings />
@@ -271,6 +271,14 @@ function Warning({ code }: { code: string }) {
           ✓ {t('import.warn.openingSet', { name: accounts.find((x) => x.id === a)?.name ?? '?' })} <Money cents={Number(b)} />
         </p>
       );
+    case 'noBalances':
+      text = t('import.warn.noBalances');
+      break;
+    case 'fundPartialMonth':
+      return <p className="notice">ℹ {t('import.warn.fundPartialMonth', { month: monthName(a ?? '') })} <Money cents={Number(b)} /></p>;
+    case 'fundReinvestUnmatched':
+      text = t('import.warn.fundReinvestUnmatched', { line: a ?? '?' });
+      break;
     case 'openingDiffers': {
       const account = accounts.find((x) => x.id === a);
       return <OpeningDiffers accountId={a ?? ''} name={account?.name ?? '?'} amount={Number(b)} current={account?.openingBalance ?? 0} />;
@@ -345,6 +353,43 @@ function Coverage() {
   );
 }
 
+/**
+ * Files without balances (a savings fund export): the user types today's
+ * balance from the bank app and the opening balance is worked out from it (D-61).
+ */
+function BalanceFromToday({ accountId, pending }: { accountId: Id; pending: number }) {
+  const vault = useVault();
+  const notify = useToast();
+  const account = useStore('accounts').find((a) => a.id === accountId);
+  const transactions = useStore('transactions');
+  const today = useMoneyInput();
+  const [done, setDone] = useState(false);
+  if (!account) return null;
+  // Everything the app knows for this account up to today, without the opening balance.
+  const known = transactions.filter((tx) => tx.accountId === accountId && tx.date <= todayIso()).reduce((s, tx) => s + tx.amount, 0);
+  const opening = today.cents === null ? null : today.cents - known - pending;
+  if (done) return <p className="notice">✓ {t('import.balance.saved', { name: account.name })}</p>;
+  return (
+    <form
+      className="notice balance-today"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (opening === null || !today.text.trim()) return;
+        await vault.put('accounts', { ...account, openingBalance: opening, updatedAt: new Date().toISOString() });
+        notify(t('import.balance.saved', { name: account.name }));
+        setDone(true);
+      }}
+    >
+      <p>⚠ {t('import.balance.intro', { name: account.name })}</p>
+      <MoneyField label={t('import.balance.today')} state={today} hint={t('import.balance.hint')} />
+      {opening !== null && today.text.trim() && (
+        <p className="hint">{t('import.balance.opening')} <Money cents={opening} /></p>
+      )}
+      <button className="button button-primary" disabled={opening === null || !today.text.trim()}>{t('import.balance.save')}</button>
+    </form>
+  );
+}
+
 const SKIP_KEYS: Record<string, MessageKey> = {
   reverted: 'import.skip.reverted',
   pending: 'import.skip.pending',
@@ -357,7 +402,7 @@ const SKIP_KEYS: Record<string, MessageKey> = {
   ignored: 'import.skip.ignored',
 };
 
-export function Report({ report }: { report: ImportReport }) {
+export function Report({ report, accountIds = [] }: { report: ImportReport; accountIds?: Id[] }) {
   const inboxCount = report.newCount + report.suggestions;
   return (
     <div className="report" role="status">
@@ -373,7 +418,13 @@ export function Report({ report }: { report: ImportReport }) {
         {(report.autoApplied ?? 0) > 0 && <li className="split-row"><span>{t('import.r.auto')}</span><strong>{report.autoApplied}</strong></li>}
         {report.suggestions > 0 && <li className="split-row"><span>{t('import.r.suggestions')}</span><strong>{report.suggestions}</strong></li>}
       </ul>
-      {report.warnings.map((w) => <Warning key={w} code={w} />)}
+      {report.warnings.filter((w) => w !== 'noBalances').map((w) => <Warning key={w} code={w} />)}
+      {report.warnings.includes('noBalances') && accountIds[0] && (
+        <BalanceFromToday
+          accountId={accountIds[0]}
+          pending={report.warnings.filter((w) => w.startsWith('fundPartialMonth:')).reduce((s, w) => s + Number(w.split(':')[2] ?? 0), 0)}
+        />
+      )}
       {report.skipped.length > 0 && (
         <details>
           <summary>{t('import.r.skippedList', { n: report.skipped.length })}</summary>

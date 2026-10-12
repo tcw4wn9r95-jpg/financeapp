@@ -411,7 +411,12 @@ export function subAccounts(result: { rows: readonly ParsedRow[]; statements: re
     const info = result.statements.find((s) => s.accountKey === key);
     const byLast4 = info?.last4 ? accounts.find((a) => !a.closedAt && a.ibanLast4 === info.last4) : undefined;
     const rememberedId = remembered[key] && accounts.some((a) => a.id === remembered[key]) ? remembered[key] : undefined;
-    const accountId = byLast4?.id ?? rememberedId;
+    // Otherwise an account whose name or hints share a word with the part's name ("Flexible savings" → "Compte flexible").
+    const words = key.toLowerCase().split(/\W+/).filter((w) => w.length >= 5);
+    const byName = words.length
+      ? accounts.find((a) => !a.closedAt && a.type !== 'loan' && [a.name, ...(a.matchHints ?? [])].some((n) => words.some((w) => n.toLowerCase().includes(w))))
+      : undefined;
+    const accountId = byLast4?.id ?? rememberedId ?? byName?.id;
     return { key, ...(info?.last4 ? { last4: info.last4 } : {}), rows: result.rows.filter((r) => r.accountKey === key).length, ...(accountId ? { accountId } : {}) };
   });
 }

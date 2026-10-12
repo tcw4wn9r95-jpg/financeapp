@@ -114,6 +114,7 @@ Settings → Face ID → enter the passphrase once → **Turn on Face ID**. From
    | Neobank export | CSV |
    | Bank statement | CAMT.053 XML |
    | Bank or card export | OFX / QFX |
+   | Flexible savings (fund) export | CSV (no balances: the report asks for today's balance once) |
    | Any other export | CSV |
 
    The app detects the format and proposes the account for each part of the file, by IBAN or card number. A file can hold several products (current account, savings pocket); choose the account for each, or "Do not import". Then press **Import** and read the report: new rows, duplicates ignored, rows skipped and why, transfers paired, card statements linked.
