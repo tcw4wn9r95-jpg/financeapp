@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { detectAndParse } from './detect';
-import { subAccounts } from './plan';
-import { fundDate, parseSavingsFund, SAVINGS_FUND_KEY } from './savingsFund';
-import type { Account } from '../types';
+import { detectAndParse } from './domain/import/detect';
+import { subAccounts } from './domain/import/plan';
+import { fundDate, parseSavingsFund, SAVINGS_FUND_KEY } from './domain/import/savingsFund';
+import type { Account } from './domain/types';
 
 const text = readFileSync(join(process.cwd(), 'fixtures/import/flexible-savings-sample.csv'), 'utf8');
 
