@@ -1,12 +1,12 @@
-# CasaresSan Finances
+# Finances
 
-A private, local-first household finance app for a Luxembourg household. It runs entirely in the browser and is hosted as a static site on GitHub Pages. There is no server, account or tracking. Data is stored in IndexedDB, encrypted with AES-GCM under a key derived from your passphrase. It also works offline as an installable PWA.
+A private, local-first household finance app for a household. It runs entirely in the browser and is hosted as a static site on GitHub Pages. There is no server, account or tracking. Data is stored in IndexedDB, encrypted with AES-GCM under a key derived from your passphrase. It also works offline as an installable PWA.
 
 **Status: milestones M1 to M5 done.**
 
 - **M1, Foundations and budget:** encrypted storage, backup and restore; accounts, categories and manual entry; a monthly budget with defaults, month overrides and rollover; dashboard v0.
 - **M2, Import and reconciliation:**
-  - statement import from Spuerkeess PDFs, Worldline credit-card PDFs, Revolut CSV, CAMT.053, OFX/QFX and any CSV through a saved column mapping;
+  - statement import from  PDFs, Worldline credit-card PDFs, Revolut CSV, CAMT.053, OFX/QFX and any CSV through a saved column mapping;
   - deduplication and an import report;
   - automatic pairing of transfers between your accounts;
   - card statements linked to their settlement debit;
