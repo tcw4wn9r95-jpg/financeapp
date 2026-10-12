@@ -78,6 +78,9 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
   const [repaymentPick, setRepaymentPick] = useState('');
   const guessedRepayment = categories.find((c) => !c.isIncome && /loan|pr[eê]t|cr[ée]dit|kredit/i.test(c.name))?.id ?? '';
   const [all, setAll] = useState(true);
+  const [showSimilar, setShowSimilar] = useState(false);
+  // Similar rows the user unticked in the list: they are left in the inbox.
+  const [excluded, setExcluded] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [splitting, setSplitting] = useState(false);
   const others = useMemo(() => similar(tx, transactions), [tx, transactions]);
@@ -94,7 +97,8 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
     isRepayment && decoded?.kind === 'transfer'
       ? repaymentCategory ? { ...decoded, categoryId: repaymentCategory } : undefined
       : decoded?.kind === 'category' && event && subBudget ? { ...decoded, subBudget } : decoded;
-  const bulk = all && others.length > 0 && choice && choice.kind !== 'transfer';
+  const picked = others.filter((o) => !excluded.has(o.id));
+  const bulk = all && picked.length > 0 && choice && choice.kind !== 'transfer';
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -102,7 +106,7 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
     setBusy(true);
     try {
       const view = ledgerView(vault);
-      const targets = bulk ? [tx, ...others] : [tx];
+      const targets = bulk ? [tx, ...picked] : [tx];
       const changes = mergeChanges(...targets.map((x) => classify(x, choice, view, systemClock)));
       await applyUserChanges(vault, changes);
       notify(targets.length > 1 ? t('inbox.doneMany', { n: targets.length }) : t('inbox.done'));
@@ -144,12 +148,43 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
         <button className="button button-primary" disabled={!choice || busy}>{t('inbox.apply')}</button>
         <button type="button" className="button button-quiet" onClick={() => setSplitting(true)} disabled={busy}>{t('inbox.split')}</button>
         {others.length > 0 && (
-          <label className="check check-inline">
-            <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} />
-            {t('inbox.alsoSimilar', { n: others.length })}
-          </label>
+          <span className="similar-toggle">
+            <label className="check check-inline">
+              <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} />
+              {picked.length === 1 ? t('inbox.alsoSimilarOne') : t('inbox.alsoSimilar', { n: picked.length })}
+            </label>
+            <button type="button" className="link-button" aria-expanded={showSimilar} aria-controls={`${selectId}-similar`} onClick={() => setShowSimilar(!showSimilar)}>
+              {showSimilar ? t('inbox.hideSimilar') : t('inbox.showSimilar')}
+            </button>
+          </span>
         )}
       </form>
+      {showSimilar && others.length > 0 && (
+        <ul id={`${selectId}-similar`} className="similar-list" aria-label={t('inbox.similarList')}>
+          {others.map((o) => (
+            <li key={o.id}>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={all && !excluded.has(o.id)}
+                  disabled={!all}
+                  onChange={(e) => {
+                    const next = new Set(excluded);
+                    if (e.target.checked) next.delete(o.id);
+                    else next.add(o.id);
+                    setExcluded(next);
+                  }}
+                />
+                <span className="similar-main">
+                  <span className="similar-desc">{o.descriptionRaw}</span>
+                  <span className="muted">{formatDate(o.date)} · {accounts.find((a) => a.id === o.accountId)?.name ?? '?'}</span>
+                </span>
+                <Money cents={o.amount} plusSign />
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
       {isRepayment && <p id={`${selectId}-cat-hint`} className="hint">{t('inbox.repaymentHint', { name: target!.name })}</p>}
       {splitting && <SplitEditor tx={tx} onClose={() => setSplitting(false)} onDone={onDone} />}
     </>
