@@ -88,7 +88,10 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
   const target = decoded?.kind === 'transfer' ? accounts.find((a) => a.id === decoded.accountId) : undefined;
   // Paying an off-budget loan from a budget account: ask which budget category it counts in.
   const isRepayment = !!target && target.type === 'loan' && tx.amount < 0 && accounts.find((a) => a.id === tx.accountId)?.type !== 'loan';
-  const repaymentCategory = repaymentPick || target?.categoryId || guessedRepayment;
+  // A loan with its own budget category (D-48) needs no choice: the repayment counts there.
+  const ownCategory = target?.categoryId && categories.some((c) => c.id === target.categoryId) ? target.categoryId : '';
+  const needsPick = isRepayment && !ownCategory;
+  const repaymentCategory = ownCategory || repaymentPick || guessedRepayment;
   const setRepaymentCategory = setRepaymentPick;
   const events = useStore('events');
   const event = decoded?.kind === 'category' ? events.find((e) => e.categoryId === decoded.categoryId && e.subBudgets.length > 0) : undefined;
@@ -127,7 +130,7 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
         <select id={selectId} value={value} onChange={(e) => setValue(e.target.value)}>
           <TargetOptions tx={tx} categories={categories} accounts={accounts} />
         </select>
-        {isRepayment && (
+        {needsPick && (
           <>
             <label htmlFor={`${selectId}-cat`} className="visually-hidden">{t('inbox.repaymentCategory')}</label>
             <select id={`${selectId}-cat`} value={repaymentCategory} onChange={(e) => setRepaymentCategory(e.target.value)} aria-describedby={`${selectId}-cat-hint`}>
@@ -185,7 +188,10 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
           ))}
         </ul>
       )}
-      {isRepayment && <p id={`${selectId}-cat-hint`} className="hint">{t('inbox.repaymentHint', { name: target!.name })}</p>}
+      {needsPick && <p id={`${selectId}-cat-hint`} className="hint">{t('inbox.repaymentHint', { name: target!.name })}</p>}
+      {isRepayment && ownCategory && (
+        <p className="hint">{t('inbox.repaymentCounts', { category: categories.find((c) => c.id === ownCategory)?.name ?? '?' })}</p>
+      )}
       {splitting && <SplitEditor tx={tx} onClose={() => setSplitting(false)} onDone={onDone} />}
     </>
   );

@@ -511,6 +511,7 @@ export const en = {
   'inbox.showMore': 'Show more ({n} left)',
   'inbox.subBudget': 'Sub-budget (optional)',
   'inbox.repaymentCategory': 'Budget category for this repayment',
+  'inbox.repaymentCounts': 'Counts in {category}, the loan’s own budget line.',
   'inbox.repaymentHint': 'The payment counts in this budget category, and the balance of {name} goes down by the same amount.',
   'inbox.repaymentOf': 'Repayment of {name}',
   'inbox.splitTitle': 'Split',
