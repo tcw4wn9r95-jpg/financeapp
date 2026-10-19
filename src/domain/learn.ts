@@ -284,9 +284,9 @@ export function examplesFromChanges(ch: Changes, clock: Clock): TrainingExample[
     if (a.decidedBy !== 'user' && !a.reason.startsWith('Accepted:')) continue;
     let target: Target;
     if (a.targetType === 'transfer') {
+      // The paired row, or the account itself when its own statement covers it (D-68).
       const other = txById.get(a.targetId);
-      if (!other) continue;
-      target = { targetType: 'transfer', targetId: other.accountId };
+      target = { targetType: 'transfer', targetId: other ? other.accountId : a.targetId };
     } else {
       target = { targetType: a.targetType, targetId: a.targetId };
     }

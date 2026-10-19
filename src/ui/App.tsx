@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { t, type MessageKey } from '../i18n';
 import { ensureInvestments } from './actions';
+import { cleanUpLedger } from './importActions';
+import { useToast } from './components/Toast';
 import { UpdateBanner } from './components/UpdateBanner';
 import { Icon, type IconName } from './components/Icon';
 import { useSettings, useStore, useVault, useVaultVersion } from './hooks';
@@ -59,8 +61,13 @@ function Shell() {
   useAutoLock();
   const mainRef = useRef<HTMLElement>(null);
   // One-time additions for vaults created before a feature existed.
+  const notify = useToast();
   useEffect(() => {
     void ensureInvestments(vault);
+    // Duplicated transfer sides from before D-68 (and any since) are removed on unlock.
+    void cleanUpLedger(vault).then((n) => {
+      if (n > 0) notify(t('ledger.mirrorsCleaned', { n }));
+    });
   }, [vault]);
 
   // Move focus to the page on navigation so keyboard and screen-reader users land in the content.

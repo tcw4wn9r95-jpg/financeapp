@@ -2,7 +2,8 @@ import { taxCashItems } from './taxParams';
 import { eventPlans } from '../domain/plan';
 import { createContext, useContext, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { computeBudget, type BudgetInput, type BudgetMonth } from '../domain/budget';
-import { compareMonths, todayIso } from '../domain/dates';
+import { compareMonths, currentMonth, todayIso } from '../domain/dates';
+import { allBucketWindows, fillBuckets, type BucketsSummary } from '../domain/buckets';
 import { forecast, type CashItem, type ForecastResult } from '../domain/forecast';
 import type { MonthKey, ScenarioChange, Settings, StoreName, StoreRecords } from '../domain/types';
 import type { Vault } from '../storage/vault';
@@ -32,6 +33,18 @@ export function useSettings(): Settings {
   const vault = useVault();
   useStore('settings');
   return getSettings(vault);
+}
+
+/** Provisions and trips filled from the provisions account's balance this month (D-69). */
+export function useBuckets(): BucketsSummary {
+  const input = useBudgetInput();
+  const settings = useSettings();
+  const provisions = useStore('provisions');
+  const events = useStore('events');
+  return useMemo(() => {
+    const month = currentMonth();
+    return fillBuckets(input, month, settings.provisionsAccountId, allBucketWindows(provisions, events, month));
+  }, [input, settings.provisionsAccountId, provisions, events]);
 }
 
 export function useBudgetInput(): BudgetInput {

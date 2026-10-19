@@ -2,14 +2,12 @@ import { useMemo } from 'react';
 import { accountBalances, invested, isOnBudget } from '../../domain/budget';
 import { compareMonths, currentMonth, formatDate, todayIso } from '../../domain/dates';
 import { eventStatus, provisionStatus } from '../../domain/plan';
-import { formatMoney } from '../../domain/money';
-import { buckets, provisionWindow, tripWindow, unallocatedMoves } from '../../domain/buckets';
 import { LineChart } from '../components/LineChart';
 import { CATEGORY_GROUPS, type CategoryGroup } from '../../domain/types';
 import { monthName, t } from '../../i18n';
 import { Money } from '../components/Money';
 import { ReadyToAssign } from '../components/ReadyToAssign';
-import { useBudgetInput, useBudgetMonth, useDocumentTitle, useForecast, useSettings, useStore } from '../hooks';
+import { useBuckets, useBudgetInput, useBudgetMonth, useDocumentTitle, useForecast, useSettings, useStore } from '../hooks';
 import { href } from '../router';
 import { groupLabel } from '../labels';
 import { Icon } from '../components/Icon';
@@ -33,23 +31,11 @@ export function DashboardPage() {
   const inv = useMemo(() => invested(budgetInput, month), [budgetInput, month]);
   const provisions = useStore('provisions');
   const events = useStore('events');
-  const moveLeft = useMemo(() => {
-    const acc = accounts.find((a) => a.id === settings.provisionsAccountId);
-    if (!acc) return null;
-    // What each provision and open trip still needs to be on plan, this month included (D-66).
-    const windows = [...provisions.map((p) => provisionWindow(p, month)), ...events.filter((e) => e.status !== 'closed').map(tripWindow)];
-    let left = 0;
-    for (const b of buckets(budgetInput, month, acc.id, windows).values()) left += b.toMove;
-    return left > 0 ? { name: acc.name, left } : null;
-  }, [accounts, settings.provisionsAccountId, budgetInput, month, provisions, events]);
-
-  // Moves into the provisions account nobody has allocated yet (D-65).
-  const waiting = useMemo(() => {
-    const acc = accounts.find((a) => a.id === settings.provisionsAccountId);
-    if (!acc) return null;
-    const list = unallocatedMoves(budgetInput, acc.id);
-    return list.length ? { name: acc.name, n: list.length, amount: list.reduce((s, x) => s + x.left, 0) } : null;
-  }, [accounts, settings.provisionsAccountId, budgetInput]);
+  // Provisions and trips filled from the provisions account's balance (D-69).
+  const summary = useBuckets();
+  const bucketView = summary.views;
+  const provAccount = accounts.find((a) => a.id === settings.provisionsAccountId);
+  const moveLeft = provAccount && summary.toMove > 0 ? { name: provAccount.name, left: summary.toMove } : null;
 
   const tripPct = (id: string) => {
     const b = bucketView.get(id);
@@ -82,11 +68,6 @@ export function DashboardPage() {
   const low90 = days90.reduce((lo, d) => (d.balance < lo.balance ? d : lo), days90[0]!);
   const provisionRows = useMemo(() => provisions.map((p) => provisionStatus(p, input, month, todayIso())).sort((a, b) => a.nextDue.localeCompare(b.nextDue)), [provisions, input, month]);
   const eventRows = useMemo(() => events.filter((e) => e.status !== 'closed').map((e) => eventStatus(e, input, month, allocations)), [events, input, month, allocations]);
-  // Real money in each bucket (D-56).
-  const bucketView = useMemo(
-    () => buckets(input, month, settings.provisionsAccountId, [...provisions.map((p) => provisionWindow(p, month)), ...events.map(tripWindow)]),
-    [input, month, settings.provisionsAccountId, provisions, events],
-  );
   const linked = new Set([...provisions.map((p) => p.categoryId), ...events.map((e) => e.categoryId)]);
 
   const funds = categories
@@ -125,13 +106,6 @@ export function DashboardPage() {
             {t('invest.dashboard')}: <strong><Money cents={inv.total} /></strong>{' '}
             <span className="muted">· <Money cents={inv.year} /> {t('invest.thisYear')}</span>
           </span>
-          <Icon name="chevronRight" size={18} />
-        </a>
-      )}
-      {waiting && (
-        <a className="action-row action-row-warn" href={href('plan', { tab: 'provisions' })}>
-          <span aria-hidden="true">⚠</span>
-          <span>{t('allocate.waitingCount', { n: waiting.n, name: waiting.name, amount: formatMoney(waiting.amount) })}</span>
           <Icon name="chevronRight" size={18} />
         </a>
       )}

@@ -146,6 +146,9 @@ function activityByMonth(input: BudgetInput): Map<MonthKey, MonthActivity> {
   }
 
   const txnAccount = new Map<Id, Id>(input.transactions.map((t) => [t.id, t.accountId]));
+  // A transfer can point at the other account itself when that account's own
+  // statement shows the money differently (D-68).
+  for (const a of input.accounts) txnAccount.set(a.id, a.id);
 
   const out = new Map<MonthKey, MonthActivity>();
   const bucket = (month: MonthKey): MonthActivity => {

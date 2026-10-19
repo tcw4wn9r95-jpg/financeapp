@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { budgetForMonth } from './budget';
 import { firstBelow, forecast, recurringTransfers, scheduleItems } from './forecast';
-import { eventPlanParts, eventPlans, provisionsMove, provisionsMoveByMonth, eventStatus, monthlySetAside, nextDue, occurrences, planCloseEvent, provisionSchedule, provisionStatus } from './plan';
+import { amountFor, eventPlanParts, eventPlans, provisionsMove, provisionsMoveByMonth, eventStatus, monthlySetAside, nextDue, occurrences, planCloseEvent, provisionSchedule, provisionStatus } from './plan';
 import { World } from './testkit';
 import type { EventFund, Provision } from './types';
 
@@ -247,5 +247,26 @@ describe('monthly move to the provisions account (D-55)', () => {
     w.transactions.find((t) => t.accountId === flex)!.earmarks = [{ categoryId: 'carIns', amount: eur(100) }, { categoryId: 'trip', amount: eur(30) }];
     expect(provisionsMove(input(), '2026-10', flex)).toMatchObject({ planned: eur(200), moved: eur(130), left: eur(70) });
     expect(provisionsMoveByMonth(input(), '2026-10').get('2026-10')).toBe(eur(200));
+  });
+});
+
+describe('a recurring bill whose amount changes (D-70)', () => {
+  const tax = { amount: 650000, dueDate: '2026-03-31', recurrence: 'FREQ=MONTHLY;INTERVAL=3', startDate: '2026-01-01' };
+  it('each quarter is spread over its own three months, from the bill the new amount applies to', () => {
+    const p = { ...tax, amountChanges: [{ fromDue: '2026-09-30', amount: 457500 }] };
+    expect(amountFor(p, '2026-06-30')).toBe(650000);
+    expect(amountFor(p, '2026-12-31')).toBe(457500);
+    expect(provisionSchedule(p, '2026-01')).toEqual([
+      { from: '2026-01', amount: 216667 },
+      { from: '2026-07', amount: 152500 },
+    ]);
+  });
+  it('a later change back up', () => {
+    const p = { ...tax, amountChanges: [{ fromDue: '2026-09-30', amount: 457500 }, { fromDue: '2027-03-31', amount: 500000 }] };
+    expect(provisionSchedule(p, '2026-01')).toEqual([
+      { from: '2026-01', amount: 216667 },
+      { from: '2026-07', amount: 152500 },
+      { from: '2027-01', amount: 166667 },
+    ]);
   });
 });

@@ -75,25 +75,43 @@ export function monthlySetAside(amount: Cents, funded: Cents, currentMonth: Mont
   return Math.max(0, Math.ceil((amount - funded) / months));
 }
 
+/** The amount of the bill due on `due`: the latest change from that bill or before, else the base amount (D-70). */
+export function amountFor(p: Pick<Provision, 'amount' | 'amountChanges'>, due: IsoDate): Cents {
+  let amount = p.amount;
+  for (const c of [...(p.amountChanges ?? [])].sort((a, b) => a.fromDue.localeCompare(b.fromDue))) if (c.fromDue <= due) amount = c.amount;
+  return amount;
+}
+
 /**
- * The monthly amounts a provision budgets, as dated steps (D-49):
- * - from the start month to the first due month: the target spread evenly;
- * - after that, for a recurring bill, the target spread over one full cycle;
+ * The monthly amounts a provision budgets, as dated steps (D-49, D-70):
+ * - from the start month to the first due month: that bill spread evenly;
+ * - after that, for a recurring bill, each bill spread over its cycle (the
+ *   amount can change from a given bill on);
  * - for a one-off, nothing after the due month.
- * Amounts are rounded up to the cent so the target is always reached.
+ * Amounts are rounded up to the cent so each bill is always reached.
  */
-export function provisionSchedule(p: Pick<Provision, 'amount' | 'dueDate' | 'recurrence' | 'startDate'>, fallbackStart: MonthKey): { from: MonthKey; amount: Cents }[] {
+export function provisionSchedule(p: Pick<Provision, 'amount' | 'dueDate' | 'recurrence' | 'startDate' | 'amountChanges'>, fallbackStart: MonthKey): { from: MonthKey; amount: Cents }[] {
   const start = p.startDate ? monthOf(p.startDate) : fallbackStart;
   const r = parseRecurrence(p.recurrence);
   const firstDue = r ? occurrences(p, `${start}-01`, addMonthsToDate(`${start}-01`, 12 * 50))[0] : p.dueDate;
   if (!firstDue || monthOf(firstDue) < start) return [{ from: start, amount: 0 }];
-  const months = monthDiff(start, monthOf(firstDue)) + 1;
-  const out = [{ from: start, amount: Math.ceil(p.amount / months) }];
-  const after = addMonths(monthOf(firstDue), 1);
-  if (!r) out.push({ from: after, amount: 0 });
-  else {
-    const cycle = Math.ceil(p.amount / periodMonths(r));
-    if (cycle !== out[0]!.amount) out.push({ from: after, amount: cycle });
+  const out = [{ from: start, amount: Math.ceil(amountFor(p, firstDue) / (monthDiff(start, monthOf(firstDue)) + 1)) }];
+  const push = (from: MonthKey, amount: Cents) => {
+    if (out.at(-1)!.amount !== amount) out.push({ from, amount });
+  };
+  if (!r) {
+    out.push({ from: addMonths(monthOf(firstDue), 1), amount: 0 });
+    return out;
+  }
+  // One step per bill until the last amount change, then the same every cycle.
+  const lastChange = [...(p.amountChanges ?? [])].map((c) => c.fromDue).sort().at(-1) ?? firstDue;
+  let due = firstDue;
+  for (let i = 0; i < 600; i++) {
+    const next = occurrences(p, `${addMonths(monthOf(due), 1)}-01`, addMonthsToDate(due, periodMonths(r) + 1))[0];
+    if (!next) break;
+    push(addMonths(monthOf(due), 1), Math.ceil(amountFor(p, next) / periodMonths(r)));
+    due = next;
+    if (due >= lastChange) break;
   }
   return out;
 }

@@ -1,22 +1,21 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { currentMonth, formatDate, monthOf, parseDate, todayIso } from '../../domain/dates';
 import { firstBelow, type ForecastResult } from '../../domain/forecast';
-import { eventPlanParts, eventStatus, formatRecurrence, monthlySetAside, nextDue, parseRecurrence, planCloseEvent, provisionSchedule, provisionStatus, type Recurrence } from '../../domain/plan';
+import { addMonthsToDate, amountFor, occurrences, eventPlanParts, eventStatus, formatRecurrence, monthlySetAside, nextDue, parseRecurrence, planCloseEvent, provisionSchedule, provisionStatus, type Recurrence } from '../../domain/plan';
 import { planPartAmount } from '../../domain/budget';
-import { buckets, provisionWindow, tripWindow, unallocatedMoves } from '../../domain/buckets';
+import { provisionWindow, tripWindow } from '../../domain/buckets';
 import { formatMoney, formatMoneyInput, parseMoney } from '../../domain/money';
 import type { EventFund, Provision, SubBudget, Transaction } from '../../domain/types';
 import { monthName, monthShort, t, type MessageKey } from '../../i18n';
 import { saveSettings, closeEvent, deleteEvent, deleteProvision, saveEvent, saveProvision, setDefaultFrom, defaultStartMonth } from '../actions';
 import { Dialog } from '../components/Dialog';
 import { BucketDialog } from './BucketDialog';
-import { AllocateDialog } from './AllocateDialog';
 import { DateField, MoneyField, SelectField, TextField, useDateInput, useMoneyInput } from '../components/fields';
 import { Icon } from '../components/Icon';
 import { LineChart, type Series } from '../components/LineChart';
 import { Money } from '../components/Money';
 import { useToast } from '../components/Toast';
-import { useBudgetInput, useDocumentTitle, useForecast, useSettings, useStore, useVault } from '../hooks';
+import { useBuckets, useBudgetInput, useDocumentTitle, useForecast, useSettings, useStore, useVault } from '../hooks';
 import { href, useRoute } from '../router';
 
 export const PLAN_TABS: readonly [string, MessageKey][] = [
@@ -158,29 +157,25 @@ function recurrenceLabel(r: string): string {
   return p ? t('plan.rec.custom', { n: p.interval, unit: p.freq === 'YEARLY' ? t('plan.rec.years') : t('plan.rec.months') }) : t('plan.rec.none');
 }
 
-/** This month's move to the savings account that holds provisions and trips (D-55, D-66). */
+/**
+ * The provisions account's balance shared out between provisions and trips,
+ * soonest due first, and what to move so all are covered (D-69).
+ */
 export function ProvisionsMoveCard() {
   const vault = useVault();
   const notify = useToast();
   const settings = useSettings();
-  const input = useBudgetInput();
   const accounts = useStore('accounts');
   const provisions = useStore('provisions');
   const events = useStore('events');
+  const categories = useStore('categories');
+  const summary = useBuckets();
   const savings = accounts.filter((a) => !a.closedAt && a.type !== 'loan' && a.type !== 'card');
   const accountId = settings.provisionsAccountId;
   const account = accounts.find((a) => a.id === accountId);
-  const month = currentMonth();
-  const [allocating, setAllocating] = useState<Transaction | null>(null);
-  // What each provision and open trip still needs to be on plan, this month included.
-  const needs = useMemo(() => {
-    if (!accountId) return [];
-    const named = [...provisions.map((p) => [provisionWindow(p, month), p.name] as const), ...events.filter((e) => e.status !== 'closed').map((e) => [tripWindow(e), e.name] as const)];
-    const views = buckets(input, month, accountId, named.map(([w]) => w));
-    return named.map(([w, name]) => ({ name, id: w.categoryId, amount: views.get(w.categoryId)?.toMove ?? 0 })).filter((x) => x.amount > 0).sort((x, y) => y.amount - x.amount);
-  }, [input, month, accountId, provisions, events]);
-  const total = needs.reduce((s, x) => s + x.amount, 0);
-  const waiting = useMemo(() => (accountId ? unallocatedMoves(input, accountId) : []), [input, accountId]);
+  const names = new Map<string, string>([...provisions.map((p) => [p.categoryId, p.name] as const), ...events.map((e) => [e.categoryId, e.name] as const)]);
+  const short = [...summary.views.values()].filter((v) => v.toMove > 0).sort((x, y) => y.toMove - x.toMove);
+  const freeName = categories.find((c) => c.id === settings.sweepTargetCategoryId)?.name ?? t('move.freeSavings');
   const accountSelect = (
     <SelectField
       label={t('move.account')}
@@ -199,68 +194,87 @@ export function ProvisionsMoveCard() {
         accountSelect
       ) : (
         <>
-          {total > 0 ? (
+          {summary.toMove > 0 ? (
             <p className="move-amount">
               <span className="muted">{t('move.moveTo', { name: account.name })}</span>
-              <strong><Money cents={total} /></strong>
+              <strong><Money cents={summary.toMove} /></strong>
             </p>
           ) : (
-            <p className="move-amount">✓ {t('move.allOnPlan', { month: monthName(month) })}</p>
+            <p className="move-amount">✓ {t('move.allCovered')}</p>
           )}
-          {needs.length > 0 && (
-            <ul className="plain-list move-list">
-              {needs.map((x) => (
-                <li key={x.id} className="split-row"><span>{x.name}</span><Money cents={x.amount} /></li>
-              ))}
-            </ul>
-          )}
-          {waiting.length > 0 && (
-            <div className="waiting">
-              <h3>{t('allocate.waitingTitle')}</h3>
-              <p className="hint">{t('allocate.waitingHint')}</p>
+          <ul className="plain-list move-list">
+            <li className="split-row"><span>{t('move.holds', { name: account.name })}</span><strong><Money cents={summary.balance} /></strong></li>
+            <li className="split-row"><span>{t('move.claimed')}</span><Money cents={summary.claimed} /></li>
+            <li className="split-row"><span>{freeName}</span><Money cents={summary.free} /></li>
+          </ul>
+          {short.length > 0 && (
+            <>
+              <h3 className="move-sub">{t('move.shortBy')}</h3>
               <ul className="plain-list move-list">
-                {waiting.map(({ tx }) => (
-                  <li key={tx.id} className="waiting-row">
-                    <span className="waiting-main">
-                      <Money cents={tx.amount} />
-                      <span className="muted">{formatDate(tx.date)}</span>
-                    </span>
-                    <button type="button" className="button button-small" onClick={() => setAllocating(tx)}>{t('allocate.button')}</button>
-                  </li>
+                {short.map((v) => (
+                  <li key={v.categoryId} className="split-row"><span>{names.get(v.categoryId) ?? '?'}</span><Money cents={v.toMove} /></li>
                 ))}
               </ul>
-            </div>
+            </>
           )}
           <details className="move-settings">
             <summary>{t('move.settings', { name: account.name })}</summary>
             {accountSelect}
-            <p className="hint">{t('move.reconcileHint', { name: account.name })}</p>
+            <p className="hint">{t('move.how', { name: account.name })}</p>
           </details>
         </>
       )}
-      {allocating && <AllocateDialog tx={allocating} onClose={() => setAllocating(null)} />}
     </section>
   );
 }
 
 function Provisions() {
-  const vault = useVault();
-  const notify = useToast();
   const provisions = useStore('provisions');
   const input = useBudgetInput();
   const [editing, setEditing] = useState<Provision | 'new' | null>(null);
   const [viewing, setViewing] = useState<Provision | null>(null);
   const month = currentMonth();
   const today = todayIso();
-  const rows = provisions.map((p) => provisionStatus(p, input, month, today)).sort((a, b) => a.nextDue.localeCompare(b.nextDue));
+  const summary = useBuckets();
+  const all = provisions.map((p) => provisionStatus(p, input, month, today)).sort((a, b) => a.nextDue.localeCompare(b.nextDue));
+  // A one-off bill whose date has passed and that needs nothing more is finished.
+  const finished = (r: (typeof all)[number]) => !parseRecurrence(r.provision.recurrence) && r.nextDue < today && (summary.views.get(r.provision.categoryId)?.claim ?? 0) === 0;
+  const rows = all.filter((r) => !finished(r));
+  const done = all.filter(finished);
   const totalMonthly = rows.reduce((s, r) => s + r.assignedThisMonth, 0);
-  const settings = useSettings();
-  const allEvents = useStore('events');
-  // Real money in each bucket (D-56): moves into the provisions account, less what was paid.
-  const bucketsView = useMemo(
-    () => buckets(input, month, settings.provisionsAccountId, provisions.map((p) => provisionWindow(p, month))),
-    [input, month, settings.provisionsAccountId, provisions, allEvents],
-  );
+
+  const row = (r: (typeof all)[number]) => {
+    const bk = summary.views.get(r.provision.categoryId);
+    const notStarted = !!r.provision.startDate && monthOf(r.provision.startDate) > month;
+    return (
+      <li key={r.provision.id}>
+        <button type="button" className="row-button" onClick={() => setViewing(r.provision)}>
+          <span className="row-main">
+            <span className="row-title">{r.provision.name}</span>
+            <span className="row-sub">
+              <Money cents={amountFor(r.provision, r.nextDue)} /> · {formatDate(r.nextDue)} · {recurrenceLabel(r.provision.recurrence)}
+            </span>
+            {bk && !finished(r) && (
+              <>
+                <span className="row-bar" aria-hidden="true"><span style={{ width: `${bk.percent}%` }} /></span>
+                <span className="row-sub">
+                  {notStarted ? (
+                    t('plan.startsIn', { month: monthName(monthOf(r.provision.startDate!)) })
+                  ) : (
+                    <>
+                      <Money cents={r.assignedThisMonth} /> {t('plan.perMonthShort')}
+                      {bk.toMove > 0 && <> · <strong className="bad">{t('bucket.short')} <Money cents={bk.toMove} /></strong></>}
+                    </>
+                  )}
+                </span>
+              </>
+            )}
+          </span>
+          <span className="row-end"><Money cents={bk?.level ?? 0} className="row-amount" /></span>
+        </button>
+      </li>
+    );
+  };
 
   return (
     <>
@@ -272,7 +286,7 @@ function Provisions() {
           {t('plan.add')}
         </button>
       </div>
-      {rows.length === 0 ? (
+      {all.length === 0 ? (
         <p className="notice">{t('plan.noProvisions')}</p>
       ) : (
         <section className="group" aria-label={t('plan.tab.provisions')}>
@@ -280,40 +294,13 @@ function Provisions() {
             <h2>{t('plan.setAsideMonthly')}</h2>
             <span className="muted"><Money cents={totalMonthly} /></span>
           </div>
-          <ul className="rows">
-            {rows.map((r) => (
-              <li key={r.provision.id}>
-                <button type="button" className="row-button" onClick={() => setViewing(r.provision)}>
-                  <span className="row-main">
-                    <span className="row-title">{r.provision.name}</span>
-                    <span className="row-sub">
-                      <Money cents={r.provision.amount} /> · {formatDate(r.nextDue)} · {recurrenceLabel(r.provision.recurrence)}
-                    </span>
-                    {(() => {
-                      const bk = bucketsView.get(r.provision.categoryId)!;
-                      const notStarted = !!r.provision.startDate && monthOf(r.provision.startDate) > month;
-                      return (
-                        <>
-                          <span className="row-bar" aria-hidden="true"><span style={{ width: `${bk.percent}%` }} /></span>
-                          <span className="row-sub">
-                            {notStarted ? (
-                              t('plan.startsIn', { month: monthName(monthOf(r.provision.startDate!)) })
-                            ) : (
-                              <>
-                                {bk.tracked ? t('bucket.inBucket', { pct: bk.percent }) : t('bucket.budgeted', { pct: bk.percent })} · <Money cents={r.assignedThisMonth} /> {t('plan.perMonthShort')}
-                                {bk.tracked && bk.behind > 0 && <> · <strong className="bad">{t('bucket.behind')} <Money cents={bk.behind} /></strong></>}
-                              </>
-                            )}
-                          </span>
-                        </>
-                      );
-                    })()}
-                  </span>
-                  <span className="row-end"><Money cents={bucketsView.get(r.provision.categoryId)!.level} className="row-amount" /></span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <ul className="rows">{rows.map(row)}</ul>
+          {done.length > 0 && (
+            <details className="finished">
+              <summary>{t('plan.finished', { n: done.length })}</summary>
+              <ul className="rows">{done.map(row)}</ul>
+            </details>
+          )}
         </section>
       )}
       <p className="hint">{t('plan.provisionsHow')}</p>
@@ -336,8 +323,16 @@ function Provisions() {
 function ProvisionDialog({ existing, onClose }: { existing: Provision | undefined; onClose: () => void }) {
   const vault = useVault();
   const notify = useToast();
+  const today = todayIso();
   const [name, setName] = useState(existing?.name ?? '');
-  const amount = useMoneyInput(existing?.amount);
+  // A recurring bill's amount can change from a given bill on (D-70): the field shows the next bill's amount.
+  const isRecurring = !!existing && !!parseRecurrence(existing.recurrence);
+  const upcoming = isRecurring ? occurrences(existing, today, addMonthsToDate(today, 24)).slice(0, 5) : [];
+  const currentAmount = existing ? amountFor(existing, upcoming[0] ?? existing.dueDate) : undefined;
+  const amount = useMoneyInput(currentAmount);
+  const [fromDue, setFromDue] = useState(upcoming[0] ?? '');
+  const [changes, setChanges] = useState(existing?.amountChanges ?? []);
+  const amountChanged = isRecurring && amount.cents !== null && amount.cents !== currentAmount;
   const due = useDateInput(existing ? (existing.startDate ? existing.dueDate : nextDue(existing, todayIso())) : todayIso());
   // Existing provisions without a start date: the month their amounts began, else today.
   const firstDefault = existing
@@ -347,8 +342,11 @@ function ProvisionDialog({ existing, onClose }: { existing: Provision | undefine
   const [recurrence, setRecurrence] = useState(existing?.recurrence ?? '');
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  // The amount typed applies from the chosen bill on; later changes are replaced by it.
+  const nextChanges = amountChanged && fromDue && amount.cents ? [...changes.filter((c) => c.fromDue < fromDue), { fromDue, amount: amount.cents }] : changes;
+  const baseAmount = isRecurring ? existing!.amount : amount.cents;
   const schedule =
-    amount.cents && due.iso && start.iso ? provisionSchedule({ amount: amount.cents, dueDate: due.iso, recurrence, startDate: start.iso }, monthOf(start.iso)) : null;
+    baseAmount && due.iso && start.iso ? provisionSchedule({ amount: baseAmount, dueDate: due.iso, recurrence, startDate: start.iso, amountChanges: nextChanges }, monthOf(start.iso)) : null;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -358,7 +356,7 @@ function ProvisionDialog({ existing, onClose }: { existing: Provision | undefine
     if (!recurrence && start.iso > due.iso) return setError(t('plan.startAfterTarget'));
     setBusy(true);
     try {
-      await saveProvision(vault, { name: name.trim(), amount: amount.cents, dueDate: due.iso, recurrence, startDate: start.iso }, existing);
+      await saveProvision(vault, { name: name.trim(), amount: isRecurring ? existing!.amount : amount.cents, dueDate: due.iso, recurrence, startDate: start.iso, amountChanges: nextChanges }, existing);
       notify(t('plan.saved', { name: name.trim() }));
       onClose();
     } catch {
@@ -373,7 +371,26 @@ function ProvisionDialog({ existing, onClose }: { existing: Provision | undefine
         <TextField label={t('plan.name')} value={name} onChange={(e) => setName(e.target.value)} placeholder={t('plan.provisionExample')} autoFocus />
         <DateField label={t('plan.startDate')} state={start} hint={t('plan.startDateHint')} />
         <DateField label={t('plan.targetDate')} state={due} hint={t('plan.targetDateHint')} />
-        <MoneyField label={t('plan.targetAmount')} state={amount} />
+        <MoneyField label={isRecurring ? t('plan.amountPerBill') : t('plan.targetAmount')} state={amount} />
+        {amountChanged && (
+          <SelectField label={t('plan.appliesFrom')} value={fromDue} onChange={(e) => setFromDue(e.target.value)}>
+            {upcoming.map((d) => <option key={d} value={d}>{formatDate(d)}</option>)}
+          </SelectField>
+        )}
+        {changes.length > 0 && (
+          <ul className="plain-list move-list">
+            <li className="split-row muted"><span>{t('plan.amountFirst', { date: formatDate(existing!.dueDate) })}</span><Money cents={existing!.amount} /></li>
+            {changes.map((c) => (
+              <li key={c.fromDue} className="split-row">
+                <span>{t('plan.amountFrom', { date: formatDate(c.fromDue) })}</span>
+                <span>
+                  <Money cents={c.amount} />{' '}
+                  <button type="button" className="link-button" aria-label={t('common.delete')} onClick={() => setChanges(changes.filter((x) => x !== c))}>✕</button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
         <SelectField label={t('plan.repeats')} value={recurrence} onChange={(e) => setRecurrence(e.target.value)}>
           {RECURRENCES.map(([v, k]) => <option key={v} value={v}>{t(k)}</option>)}
           {!RECURRENCES.some(([v]) => v === recurrence) && <option value={recurrence}>{recurrenceLabel(recurrence)}</option>}
@@ -415,12 +432,7 @@ function Events() {
   const [closing, setClosing] = useState<EventFund | null>(null);
   const [viewing, setViewing] = useState<EventFund | null>(null);
   const month = currentMonth();
-  const settings = useSettings();
-  const allProvisions = useStore('provisions');
-  const bucketsView = useMemo(
-    () => buckets(input, month, settings.provisionsAccountId, events.map(tripWindow)),
-    [input, month, settings.provisionsAccountId, events, allProvisions],
-  );
+  const bucketsView = useBuckets().views;
   const views = useMemo(
     () => events.map((e) => eventStatus(e, input, month, allocations)).sort((a, b) => Number(a.event.status === 'closed') - Number(b.event.status === 'closed') || a.event.targetDate.localeCompare(b.event.targetDate)),
     [events, input, month, allocations],

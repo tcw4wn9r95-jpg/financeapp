@@ -194,6 +194,11 @@ export interface Provision extends BaseRecord {
   startDate?: IsoDate;
   /** RFC 5545 RRULE subset: "FREQ=MONTHLY;INTERVAL=n" or "FREQ=YEARLY;INTERVAL=n". Empty = one-off. */
   recurrence: string;
+  /**
+   * A recurring bill whose amount changes (e.g. tax advances): from the bill
+   * due on `fromDue` on, each bill is `amount` (D-70). Sorted by date.
+   */
+  amountChanges?: { fromDue: IsoDate; amount: Cents }[];
   /** Cached for display; the truth is the linked category's available amount. */
   fundedBalance: Cents;
   monthlyContribution: Cents;

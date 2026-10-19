@@ -1,7 +1,7 @@
 import { BUILT_IN_MAPPINGS, type MappingSpec } from '../domain/import/csv';
 import type { FileContent } from '../domain/import/detect';
 import type { LedgerChanges } from '../domain/import/plan';
-import type { Changes } from '../domain/reconcile';
+import { cleanUpMirrors, type Changes } from '../domain/reconcile';
 import { stamp, systemClock } from '../domain/ledger';
 import type { BankMapping, Id } from '../domain/types';
 import { pdfToLines, type PdfJsLike } from '../infra/pdf';
@@ -98,6 +98,7 @@ export async function applyImport(vault: Vault, ch: LedgerChanges): Promise<void
     { type: 'put', store: 'importBatches', record: ch.batch },
   ];
   await vault.write(ops);
+  await cleanUpLedger(vault);
 }
 
 export async function applyChanges(vault: Vault, ch: Changes): Promise<void> {
@@ -113,6 +114,21 @@ export async function applyChanges(vault: Vault, ch: Changes): Promise<void> {
   // A record both deleted and re-put in one batch: the put wins.
   const puts = new Set(ops.filter((o) => o.type === 'put').map((o) => (o.type === 'put' ? `${o.store}:${o.record.id}` : '')));
   await vault.write(ops.filter((o) => o.type === 'put' || !puts.has(`${o.store}:${o.id}`)));
+}
+
+/**
+ * Remove mirrors that duplicate what an account's own statement already shows
+ * (D-68). Runs after every import and when the vault is unlocked.
+ */
+let cleaning: Promise<number> = Promise.resolve(0);
+export function cleanUpLedger(vault: Vault): Promise<number> {
+  // One at a time: two runs computed on the same data would apply the same fix twice.
+  cleaning = cleaning.then(async () => {
+    const { changes, fixed } = cleanUpMirrors(ledgerView(vault), systemClock);
+    if (fixed > 0) await applyChanges(vault, changes);
+    return fixed;
+  }, () => 0);
+  return cleaning;
 }
 
 export function ledgerView(vault: Vault) {

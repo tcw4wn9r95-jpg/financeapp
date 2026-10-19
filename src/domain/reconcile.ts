@@ -96,6 +96,59 @@ export function byRepeats(items: readonly Transaction[]): { items: Transaction[]
   return { items: ordered.flat(), count };
 }
 
+/**
+ * Does `account`'s own imported data cover `date`? Then that statement already
+ * shows the money arriving or leaving (perhaps as one sum for several
+ * transfers), and the app must not invent a row there (D-68). Card statements
+ * do not list their repayments, and loans have no statements: they keep mirrors.
+ */
+export function ownStatementCovers(account: Account, date: string, transactions: readonly Transaction[]): boolean {
+  if (account.type === 'card' || account.type === 'loan') return false;
+  let first: string | undefined;
+  let last: string | undefined;
+  for (const t of transactions) {
+    if (t.accountId !== account.id || t.isMirror || !t.importBatchId) continue;
+    if (first === undefined || t.date < first) first = t.date;
+    if (last === undefined || t.date > last) last = t.date;
+  }
+  return first !== undefined && last !== undefined && date >= first && date <= last;
+}
+
+/**
+ * Mirrors sitting in a period the account's own statements cover are
+ * duplicates (D-68). Each is replaced by the matching real row when one is
+ * still open, or else dropped: the transfer then points at the account itself.
+ */
+export function cleanUpMirrors(view: LedgerView, clock: Clock): { changes: Changes; fixed: number } {
+  const ch = emptyChanges();
+  const allocated = new Set(view.allocations.map((a) => a.transactionId));
+  const used = new Set<Id>();
+  let fixed = 0;
+  for (const m of view.transactions) {
+    if (!m.isMirror || m.status === 'locked') continue;
+    const account = view.accounts.find((a) => a.id === m.accountId);
+    if (!account || !ownStatementCovers(account, m.date, view.transactions)) continue;
+    const real = view.transactions
+      .filter((x) => x.accountId === m.accountId && !x.isMirror && x.amount === m.amount && !allocated.has(x.id) && !used.has(x.id) && x.status !== 'locked' && closeDays(x.date, m.date) <= 7)
+      .sort((a, b) => closeDays(a.date, m.date) - closeDays(b.date, m.date))[0];
+    const pointing = view.allocations.filter((a) => a.targetType === 'transfer' && a.targetId === m.id);
+    for (const a of view.allocations.filter((a) => a.transactionId === m.id)) {
+      ch.deleteAllocations.push(a.id);
+      // The real row takes the mirror's side of the pair.
+      if (real) ch.putAllocations.push({ ...a, id: clock.newId(), transactionId: real.id, updatedAt: clock.now() });
+    }
+    for (const a of pointing) ch.putAllocations.push({ ...a, targetId: real ? real.id : m.accountId, updatedAt: clock.now() });
+    if (real) {
+      used.add(real.id);
+      const { suggestion: _s, ...plain } = real;
+      ch.putTransactions.push({ ...plain, status: 'reconciled', updatedAt: clock.now() });
+    }
+    ch.deleteTransactions.push(m.id);
+    fixed++;
+  }
+  return { changes: ch, fixed };
+}
+
 function closeDays(a: string, b: string): number {
   return Math.abs(Date.parse(a) - Date.parse(b)) / 86_400_000;
 }
@@ -148,6 +201,10 @@ export function classify(t: Transaction, how: Classification, view: LedgerView, 
       }
       // A part moved to another own account: pair it with a matching row there, or create that side.
       const other = transferSide(t, l.accountId, l.amount, view, ch, used, clock, source);
+      if (!other) {
+        ch.putAllocations.push(alloc('transfer', l.accountId, l.amount)); // covered by its own statement (D-68)
+        continue;
+      }
       ch.putAllocations.push(alloc('transfer', other.id, l.amount));
       ch.putAllocations.push(alloc('transfer', t.id, other.amount, other));
     }
@@ -161,6 +218,12 @@ export function classify(t: Transaction, how: Classification, view: LedgerView, 
       .sort((a, b) => closeDays(a.date, t.date) - closeDays(b.date, t.date))
       .find((x) => closeDays(x.date, t.date) <= 7);
     const from = view.accounts.find((a) => a.id === t.accountId);
+    if (!counterpart && ownStatementCovers(target, t.date, view.transactions)) {
+      // The other account's own statement shows this money already (D-68): point at the account.
+      ch.putAllocations.push(how.categoryId ? alloc('category', how.categoryId, t.amount) : alloc('transfer', target.id, t.amount));
+      ch.putTransactions.push(done);
+      return ch;
+    }
     const other = counterpart
       ? (() => {
           const { suggestion: _x, ...p } = counterpart;
@@ -181,7 +244,7 @@ export function classify(t: Transaction, how: Classification, view: LedgerView, 
 }
 
 /** The other side of a transfer of `amount` from `t` to `accountId` (an existing open row, or a new mirror). */
-function transferSide(t: Transaction, accountId: Id, amount: Cents, view: LedgerView, ch: Changes, used: Set<Id>, clock: Clock, source: Transaction['source']): Transaction {
+function transferSide(t: Transaction, accountId: Id, amount: Cents, view: LedgerView, ch: Changes, used: Set<Id>, clock: Clock, source: Transaction['source']): Transaction | undefined {
   if (accountId === t.accountId) throw new ReconcileError('sameAccount');
   const target = view.accounts.find((a) => a.id === accountId);
   if (!target) throw new ReconcileError('unknownAccount');
@@ -191,6 +254,7 @@ function transferSide(t: Transaction, accountId: Id, amount: Cents, view: Ledger
     .sort((a, b) => closeDays(a.date, t.date) - closeDays(b.date, t.date))
     .find((x) => closeDays(x.date, t.date) <= 7);
   const from = view.accounts.find((a) => a.id === t.accountId);
+  if (!counterpart && ownStatementCovers(target, t.date, view.transactions)) return undefined;
   const other = counterpart
     ? (() => {
         const { suggestion: _x, ...p } = counterpart;

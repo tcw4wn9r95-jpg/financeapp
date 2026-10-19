@@ -146,8 +146,9 @@ function useTxLabel(): (tx: Transaction) => string {
       if (allocs.length > 1) return t('tx.split', { n: allocs.length });
       const a = allocs[0]!;
       if (a.targetType === 'transfer') {
+        // The paired row, or the account itself when its own statement covers it (D-68).
         const other = txById.get(a.targetId);
-        const name = other ? accountName.get(other.accountId) ?? '?' : '?';
+        const name = accountName.get(other ? other.accountId : a.targetId) ?? '?';
         return tx.amount < 0 ? t('tx.transferTo', { name }) : t('tx.transferFrom', { name });
       }
       return categoryName.get(a.targetId) ?? '?';

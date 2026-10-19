@@ -434,20 +434,6 @@ export async function deleteAllTransactions(vault: Vault, opts: { forgetLearning
   return count;
 }
 
-/**
- * Allocate a move into the provisions account to provisions and trips
- * (category id → cents). Parts of 0 are dropped; the rest stays savings (D-65).
- * An empty list is kept: it records that the whole move was meant as savings.
- */
-export async function allocateMove(vault: Vault, transactionId: Id, parts: ReadonlyMap<Id, Cents>): Promise<void> {
-  const tx = vault.get('transactions', transactionId);
-  if (!tx) return;
-  const earmarks = [...parts].filter(([, amount]) => amount > 0).map(([categoryId, amount]) => ({ categoryId, amount }));
-  if (earmarks.reduce((s, e) => s + e.amount, 0) > tx.amount) throw new Error('over-allocated');
-  const { earmarkCategoryId: _, earmarks: _old, ...rest } = tx;
-  await vault.put('transactions', { ...rest, earmarks, updatedAt: new Date().toISOString() });
-}
-
 /** Load the anonymised demo household, shifted so its last month is this month. */
 export async function loadDemo(vault: Vault): Promise<void> {
   const mod = await import('../../fixtures/demo-household.json');
@@ -496,7 +482,7 @@ export async function shareFile(filename: string, text: string, title: string): 
 /** Create or update a provision and its budget category (group Provisions). */
 export async function saveProvision(
   vault: Vault,
-  draft: Pick<Provision, 'name' | 'amount' | 'dueDate' | 'recurrence'> & { startDate: IsoDate },
+  draft: Pick<Provision, 'name' | 'amount' | 'dueDate' | 'recurrence' | 'amountChanges'> & { startDate: IsoDate },
   existing?: Provision,
 ): Promise<void> {
   const ops: WriteOp[] = [];
@@ -519,9 +505,12 @@ export async function saveProvision(
   }
   // The budgeted amounts follow from start, target date and target amount (D-49).
   const schedule = provisionSchedule(draft, monthOf(draft.startDate));
+  const { amountChanges, ...rest } = draft;
+  const base = existing ? (({ amountChanges: _c, ...e }) => e)(existing) : (stamp(systemClock, 'manual') as Provision);
   const record: Provision = {
-    ...(existing ?? (stamp(systemClock, 'manual') as Provision)),
-    ...draft,
+    ...base,
+    ...rest,
+    ...(amountChanges?.length ? { amountChanges } : {}),
     categoryId,
     monthlyContribution: schedule[0]!.amount,
     fundedBalance: existing?.fundedBalance ?? 0,

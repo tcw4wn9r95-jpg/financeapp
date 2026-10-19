@@ -2026,3 +2026,12 @@ input[type='date']::-webkit-date-and-time-value {
 .row-static {
   padding: 0.75rem 0.9rem;
 }
+.move-sub {
+  margin: 0.5rem 0 0.15rem;
+  font-size: 1rem;
+}
+.finished summary {
+  cursor: pointer;
+  color: var(--muted);
+  padding: 0.75rem 0.25rem;
+}
