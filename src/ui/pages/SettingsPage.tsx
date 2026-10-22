@@ -13,7 +13,7 @@ import {
   type PlainExport,
 } from '../../storage/backup';
 import { MIN_PASSPHRASE_LENGTH, VaultError } from '../../storage/vault';
-import { cleanUpLedger } from '../importActions';
+import { cleanUpLedger, cleanUpMessage } from '../importActions';
 import { changeBudgetStart, canShareFiles, deleteAllTransactions, download, loadDemo, shareFile, restoreSnapshot, saveMembers, saveSettings } from '../actions';
 import { MoneyField, SelectField, TextField, useMoneyInput } from '../components/fields';
 import { useToast } from '../components/Toast';
@@ -411,7 +411,8 @@ function RestoreSection() {
       notify(ok ? t('restore.done') : t('restore.mismatch'), ok ? 'ok' : 'error');
       // After the check: duplicated transfer sides in the restored data are removed (D-68).
       const fixed = await cleanUpLedger(vault);
-      if (fixed > 0) notify(t('ledger.mirrorsCleaned', { n: fixed }));
+      const msg = cleanUpMessage(fixed);
+      if (msg) notify(msg);
       setPreview(null);
       setFile(null);
     } catch {

@@ -21,7 +21,7 @@ import type { Id, Rule, RuleConditions, Transaction } from '../domain/types';
 import { askClaude, MAX_BATCH } from '../infra/claude';
 import type { Vault, WriteOp } from '../storage/vault';
 import { getSettings, saveSettings } from './actions';
-import { applyChanges } from './importActions';
+import { applyChanges, cleanUpLedger } from './importActions';
 
 /** Writes for the learning layer (M4); the logic lives in /src/domain/learn.ts. */
 
@@ -73,6 +73,7 @@ export async function writeLearn(vault: Vault, r: LearnResult): Promise<void> {
 
 /** Run rules and history over everything in the inbox. */
 export async function learnInbox(vault: Vault): Promise<LearnResult> {
+  await cleanUpLedger(vault); // transfers between own accounts first (D-71)
   const r = learn(inbox(vault.list('transactions')), learnContext(vault), systemClock);
   await writeLearn(vault, r);
   return r;

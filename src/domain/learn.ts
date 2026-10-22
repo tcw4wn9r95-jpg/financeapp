@@ -141,6 +141,46 @@ export function historyMatch(t: Transaction, examples: readonly TrainingExample[
   return { ...best.target, confidence: Math.round(confidence * 100) / 100, count: best.n, of: pool.length };
 }
 
+/**
+ * The few targets most likely for a transaction, best first (D-73): its
+ * suggestion, what this merchant was filed under before, then what is used
+ * most for money going the same way. Shown as one-tap choices in the inbox.
+ */
+export function quickTargets(
+  t: Transaction,
+  examples: readonly TrainingExample[],
+  usable: (target: Target) => boolean,
+  n = 5,
+): Target[] {
+  const out: Target[] = [];
+  const seen = new Set<string>();
+  const add = (x: Target) => {
+    const k = targetKey(x);
+    if (seen.has(k) || out.length >= n || !usable(x)) return;
+    seen.add(k);
+    out.push(x);
+  };
+  if (t.suggestion) add({ targetType: t.suggestion.targetType, targetId: t.suggestion.targetId });
+  const dir = t.amount < 0 ? 'out:' : 'in:';
+  const rank = (pool: readonly TrainingExample[]) => {
+    const votes = new Map<string, { target: Target; n: number; last: string }>();
+    for (const e of pool) {
+      const k = targetKey(e.chosenTarget);
+      const v = votes.get(k) ?? { target: e.chosenTarget, n: 0, last: '' };
+      v.n++;
+      if (e.timestamp > v.last) v.last = e.timestamp;
+      votes.set(k, v);
+    }
+    return [...votes.values()].sort((a, b) => b.n - a.n || b.last.localeCompare(a.last)).map((v) => v.target);
+  };
+  const sameWay = examples.filter((e) => e.amountBucket.startsWith(dir));
+  if (t.merchantNorm) for (const x of rank(sameWay.filter((e) => e.merchantNorm === t.merchantNorm))) add(x);
+  // The most used recently: the last 300 choices for money going the same way.
+  const recent = [...sameWay].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 300);
+  for (const x of rank(recent)) add(x);
+  return out;
+}
+
 // ------------------------------------------------------------- deciding
 
 export interface LearnContext {

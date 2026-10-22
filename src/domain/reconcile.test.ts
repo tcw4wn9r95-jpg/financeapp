@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { budgetForMonth } from './budget';
-import { classify, cleanUpMirrors, ReconcileError, unclassify } from './reconcile';
+import { classify, cleanUpMirrors, fileSuggestedTransfers, pairOpenTransfers, ReconcileError, unclassify } from './reconcile';
 import { testClock, World } from './testkit';
 import type { Allocation, Transaction } from './types';
 
@@ -49,21 +49,24 @@ describe('splitting one payment into categories and accounts (D-51)', () => {
   });
 });
 
-describe('inbox sorted by repeats (D-63)', () => {
-  it('puts the merchant with most open items first, grouped, newest first', async () => {
-    const { byRepeats } = await import('./reconcile');
+describe('inbox sorted by repeats (D-63, D-72)', () => {
+  it('groups the same transaction again (same merchant, same amount), most repeated first, newest first', async () => {
+    const { byRepeats, similar } = await import('./reconcile');
     const m = (id: string, merchant: string, amount: number, date: string): Transaction => ({ ...tx(id, 'a', amount, date), merchantNorm: merchant, descriptionRaw: merchant });
     const items = [
       m('1', 'BAKERY', -500, '2026-09-20'),
-      m('2', 'SUPERMARKET', -4000, '2026-09-01'),
-      m('3', 'SUPERMARKET', -3000, '2026-09-15'),
-      m('4', 'SUPERMARKET', 1200, '2026-09-16'), // a refund: other direction, own group
-      m('5', 'SUPERMARKET', -2000, '2026-09-10'),
-      m('6', '', -100, '2026-09-30'),
+      m('2', 'NETFLIX', -1099, '2026-09-01'),
+      m('3', 'NETFLIX', -1099, '2026-09-15'),
+      m('4', 'SUPERMARKET', -4000, '2026-09-16'), // same shop, other amount: not the same transaction
+      m('5', 'NETFLIX', -1099, '2026-09-10'),
+      m('6', 'SUPERMARKET', -3000, '2026-09-30'),
+      m('7', 'NETFLIX', 1099, '2026-09-11'), // a refund: other direction
     ];
     const r = byRepeats(items);
-    expect(r.items.map((x) => x.id)).toEqual(['3', '5', '2', '6', '1', '4']);
-    expect([r.count.get('3'), r.count.get('4'), r.count.get('6')]).toEqual([3, 1, 1]);
+    expect(r.items.map((x) => x.id)).toEqual(['3', '5', '2', '6', '1', '4', '7']);
+    expect([r.count.get('3'), r.count.get('4'), r.count.get('7')]).toEqual([3, 1, 1]);
+    expect(similar(items[1]!, items).map((x) => x.id).sort()).toEqual(['3', '5']);
+    expect(similar(items[3]!, items)).toEqual([]);
   });
 });
 
@@ -126,5 +129,66 @@ describe('transfers into accounts whose own statements cover them (D-68)', () =>
     expect(changes.putAllocations.find((x) => x.id === 'a1')!.targetId).toBe('f1');
     expect(changes.putAllocations.find((x) => x.transactionId === 'f1')!.targetId).toBe('r1');
     expect(changes.putAllocations.find((x) => x.id === 'a2')!.targetId).toBe('flex');
+  });
+});
+
+describe('transfers between own accounts are picked up in the inbox (D-71)', () => {
+  const row = (id: string, accountId: string, amount: number, date: string, descriptionRaw: string, over: Partial<Transaction> = {}): Transaction => ({
+    ...tx(id, accountId, amount, date), descriptionRaw, merchantNorm: descriptionRaw.toUpperCase(), importBatchId: 'b', ...over,
+  });
+
+  it('a card top-up booked days later is paired by the date written in its text', () => {
+    const w = new World('2026-01');
+    w.account('spk', 'current', 0);
+    w.account('rev', 'current', 0);
+    const spk = row('s', 'spk', -50000, '2026-02-02', 'DEBIT REVOLUT**3501* 29.01');
+    const rev = row('r', 'rev', 50000, '2026-01-29', 'Apple Pay deposit by *7418');
+    const far = row('x', 'rev', 50000, '2026-01-10', 'Apple Pay deposit by *7418');
+    const { changes, paired } = pairOpenTransfers({ accounts: w.accounts, transactions: [spk, rev, far], allocations: [] }, testClock());
+    expect(paired).toBe(1);
+    expect(changes.putAllocations.map((a) => `${a.transactionId}>${a.targetId}`).sort()).toEqual(['r>s', 's>r']);
+  });
+
+  it('links the second side to the first when the first was filed as a transfer to that account', () => {
+    const w = new World('2026-01');
+    w.account('spk', 'current', 0);
+    w.account('rev', 'current', 0);
+    const rev = row('r', 'rev', 50000, '2026-07-30', 'Apple Pay deposit by *7845', { status: 'reconciled' });
+    const loose: Allocation = { id: 'a1', createdAt: '', updatedAt: '', source: 'manual', transactionId: 'r', targetType: 'transfer', targetId: 'spk', amount: 50000, confidence: 1, decidedBy: 'user', reason: '' };
+    const spk = row('s', 'spk', -50000, '2026-07-31', 'INSTANT CREDIT TRANSFER S-NET');
+    const { changes, paired } = pairOpenTransfers({ accounts: w.accounts, transactions: [rev, spk], allocations: [loose] }, testClock());
+    expect(paired).toBe(1);
+    expect(changes.deleteAllocations).toEqual(['a1']);
+    expect(changes.putAllocations.map((a) => `${a.transactionId}>${a.targetId}`).sort()).toEqual(['r>s', 's>r']);
+  });
+
+  it('leaves alone rows without a transfer-like text, too far apart, or already paired elsewhere', () => {
+    const w = new World('2026-01');
+    w.account('a', 'current', 0);
+    w.account('b', 'current', 0);
+    const shop = row('s', 'a', -1359, '2026-05-13', 'Kine Madalena Martins');
+    const refund = row('r', 'b', 1359, '2026-05-14', 'AXA ASSURANCES');
+    const t1 = row('t1', 'a', -30000, '2026-03-01', 'Transfer to savings');
+    const t2 = row('t2', 'b', 30000, '2026-03-09', 'Transfer from current');
+    expect(pairOpenTransfers({ accounts: w.accounts, transactions: [shop, refund, t1, t2], allocations: [] }, testClock()).paired).toBe(0);
+  });
+});
+
+describe('sure transfer suggestions are filed without a tap (D-71)', () => {
+  it('files a transfer named in the text, and a loan payment with its own budget line; leaves unsure ones', () => {
+    const w = new World('2026-01');
+    w.account('rev', 'current', 0);
+    w.account('flex', 'savings', 0);
+    w.accounts.push({ id: 'car', createdAt: '', updatedAt: '', source: 'manual', name: 'Car loan', type: 'loan', institution: '', ibanLast4: '', openingBalance: -500000, categoryId: 'carCat' });
+    const sg = (targetId: string, confidence: number) => ({ targetType: 'transfer' as const, targetId, confidence, decidedBy: 'rule' as const, reason: 'Mentions it' });
+    const a: Transaction = { ...tx('a', 'rev', -30000, '2026-08-15'), status: 'suggested', suggestion: sg('flex', 0.9) };
+    const b: Transaction = { ...tx('b', 'rev', -18888, '2026-08-20'), status: 'suggested', suggestion: sg('car', 0.9) };
+    const c: Transaction = { ...tx('c', 'rev', -1000, '2026-08-21'), status: 'suggested', suggestion: sg('flex', 0.6) };
+    const { changes, filed } = fileSuggestedTransfers({ accounts: w.accounts, transactions: [a, b, c], allocations: [] }, testClock());
+    expect(filed).toBe(2);
+    const of = (id: string) => changes.putAllocations.filter((x) => x.transactionId === id).map((x) => `${x.targetType}:${x.targetId}`);
+    expect(of('a')).toHaveLength(1);
+    expect(of('b')).toEqual(['category:carCat']);
+    expect(of('c')).toEqual([]);
   });
 });

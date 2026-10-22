@@ -14,6 +14,7 @@ import {
   historyMatch,
   learn,
   learnOnImport,
+  quickTargets,
   matchRule,
   readAiAnswers,
   redact,
@@ -270,5 +271,23 @@ describe('the monthly provisions move is recognised (D-55)', () => {
     const out = learn([tx('Transfer to my other account', -350.4, { date: '2026-03-02' })], c, testClock());
     expect(out.transactions[0]!.suggestion).toMatchObject({ targetType: 'transfer', targetId: 'sav', decidedBy: 'rule' });
     expect(learn([tx('Transfer', -500, { date: '2026-03-02' })], c, testClock()).suggested).toBe(0);
+  });
+});
+
+describe('one-tap choices in the inbox (D-73)', () => {
+  it('the suggestion first, then this merchant before, then the most used for money going the same way', () => {
+    const examples = [
+      example('AUCHAN', -40, 'groceries', '2026-02-01'),
+      example('AUCHAN', -40, 'groceries', '2026-02-08'),
+      example('AUCHAN', -60, 'home', '2026-02-09'),
+      example('CAFE', -4, 'eatingOut', '2026-02-10'),
+      example('CAFE', -4, 'eatingOut', '2026-02-11'),
+      example('SHELL', -50, 'transport', '2026-02-12'),
+      example('EMPLOYER', 3000, 'salary', '2026-02-25', 'income'),
+    ];
+    const t = tx('AUCHAN', -35, { status: 'suggested', suggestion: { targetType: 'category', targetId: 'fun', confidence: 0.6, decidedBy: 'history', reason: '' } });
+    const ids = quickTargets(t, examples, (x) => x.targetId !== 'transport', 5).map((x) => x.targetId);
+    expect(ids).toEqual(['fun', 'groceries', 'home', 'eatingOut']);
+    expect(quickTargets(tx('NEW EMPLOYER', 100), examples, () => true).map((x) => x.targetId)).toEqual(['salary']);
   });
 });

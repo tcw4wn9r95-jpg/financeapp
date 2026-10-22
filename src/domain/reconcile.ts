@@ -1,6 +1,6 @@
 import { accountBalances } from './budget';
 import { stamp, type Clock } from './ledger';
-import { makeMirror } from './import/plan';
+import { makeMirror, recogniseAccount, transferGap } from './import/plan';
 import type { Account, Allocation, Cents, Id, ImportBatch, Statement, Transaction } from './types';
 
 /**
@@ -65,14 +65,14 @@ export function inbox(transactions: readonly Transaction[]): Transaction[] {
     .sort((a, b) => b.date.localeCompare(a.date) || a.descriptionRaw.localeCompare(b.descriptionRaw));
 }
 
-/** Open inbox items with the same merchant and direction (for "apply to all similar"). */
+/** Open inbox items that are the same transaction again: same merchant and exactly the same amount (D-72). */
 export function similar(t: Transaction, transactions: readonly Transaction[]): Transaction[] {
-  return inbox(transactions).filter((x) => x.id !== t.id && x.merchantNorm === t.merchantNorm && x.merchantNorm !== '' && Math.sign(x.amount) === Math.sign(t.amount));
+  return inbox(transactions).filter((x) => x.id !== t.id && x.merchantNorm === t.merchantNorm && x.merchantNorm !== '' && x.amount === t.amount);
 }
 
-/** Key that groups repeats: same merchant, same direction (as `similar`). */
+/** Key that groups repeats: same merchant and exactly the same amount (as `similar`, D-72). */
 function repeatKey(t: Transaction): string {
-  return t.merchantNorm === '' ? `#${t.id}` : `${Math.sign(t.amount)}:${t.merchantNorm}`;
+  return t.merchantNorm === '' ? `#${t.id}` : `${t.amount}:${t.merchantNorm}`;
 }
 
 /**
@@ -147,6 +147,101 @@ export function cleanUpMirrors(view: LedgerView, clock: Clock): { changes: Chang
     fixed++;
   }
   return { changes: ch, fixed };
+}
+
+/**
+ * Pair inbox rows that are the two sides of one transfer between own accounts
+ * (D-71). The other side is either still open too, or already filed as a
+ * transfer to this row's account without its row (D-68): then it is linked
+ * to this row. Loans are left alone: a repayment also needs a category.
+ */
+export function pairOpenTransfers(view: LedgerView, clock: Clock): { changes: Changes; paired: number } {
+  const ch = emptyChanges();
+  const allocated = new Map<Id, Allocation[]>();
+  for (const a of view.allocations) allocated.set(a.transactionId, [...(allocated.get(a.transactionId) ?? []), a]);
+  const loan = new Set(view.accounts.filter((a) => a.type === 'loan').map((a) => a.id));
+  const used = new Set<Id>();
+  let paired = 0;
+  const open = view.transactions.filter((t) => (t.status === 'new' || t.status === 'suggested') && !t.isMirror && !loan.has(t.accountId) && !allocated.has(t.id));
+  for (const t of [...open].sort((a, b) => a.date.localeCompare(b.date))) {
+    if (used.has(t.id)) continue;
+    const pointed = recogniseAccount(t, view.accounts)?.id;
+    const candidates = view.transactions
+      .filter((c) => !used.has(c.id) && !c.isMirror && !loan.has(c.accountId) && c.status !== 'locked')
+      .map((c) => {
+        const own = allocated.get(c.id) ?? [];
+        // Still open, or filed as a transfer to t's account with no row on t's side.
+        const free = own.length === 0 ? (c.status === 'new' || c.status === 'suggested') : own.length === 1 && own[0]!.targetType === 'transfer' && own[0]!.targetId === t.accountId;
+        const gap = free ? transferGap(t, c, view.accounts) : undefined;
+        return { c, gap, own };
+      })
+      .filter((x) => x.gap !== undefined)
+      .sort((a, b) => Number(b.c.accountId === pointed) - Number(a.c.accountId === pointed) || a.gap! - b.gap!);
+    const best = candidates[0];
+    if (!best) continue;
+    const { c, own } = best;
+    const reason = `Same amount in ${view.accounts.find((a) => a.id === c.accountId)?.name ?? 'another account'}, ${best.gap} day(s) apart`;
+    for (const a of own) ch.deleteAllocations.push(a.id);
+    for (const x of [t, c]) {
+      const { suggestion: _s, ...plain } = x;
+      ch.putTransactions.push({ ...plain, status: x.status === 'locked' ? 'locked' : 'reconciled', updatedAt: clock.now() });
+    }
+    const link = (from: Transaction, to: Transaction): Allocation => ({
+      ...stamp(clock, 'manual'),
+      transactionId: from.id,
+      targetType: 'transfer',
+      targetId: to.id,
+      amount: from.amount,
+      confidence: 1,
+      decidedBy: 'rule',
+      reason,
+    });
+    ch.putAllocations.push(link(t, c), link(c, t));
+    used.add(t.id);
+    used.add(c.id);
+    paired++;
+  }
+  return { changes: ch, paired };
+}
+
+/** The view after a set of changes (for steps that build on each other). */
+export function applyToView(view: LedgerView, ch: Changes): LedgerView {
+  const dT = new Set(ch.deleteTransactions);
+  const dA = new Set(ch.deleteAllocations);
+  const pT = new Map(ch.putTransactions.map((t) => [t.id, t]));
+  const pA = new Map(ch.putAllocations.map((a) => [a.id, a]));
+  return {
+    accounts: view.accounts,
+    transactions: [...view.transactions.filter((t) => !dT.has(t.id) && !pT.has(t.id)), ...pT.values()],
+    allocations: [...view.allocations.filter((a) => !dA.has(a.id) && !pA.has(a.id)), ...pA.values()],
+  };
+}
+
+/**
+ * File the inbox rows whose suggestion is a transfer to an own account the
+ * app is sure about (a rule, the account named in the text, the monthly
+ * provisions move): paired with the other side, or pointing at the account
+ * (D-71). A loan payment is filed only when the loan has its own budget line.
+ */
+export function fileSuggestedTransfers(view: LedgerView, clock: Clock, minConfidence = 0.9): { changes: Changes; filed: number } {
+  let v = view;
+  const all: Changes[] = [];
+  let filed = 0;
+  for (const t of view.transactions) {
+    const sg = t.suggestion;
+    if (t.status !== 'suggested' || !sg || sg.targetType !== 'transfer' || sg.confidence < minConfidence) continue;
+    const target = view.accounts.find((a) => a.id === sg.targetId);
+    if (!target || target.closedAt || target.id === t.accountId) continue;
+    if (target.type === 'loan' && !target.categoryId) continue;
+    const fresh = v.transactions.find((x) => x.id === t.id);
+    if (!fresh || fresh.status !== 'suggested') continue;
+    const how: Classification = target.type === 'loan' && t.amount < 0 ? { kind: 'transfer', accountId: target.id, categoryId: target.categoryId! } : { kind: 'transfer', accountId: target.id };
+    const ch = classify(fresh, how, v, clock, sg.decidedBy === 'history' ? 'history' : 'rule', sg.reason);
+    all.push(ch);
+    v = applyToView(v, ch);
+    filed++;
+  }
+  return { changes: mergeChanges(...all), filed };
 }
 
 function closeDays(a: string, b: string): number {

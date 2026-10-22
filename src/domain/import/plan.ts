@@ -95,6 +95,38 @@ function closeness(a: Pick<Transaction, 'date' | 'valueDate'>, b: Pick<Transacti
   return Math.min(...da.flatMap((x) => db.map((y) => dayDiff(x, y))));
 }
 
+/** A day and month written in the description ("DEBIT REVOLUT**3501* 29.01"): when a card top-up was made, booked days later. */
+export function embeddedDate(t: Pick<Transaction, 'date' | 'descriptionRaw'>): IsoDate | undefined {
+  const m = /(?:^|\D)(\d{2})[./](\d{2})(?:\D*$)/.exec(t.descriptionRaw);
+  if (!m) return undefined;
+  const day = Number(m[1]);
+  const month = Number(m[2]);
+  if (day < 1 || day > 31 || month < 1 || month > 12) return undefined;
+  let year = Number(t.date.slice(0, 4));
+  if (month > Number(t.date.slice(5, 7))) year--; // "29.12" on a January statement
+  const d = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  // Only a date shortly before the booking counts; anything else is not a date.
+  return d <= t.date && dayDiff(d, t.date) <= 10 ? d : undefined;
+}
+
+/** A longer gap is allowed when the text says where the money went (top-ups are booked days later). */
+const PAIR_WINDOW_NAMED_DAYS = 7;
+
+/**
+ * Days between two rows that look like the two sides of one transfer between
+ * own accounts, or undefined. Same amount with opposite signs, different
+ * accounts, a transfer-like text on either side, and within 4 days, or 7 when
+ * either text names the other account; a date written in the text counts too (D-71).
+ */
+export function transferGap(t: Transaction, c: Transaction, accounts: readonly Account[]): number | undefined {
+  if (c.id === t.id || c.accountId === t.accountId || c.amount !== -t.amount || t.amount === 0) return undefined;
+  const pointed = recogniseAccount(t, accounts)?.id === c.accountId || recogniseAccount(c, accounts)?.id === t.accountId;
+  if (!pointed && !looksLikeTransfer(t) && !looksLikeTransfer(c)) return undefined;
+  const dates = (x: Transaction) => [x.date, x.valueDate, embeddedDate(x)].filter(Boolean) as string[];
+  const days = Math.min(...dates(t).flatMap((a) => dates(c).map((b) => dayDiff(a, b))));
+  return days <= (pointed || embeddedDate(t) || embeddedDate(c) ? PAIR_WINDOW_NAMED_DAYS : PAIR_WINDOW_DAYS) ? days : undefined;
+}
+
 const TRANSFER_WORDS =
   /transfer|virement|[üu]berweisung|standing order|ordre permanent|payment from|payment received|paiement re[çc]u|^to |^from |top.?up|revolut|compte|savings|[ée]pargne|in favour of|••\d{4}|own account/i;
 
@@ -327,26 +359,14 @@ export function planImport(input: ImportInput, ledger: Ledger, clock: Clock): Le
   for (const t0 of created) {
     const t = txns.get(t0.id)!;
     if (!isOpen(t)) continue;
-    const candidates = [...txns.values()].filter(
-      (c) =>
-        c.id !== t.id &&
-        c.accountId !== t.accountId &&
-        ownAccounts.has(c.accountId) &&
-        c.amount === -t.amount &&
-        isOpen(c) &&
-        !c.isMirror &&
-        closeness(c, t) <= PAIR_WINDOW_DAYS &&
-        (looksLikeTransfer(t) ||
-          looksLikeTransfer(c) ||
-          recogniseAccount(t, ledger.accounts)?.id === c.accountId ||
-          recogniseAccount(c, ledger.accounts)?.id === t.accountId),
-    );
+    const gap = (c: Transaction) => (ownAccounts.has(c.accountId) && isOpen(c) && !c.isMirror ? transferGap(t, c, ledger.accounts) : undefined);
+    const candidates = [...txns.values()].filter((c) => gap(c) !== undefined);
     if (candidates.length === 0) continue;
     // Prefer the account the text points at, then the closest date.
     const pointed = recogniseAccount(t, ledger.accounts);
-    candidates.sort((a, b) => Number(b.accountId === pointed?.id) - Number(a.accountId === pointed?.id) || closeness(a, t) - closeness(b, t));
+    candidates.sort((a, b) => Number(b.accountId === pointed?.id) - Number(a.accountId === pointed?.id) || gap(a)! - gap(b)!);
     const c = candidates[0]!;
-    const days = closeness(c, t);
+    const days = gap(c)!;
     const reason = `Same amount in ${accountsById.get(c.accountId)?.name ?? 'another account'}, ${days} day(s) apart`;
     for (const x of [t, c]) {
       const { suggestion: _s, ...plain } = x;

@@ -2,13 +2,15 @@ import { useMemo, useState, type FormEvent } from 'react';
 import { formatDate } from '../../domain/dates';
 import { systemClock } from '../../domain/ledger';
 import { formatMoneyInput, parseMoney } from '../../domain/money';
-import { classify, mergeChanges, ReconcileError, similar, type Classification, type SplitLine } from '../../domain/reconcile';
+import { classify, mergeChanges, ReconcileError, similar, unclassify, type Classification, type SplitLine } from '../../domain/reconcile';
+import { quickTargets, type Target } from '../../domain/learn';
 import { CATEGORY_GROUPS, type Account, type Category, type Transaction } from '../../domain/types';
 import { t } from '../../i18n';
-import { ledgerView } from '../importActions';
+import { applyChanges, ledgerView } from '../importActions';
 import { applyUserChanges } from '../learnActions';
 import { useStore, useVault } from '../hooks';
 import { groupLabel } from '../labels';
+import { Dialog } from './Dialog';
 import { Money } from './Money';
 import { useToast } from './Toast';
 
@@ -66,90 +68,160 @@ export function errorMessage(e: unknown): string {
   return t('common.unexpectedError');
 }
 
-/** Choose a category, income or transfer for one transaction; optionally for all similar ones. */
+/** What a target is called on a button: the category, or the account with the direction. */
+function targetLabel(v: string, tx: Pick<Transaction, 'amount'>, categories: readonly Category[], accounts: readonly Account[]): string {
+  const d = decodeTarget(v);
+  if (!d) return '';
+  if (d.kind === 'transfer') {
+    const a = accounts.find((x) => x.id === d.accountId);
+    if (!a) return '?';
+    if (a.type === 'loan' && tx.amount < 0) return t('inbox.repaymentOf', { name: a.name });
+    return tx.amount < 0 ? t('inbox.transferToName', { name: a.name }) : t('inbox.transferFromName', { name: a.name });
+  }
+  return categories.find((c) => c.id === (d as { categoryId: string }).categoryId)?.name ?? '?';
+}
+
+const targetValue = (x: Target): string => (x.targetType === 'transfer' ? `xfer:${x.targetId}` : x.targetType === 'income' ? `inc:${x.targetId}` : `cat:${x.targetId}`);
+
+/**
+ * Choose a category, income or transfer for one transaction; optionally for
+ * all identical ones. The likeliest choices are one tap away; "More" opens a
+ * searchable list (D-73).
+ */
 export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction; onDone?: () => void; initial?: string }) {
   const vault = useVault();
   const notify = useToast();
   const categories = useStore('categories');
   const accounts = useStore('accounts');
   const transactions = useStore('transactions');
+  const examples = useStore('trainingExamples');
   const [value, setValue] = useState(initial);
   // The loan's own category when it has one (D-48), else a category that looks like loans.
   const [repaymentPick, setRepaymentPick] = useState('');
   const guessedRepayment = categories.find((c) => !c.isIncome && /loan|pr[eê]t|cr[ée]dit|kredit/i.test(c.name))?.id ?? '';
   const [all, setAll] = useState(true);
   const [showSimilar, setShowSimilar] = useState(false);
-  // Similar rows the user unticked in the list: they are left in the inbox.
+  // Identical rows the user unticked in the list: they are left in the inbox.
   const [excluded, setExcluded] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [splitting, setSplitting] = useState(false);
+  const [picking, setPicking] = useState(false);
   const others = useMemo(() => similar(tx, transactions), [tx, transactions]);
-  const decoded = decodeTarget(value);
-  const target = decoded?.kind === 'transfer' ? accounts.find((a) => a.id === decoded.accountId) : undefined;
-  // Paying an off-budget loan from a budget account: ask which budget category it counts in.
-  const isRepayment = !!target && target.type === 'loan' && tx.amount < 0 && accounts.find((a) => a.id === tx.accountId)?.type !== 'loan';
-  // A loan with its own budget category (D-48) needs no choice: the repayment counts there.
-  const ownCategory = target?.categoryId && categories.some((c) => c.id === target.categoryId) ? target.categoryId : '';
-  const needsPick = isRepayment && !ownCategory;
-  const repaymentCategory = ownCategory || repaymentPick || guessedRepayment;
-  const setRepaymentCategory = setRepaymentPick;
   const events = useStore('events');
-  const event = decoded?.kind === 'category' ? events.find((e) => e.categoryId === decoded.categoryId && e.subBudgets.length > 0) : undefined;
-  const [subBudget, setSubBudget] = useState('');
-  const choice: Classification | undefined =
-    isRepayment && decoded?.kind === 'transfer'
-      ? repaymentCategory ? { ...decoded, categoryId: repaymentCategory } : undefined
-      : decoded?.kind === 'category' && event && subBudget ? { ...decoded, subBudget } : decoded;
-  const picked = others.filter((o) => !excluded.has(o.id));
-  const bulk = all && picked.length > 0 && choice && choice.kind !== 'transfer';
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (!choice) return;
+  const usable = (x: Target) =>
+    x.targetType === 'transfer'
+      ? accounts.some((a) => a.id === x.targetId && !a.closedAt && a.id !== tx.accountId)
+      : categories.some((c) => c.id === x.targetId && !c.archivedAt && c.isIncome === (x.targetType === 'income'));
+  const quick = useMemo(() => quickTargets(tx, examples, usable).map(targetValue), [tx, examples, categories, accounts]);
+
+  // A loan without its own budget line, or a trip with parts, needs one more choice before applying.
+  const extraFor = (v: string) => {
+    const d = decodeTarget(v);
+    const target = d?.kind === 'transfer' ? accounts.find((a) => a.id === d.accountId) : undefined;
+    const isRepayment = !!target && target.type === 'loan' && tx.amount < 0 && accounts.find((a) => a.id === tx.accountId)?.type !== 'loan';
+    const ownCategory = target?.categoryId && categories.some((c) => c.id === target.categoryId) ? target.categoryId : '';
+    const event = d?.kind === 'category' ? events.find((e) => e.categoryId === d.categoryId && e.subBudgets.length > 0) : undefined;
+    return { d, target, isRepayment, ownCategory, needsPick: isRepayment && !ownCategory, event };
+  };
+  const cur = extraFor(value);
+  const repaymentCategory = cur.ownCategory || repaymentPick || guessedRepayment;
+  const [subBudget, setSubBudget] = useState('');
+  const toChoice = (v: string, sb = ''): Classification | undefined => {
+    const x = extraFor(v);
+    if (x.isRepayment && x.d?.kind === 'transfer') {
+      const cat = x.ownCategory || (v === value ? repaymentPick || guessedRepayment : '');
+      return cat ? { ...x.d, categoryId: cat } : undefined;
+    }
+    return x.d?.kind === 'category' && x.event && sb ? { ...x.d, subBudget: sb } : x.d;
+  };
+  const choice = toChoice(value, subBudget);
+  const picked = others.filter((o) => !excluded.has(o.id));
+
+  async function apply(how: Classification, label: string) {
     setBusy(true);
     try {
       const view = ledgerView(vault);
+      const bulk = all && picked.length > 0 && how.kind !== 'transfer';
       const targets = bulk ? [tx, ...picked] : [tx];
-      const changes = mergeChanges(...targets.map((x) => classify(x, choice, view, systemClock)));
+      const changes = mergeChanges(...targets.map((x) => classify(x, how, view, systemClock)));
       await applyUserChanges(vault, changes);
-      notify(targets.length > 1 ? t('inbox.doneMany', { n: targets.length }) : t('inbox.done'));
+      const ids = targets.map((x) => x.id);
+      const text = targets.length > 1 ? t('inbox.filedMany', { n: targets.length, label }) : t('inbox.filed', { label });
+      notify(text, 'ok', {
+        label: t('inbox.undo'),
+        run: () => void undo(ids),
+      });
       onDone?.();
     } catch (err) {
       notify(errorMessage(err), 'error');
+    } finally {
       setBusy(false);
     }
+  }
+
+  async function undo(ids: string[]) {
+    // Back to the inbox, one at a time so each sees the other's changes.
+    for (const id of ids) {
+      const fresh = vault.get('transactions', id);
+      if (fresh && fresh.status !== 'locked') await applyChanges(vault, unclassify(fresh, ledgerView(vault), systemClock));
+    }
+    notify(t('inbox.undone'));
+  }
+
+  /** One tap: apply at once, unless one more choice is needed. */
+  function choose(v: string) {
+    const x = extraFor(v);
+    setValue(v);
+    if (x.needsPick || x.event) return;
+    const how = toChoice(v);
+    if (how) void apply(how, targetLabel(v, tx, categories, accounts));
+  }
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (choice) void apply(choice, targetLabel(value, tx, categories, accounts));
   }
 
   const selectId = `cls-${tx.id}`;
   return (
     <>
-      <form className="classify" onSubmit={submit}>
-        <label htmlFor={selectId} className="visually-hidden">
-          {t('inbox.classifyLabel', { name: tx.descriptionRaw })}
-        </label>
-        <select id={selectId} value={value} onChange={(e) => setValue(e.target.value)}>
-          <TargetOptions tx={tx} categories={categories} accounts={accounts} />
-        </select>
-        {needsPick && (
-          <>
-            <label htmlFor={`${selectId}-cat`} className="visually-hidden">{t('inbox.repaymentCategory')}</label>
-            <select id={`${selectId}-cat`} value={repaymentCategory} onChange={(e) => setRepaymentCategory(e.target.value)} aria-describedby={`${selectId}-cat-hint`}>
-              <option value="">{t('inbox.repaymentCategory')}</option>
-              {categories.filter((c) => !c.isIncome).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </>
-        )}
-        {event && (
-          <>
-            <label htmlFor={`${selectId}-sb`} className="visually-hidden">{t('inbox.subBudget')}</label>
-            <select id={`${selectId}-sb`} value={subBudget} onChange={(e) => setSubBudget(e.target.value)}>
-              <option value="">{t('inbox.subBudget')}</option>
-              {event.subBudgets.map((b) => <option key={b.name} value={b.name}>{b.name}</option>)}
-            </select>
-          </>
-        )}
-        <button className="button button-primary" disabled={!choice || busy}>{t('inbox.apply')}</button>
-        <button type="button" className="button button-quiet" onClick={() => setSplitting(true)} disabled={busy}>{t('inbox.split')}</button>
+      <div className="quick-targets" role="group" aria-label={t('inbox.classifyLabel', { name: tx.descriptionRaw })}>
+        {quick.map((v) => (
+          <button key={v} type="button" className={`chip ${value === v ? 'chip-on' : ''}`} disabled={busy} onClick={() => choose(v)}>
+            {targetLabel(v, tx, categories, accounts)}
+          </button>
+        ))}
+        <button type="button" className="chip chip-more" disabled={busy} onClick={() => setPicking(true)}>
+          {value && !quick.includes(value) ? targetLabel(value, tx, categories, accounts) : t('inbox.more')}
+        </button>
+      </div>
+      {(cur.needsPick || cur.event) && (
+        <form className="classify" onSubmit={submit}>
+          {cur.needsPick && (
+            <>
+              <label htmlFor={`${selectId}-cat`} className="visually-hidden">{t('inbox.repaymentCategory')}</label>
+              <select id={`${selectId}-cat`} value={repaymentCategory} onChange={(e) => setRepaymentPick(e.target.value)} aria-describedby={`${selectId}-cat-hint`}>
+                <option value="">{t('inbox.repaymentCategory')}</option>
+                {categories.filter((c) => !c.isIncome).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </>
+          )}
+          {cur.event && (
+            <>
+              <label htmlFor={`${selectId}-sb`} className="visually-hidden">{t('inbox.subBudget')}</label>
+              <select id={`${selectId}-sb`} value={subBudget} onChange={(e) => setSubBudget(e.target.value)}>
+                <option value="">{t('inbox.subBudget')}</option>
+                {cur.event.subBudgets.map((b) => <option key={b.name} value={b.name}>{b.name}</option>)}
+              </select>
+            </>
+          )}
+          <button className="button button-primary" disabled={!choice || busy}>{t('inbox.apply')}</button>
+        </form>
+      )}
+      {cur.needsPick && <p id={`${selectId}-cat-hint`} className="hint">{t('inbox.repaymentHint', { name: cur.target!.name })}</p>}
+      <div className="classify-more">
+        <button type="button" className="link-button" onClick={() => setSplitting(true)} disabled={busy}>{t('inbox.split')}</button>
         {others.length > 0 && (
           <span className="similar-toggle">
             <label className="check check-inline">
@@ -161,7 +233,7 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
             </button>
           </span>
         )}
-      </form>
+      </div>
       {showSimilar && others.length > 0 && (
         <ul id={`${selectId}-similar`} className="similar-list" aria-label={t('inbox.similarList')}>
           {others.map((o) => (
@@ -188,12 +260,70 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
           ))}
         </ul>
       )}
-      {needsPick && <p id={`${selectId}-cat-hint`} className="hint">{t('inbox.repaymentHint', { name: target!.name })}</p>}
-      {isRepayment && ownCategory && (
-        <p className="hint">{t('inbox.repaymentCounts', { category: categories.find((c) => c.id === ownCategory)?.name ?? '?' })}</p>
-      )}
       {splitting && <SplitEditor tx={tx} onClose={() => setSplitting(false)} onDone={onDone} />}
+      {picking && (
+        <TargetPicker
+          tx={tx}
+          quick={quick}
+          onClose={() => setPicking(false)}
+          onPick={(v) => {
+            setPicking(false);
+            choose(v);
+          }}
+        />
+      )}
     </>
+  );
+}
+
+/** Every category, income and own account in one searchable list; a tap picks (D-73). */
+function TargetPicker({ tx, quick, onPick, onClose }: { tx: Transaction; quick: readonly string[]; onPick: (v: string) => void; onClose: () => void }) {
+  const categories = useStore('categories');
+  const accounts = useStore('accounts');
+  const [q, setQ] = useState('');
+  const needle = q.trim().toLowerCase();
+  const match = (name: string) => !needle || name.toLowerCase().includes(needle);
+  const expense = categories.filter((c) => !c.isIncome && !c.archivedAt).sort((a, b) => a.sortOrder - b.sortOrder);
+  const income = categories.filter((c) => c.isIncome && !c.archivedAt).sort((a, b) => a.sortOrder - b.sortOrder);
+  const own = accounts.filter((a) => a.id !== tx.accountId && !a.closedAt);
+  const sections: { title: string; items: { v: string; name: string }[] }[] = [];
+  if (!needle && quick.length) sections.push({ title: t('inbox.likely'), items: quick.map((v) => ({ v, name: targetLabel(v, tx, categories, accounts) })) });
+  const incomeSection = { title: t('categories.income'), items: income.filter((c) => match(c.name)).map((c) => ({ v: `inc:${c.id}`, name: c.name })) };
+  if (tx.amount > 0) sections.push(incomeSection);
+  for (const g of CATEGORY_GROUPS) sections.push({ title: groupLabel(g), items: expense.filter((c) => c.groupId === g && match(c.name)).map((c) => ({ v: `cat:${c.id}`, name: c.name })) });
+  if (tx.amount <= 0) sections.push(incomeSection);
+  sections.push({
+    title: tx.amount < 0 ? t('inbox.transferTo') : t('inbox.transferFrom'),
+    items: own.filter((a) => match(a.name)).map((a) => ({ v: `xfer:${a.id}`, name: targetLabel(`xfer:${a.id}`, tx, categories, accounts) })),
+  });
+  const shown = sections.filter((s) => s.items.length > 0);
+  return (
+    <Dialog open title={t('inbox.pickTitle')} onClose={onClose}>
+      <div className="picker-head">
+        <span className="tx-desc">{tx.descriptionRaw}</span>
+        <Money cents={tx.amount} plusSign className="tx-amount" />
+      </div>
+      <input
+        className="picker-search"
+        type="search"
+        inputMode="search"
+        placeholder={t('inbox.searchCategories')}
+        aria-label={t('inbox.searchCategories')}
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+      />
+      {shown.length === 0 && <p className="muted">{t('inbox.noMatch')}</p>}
+      {shown.map((s) => (
+        <section key={s.title} className="picker-section" aria-label={s.title}>
+          <h3>{s.title}</h3>
+          <div className="picker-items">
+            {s.items.map((it) => (
+              <button key={`${s.title}-${it.v}`} type="button" className="picker-item" onClick={() => onPick(it.v)}>{it.name}</button>
+            ))}
+          </div>
+        </section>
+      ))}
+    </Dialog>
   );
 }
 
