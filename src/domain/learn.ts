@@ -672,13 +672,49 @@ export function applyDecisions(items: readonly Transaction[], decisions: Map<Id,
   return out;
 }
 
-/** Automatic decisions still in effect, newest first (the "applied automatically" log). */
+/**
+ * Automatic decisions still in effect, newest first (the "applied automatically" log): categories filed
+ * by a rule, history or Claude, and transfers between own accounts recognised on their own (one row per
+ * transfer, from the side where money leaves; D-83).
+ */
 export function autoApplied(allocations: readonly Allocation[], transactions: readonly Transaction[]): { allocation: Allocation; transaction: Transaction }[] {
   const byId = new Map(transactions.map((t) => [t.id, t]));
   return allocations
     .filter((a) => a.decidedBy === 'rule' || a.decidedBy === 'history' || a.decidedBy === 'ai')
-    .filter((a) => a.targetType !== 'transfer' && !a.reason.startsWith('Accepted:'))
+    .filter((a) => !a.reason.startsWith('Accepted:'))
     .map((a) => ({ allocation: a, transaction: byId.get(a.transactionId)! }))
-    .filter((x) => x.transaction && x.transaction.status === 'reconciled')
+    .filter((x) => x.transaction && x.transaction.status === 'reconciled' && !x.transaction.isMirror)
+    // A transfer shows once, on the row where money leaves (or on a row pointing at an account).
+    .filter((x) => x.allocation.targetType !== 'transfer' || x.transaction.amount < 0 || !byId.has(x.allocation.targetId))
     .sort((a, b) => b.allocation.createdAt.localeCompare(a.allocation.createdAt));
+}
+
+export type LogSort = 'filed' | 'date' | 'confidence' | 'amount' | 'merchant';
+
+/** Search, filter and order the automatic-filing log (D-83). */
+export function filterLog(
+  log: readonly { allocation: Allocation; transaction: Transaction }[],
+  f: { text?: string; by?: Allocation['decidedBy'] | ''; accountId?: Id | ''; targetKey?: string; sort?: LogSort },
+  targetName: (a: Allocation) => string,
+  /** What the "filed under" filter compares: a category id, or the account of a transfer. */
+  targetKeyOf: (a: Allocation) => string = (a) => `${a.targetType === 'income' ? 'category' : a.targetType}:${a.targetId}`,
+): { allocation: Allocation; transaction: Transaction }[] {
+  const needle = (f.text ?? '').trim().toLowerCase();
+  const out = log.filter(({ allocation: a, transaction: t }) => {
+    if (f.by && a.decidedBy !== f.by) return false;
+    if (f.accountId && t.accountId !== f.accountId) return false;
+    if (f.targetKey && targetKeyOf(a) !== f.targetKey) return false;
+    if (needle && !`${t.descriptionRaw} ${t.counterparty} ${targetName(a)} ${a.reason}`.toLowerCase().includes(needle)) return false;
+    return true;
+  });
+  const by = f.sort ?? 'filed';
+  const cmp: Record<LogSort, (x: (typeof out)[number], y: (typeof out)[number]) => number> = {
+    filed: (x, y) => y.allocation.createdAt.localeCompare(x.allocation.createdAt),
+    date: (x, y) => y.transaction.date.localeCompare(x.transaction.date),
+    // Least sure first: the ones worth checking.
+    confidence: (x, y) => x.allocation.confidence - y.allocation.confidence || y.transaction.date.localeCompare(x.transaction.date),
+    amount: (x, y) => Math.abs(y.transaction.amount) - Math.abs(x.transaction.amount),
+    merchant: (x, y) => x.transaction.merchantNorm.localeCompare(y.transaction.merchantNorm) || y.transaction.date.localeCompare(x.transaction.date),
+  };
+  return [...out].sort(cmp[by]);
 }

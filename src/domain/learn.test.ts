@@ -15,6 +15,7 @@ import {
   learn,
   learnOnImport,
   predictTargets,
+  filterLog,
   type FiledRow,
   matchRule,
   readAiAnswers,
@@ -24,7 +25,7 @@ import {
   type LearnContext,
 } from './learn';
 import { testClock } from './testkit';
-import type { Account, Category, Rule, Transaction, TrainingExample } from './types';
+import type { Account, Allocation, Category, Rule, Transaction, TrainingExample } from './types';
 
 const base = { createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', source: 'manual' as const };
 const eur = (n: number) => Math.round(n * 100);
@@ -304,5 +305,32 @@ describe('predicting the category from what was filed before (D-80)', () => {
   });
   it('nothing alike yet: common merchant words are matched to category names', () => {
     expect(predictTargets(tx('LIDL BERTRANGE', -25, { date: '2026-10-02' }), [], cats, () => true)[0]).toEqual({ targetType: 'category', targetId: 'groceries' });
+  });
+});
+
+describe('the automatic-filing log: filters and sorting (D-83)', () => {
+  const mk = (id: string, desc: string, amount: number, date: string, by: 'rule' | 'history' | 'ai', conf: number, target: string, created: string) => {
+    const t = tx(desc, amount, { id, date, status: 'reconciled' });
+    const a = { id: `a-${id}`, createdAt: created, updatedAt: created, source: 'manual', transactionId: id, targetType: 'category', targetId: target, amount, confidence: conf, decidedBy: by, reason: 'r' } as Allocation;
+    return { allocation: a, transaction: t };
+  };
+  const log = [
+    mk('1', 'AUCHAN KIRCHBERG', -60, '2026-09-01', 'rule', 1, 'groceries', '2026-10-01T10:00:00Z'),
+    mk('2', 'AUCHAN GASPERICH', -35, '2026-09-20', 'history', 0.7, 'groceries', '2026-10-01T11:00:00Z'),
+    mk('3', 'PHARMACIE', -18, '2026-09-10', 'ai', 0.6, 'health', '2026-10-01T09:00:00Z'),
+  ];
+  const name = (a: Allocation) => a.targetId;
+  it('searches, filters by who filed it and what it was filed under', () => {
+    expect(filterLog(log, { text: 'auchan' }, name).map((x) => x.transaction.id).sort()).toEqual(['1', '2']);
+    expect(filterLog(log, { by: 'ai' }, name).map((x) => x.transaction.id)).toEqual(['3']);
+    expect(filterLog(log, { targetKey: 'category:health' }, name).map((x) => x.transaction.id)).toEqual(['3']);
+    expect(filterLog(log, { text: 'health' }, name).map((x) => x.transaction.id)).toEqual(['3']); // matches the category name
+  });
+  it('sorts: latest filed, newest transaction, least sure first, biggest first', () => {
+    const ids = (sort: 'filed' | 'date' | 'confidence' | 'amount' | 'merchant') => filterLog(log, { sort }, name).map((x) => x.transaction.id);
+    expect(ids('filed')).toEqual(['2', '1', '3']);
+    expect(ids('date')).toEqual(['2', '3', '1']);
+    expect(ids('confidence')).toEqual(['3', '2', '1']);
+    expect(ids('amount')).toEqual(['1', '2', '3']);
   });
 });

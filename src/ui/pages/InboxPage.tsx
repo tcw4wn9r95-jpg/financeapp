@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { formatDate } from '../../domain/dates';
 import { systemClock } from '../../domain/ledger';
 import { acceptSuggestion, byRepeats, checkStatement, inbox, lockStatement, unclassify, undoImport } from '../../domain/reconcile';
-import type { ImportBatch, Statement, Transaction } from '../../domain/types';
+import type { Allocation, ImportBatch, Statement, Transaction } from '../../domain/types';
 import { t } from '../../i18n';
 import { ClassifyControl, errorMessage, TxSummary } from '../components/Classify';
 import { Money } from '../components/Money';
@@ -10,7 +10,7 @@ import { useToast } from '../components/Toast';
 import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { applyChanges, ledgerView } from '../importActions';
 import { acceptProposal, applyUserChanges, askClaudeForInbox, claudeCandidates, dismissProposal, householdNames, learnInbox } from '../learnActions';
-import { autoApplied, redact, ruleProposals } from '../../domain/learn';
+import { autoApplied, filterLog, redact, ruleProposals, type LogSort } from '../../domain/learn';
 import { ClaudeError } from '../../infra/claude';
 import { Dialog } from '../components/Dialog';
 import { href, navigate, useRoute } from '../router';
@@ -364,9 +364,38 @@ function AutoLog() {
   const categories = useStore('categories');
   const accounts = useStore('accounts');
   const [limit, setLimit] = useState(LOG_PAGE);
+  const [text, setText] = useState('');
+  const [by, setBy] = useState<'' | 'rule' | 'history' | 'ai'>('');
+  const [accountId, setAccountId] = useState('');
+  const [target, setTarget] = useState('');
+  const [sort, setSort] = useState<LogSort>('filed');
   const log = useMemo(() => autoApplied(allocations, transactions), [allocations, transactions]);
+  const txById = useMemo(() => new Map(transactions.map((x) => [x.id, x])), [transactions]);
+  const accountName = (id: string) => accounts.find((x) => x.id === id)?.name ?? '?';
+  // What an automatic filing went to: a category, income, or the account of a transfer.
+  const targetName = (a: Allocation): string => {
+    if (a.targetType !== 'transfer') return categories.find((c) => c.id === a.targetId)?.name ?? '?';
+    const other = txById.get(a.targetId);
+    return t('inbox.transferToName', { name: accountName(other ? other.accountId : a.targetId) });
+  };
+  const targetKeyOf = (a: Allocation): string => {
+    if (a.targetType !== 'transfer') return `category:${a.targetId}`;
+    const other = txById.get(a.targetId);
+    return `transfer:${other ? other.accountId : a.targetId}`;
+  };
+  const targets = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const { allocation: a } of log) seen.set(targetKeyOf(a), targetName(a));
+    return [...seen].sort((x, y) => x[1].localeCompare(y[1]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [log, categories, accounts, transactions]);
+  const shown = useMemo(
+    () => filterLog(log, { text, by, accountId, targetKey: target, sort }, targetName, targetKeyOf),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [log, text, by, accountId, target, sort, categories, accounts, transactions],
+  );
   if (log.length === 0) return null;
-  const by = { rule: t('learn.by.rule'), history: t('learn.by.history'), ai: t('learn.by.ai'), user: '' };
+  const how = { rule: t('learn.by.rule'), history: t('learn.by.history'), ai: t('learn.by.ai'), user: '' };
 
   async function undo(tx: Transaction) {
     try {
@@ -380,15 +409,45 @@ function AutoLog() {
   return (
     <>
       <h2 className="section-title">{t('learn.logTitle')}</h2>
+      <div className="log-tools">
+        <input type="search" inputMode="search" placeholder={t('log.search')} aria-label={t('log.search')} value={text} onChange={(e) => { setText(e.target.value); setLimit(LOG_PAGE); }} />
+        <div className="log-row">
+          <select aria-label={t('log.by')} value={by} onChange={(e) => { setBy(e.target.value as typeof by); setLimit(LOG_PAGE); }}>
+            <option value="">{t('log.byAll')}</option>
+            <option value="rule">{t('learn.by.rule')}</option>
+            <option value="history">{t('learn.by.history')}</option>
+            <option value="ai">{t('learn.by.ai')}</option>
+          </select>
+          <select aria-label={t('tx.account')} value={accountId} onChange={(e) => { setAccountId(e.target.value); setLimit(LOG_PAGE); }}>
+            <option value="">{t('tx.allAccounts')}</option>
+            {accounts.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+          </select>
+        </div>
+        <div className="log-row">
+          <select aria-label={t('log.target')} value={target} onChange={(e) => { setTarget(e.target.value); setLimit(LOG_PAGE); }}>
+            <option value="">{t('log.targetAll')}</option>
+            {targets.map(([k, name]) => <option key={k} value={k}>{name}</option>)}
+          </select>
+          <select aria-label={t('log.sort')} value={sort} onChange={(e) => setSort(e.target.value as LogSort)}>
+            <option value="filed">{t('log.sortFiled')}</option>
+            <option value="date">{t('log.sortDate')}</option>
+            <option value="confidence">{t('log.sortConfidence')}</option>
+            <option value="amount">{t('log.sortAmount')}</option>
+            <option value="merchant">{t('log.sortMerchant')}</option>
+          </select>
+        </div>
+        <p className="summary-line">{t('log.count', { n: shown.length, total: log.length })}</p>
+      </div>
+      {shown.length === 0 && <p className="notice">{t('log.none')}</p>}
       <ul className="rows">
-        {log.slice(0, limit).map(({ allocation: a, transaction: tx }) => (
+        {shown.slice(0, limit).map(({ allocation: a, transaction: tx }) => (
           <li key={a.id} className="row-item">
             <span className="row-main">
               <span className="row-title">{tx.descriptionRaw}</span>
               <span className="row-sub">
-                {formatDate(tx.date)} · {accounts.find((x) => x.id === tx.accountId)?.name ?? '?'} → <strong>{categories.find((c) => c.id === a.targetId)?.name ?? '?'}</strong>
+                {formatDate(tx.date)} · {accountName(tx.accountId)} → <strong>{targetName(a)}</strong>
               </span>
-              <span className="row-sub">{a.reason.startsWith(`${by[a.decidedBy]}:`) ? a.reason : `${by[a.decidedBy]} · ${a.reason}`} · {Math.round(a.confidence * 100)} %</span>
+              <span className="row-sub">{a.reason.startsWith(`${how[a.decidedBy]}:`) ? a.reason : `${how[a.decidedBy]} · ${a.reason}`} · {Math.round(a.confidence * 100)} %</span>
             </span>
             <span className="row-end">
               <Money cents={tx.amount} plusSign />
@@ -397,7 +456,7 @@ function AutoLog() {
           </li>
         ))}
       </ul>
-      {log.length > limit && <button type="button" className="button" onClick={() => setLimit(limit + LOG_PAGE)}>{t('inbox.showMore', { n: log.length - limit })}</button>}
+      {shown.length > limit && <button type="button" className="button" onClick={() => setLimit(limit + LOG_PAGE)}>{t('inbox.showMore', { n: shown.length - limit })}</button>}
     </>
   );
 }

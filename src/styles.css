@@ -789,9 +789,9 @@ td .badge-warn {
 }
 .tx-desc {
   display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Long bank texts wrap instead of being cut off (portrait phones). */
+  overflow-wrap: anywhere;
+  white-space: normal;
   font-weight: 500;
 }
 .tx-meta {
@@ -1310,16 +1310,12 @@ details summary {
 }
 .row-title {
   font-weight: 550;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .row-sub {
   font-size: 0.8rem;
   color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .row-end {
   display: flex;
@@ -1866,9 +1862,7 @@ input[type='date']::-webkit-date-and-time-value {
   font-size: 0.85rem;
 }
 .similar-desc {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 /* Bucket detail (D-64): a move and where it counts. */
@@ -2208,4 +2202,30 @@ input[type='date']::-webkit-date-and-time-value {
 }
 .predict .quick-targets {
   margin-top: 0.5rem;
+}
+
+/* Automatic filings log (D-83) */
+.log-tools {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.log-tools input[type='search'],
+.log-tools select {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 0.9rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font: inherit;
+  background: var(--surface);
+  color: var(--text);
+}
+.log-tools .log-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+.row-item .row-end {
+  align-items: flex-end;
 }
