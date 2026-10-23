@@ -126,26 +126,6 @@ function Review({ items }: { items: Transaction[] }) {
             {sort === 'repeats' && (grouped.count.get(tx.id) ?? 1) > 1 && (
               <p className="repeat-count">{t('inbox.repeats', { n: grouped.count.get(tx.id)! })}</p>
             )}
-            {tx.suggestion && (() => {
-              const sg = tx.suggestion;
-              const target = name.get(sg.targetId) ?? '?';
-              const label =
-                sg.targetType === 'transfer' && isLoan(sg.targetId) ? t('inbox.repaymentOf', { name: target })
-                : sg.targetType === 'transfer' ? (tx.amount < 0 ? t('inbox.transferToName', { name: target }) : t('inbox.transferFromName', { name: target }))
-                : vault.get('categories', sg.targetId)?.name ?? '?';
-              return (
-                <p className="suggestion">
-                  <span>
-                    <strong>{t('inbox.suggested')}</strong> {label}
-                    {' · '}
-                    <span className="muted">{sg.reason !== label ? `${sg.reason} · ` : ''}{Math.round(sg.confidence * 100)}%</span>
-                  </span>
-                  {!(sg.targetType === 'transfer' && needsCategory(sg.targetId)) && (
-                    <button type="button" className="button" onClick={() => void accept([tx])}>{t('inbox.accept')}</button>
-                  )}
-                </p>
-              );
-            })()}
             <ClassifyControl
               tx={tx}
               initial={tx.suggestion?.targetType === 'transfer' && isLoan(tx.suggestion.targetId) ? `xfer:${tx.suggestion.targetId}` : ''}

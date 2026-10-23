@@ -3,12 +3,12 @@ import { formatDate } from '../../domain/dates';
 import { systemClock } from '../../domain/ledger';
 import { formatMoneyInput, parseMoney } from '../../domain/money';
 import { classify, mergeChanges, ReconcileError, similar, unclassify, type Classification, type SplitLine } from '../../domain/reconcile';
-import { quickTargets, type Target } from '../../domain/learn';
+import { predictTargets, type Target } from '../../domain/learn';
 import { CATEGORY_GROUPS, type Account, type Category, type Transaction } from '../../domain/types';
 import { t } from '../../i18n';
 import { applyChanges, ledgerView } from '../importActions';
 import { applyUserChanges } from '../learnActions';
-import { useStore, useVault } from '../hooks';
+import { useFiledHistory, useStore, useVault } from '../hooks';
 import { groupLabel } from '../labels';
 import { Dialog } from './Dialog';
 import { Money } from './Money';
@@ -94,7 +94,7 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
   const categories = useStore('categories');
   const accounts = useStore('accounts');
   const transactions = useStore('transactions');
-  const examples = useStore('trainingExamples');
+  const history = useFiledHistory();
   const [value, setValue] = useState(initial);
   // The loan's own category when it has one (D-48), else a category that looks like loans.
   const [repaymentPick, setRepaymentPick] = useState('');
@@ -113,7 +113,13 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
     x.targetType === 'transfer'
       ? accounts.some((a) => a.id === x.targetId && !a.closedAt && a.id !== tx.accountId)
       : categories.some((c) => c.id === x.targetId && !c.archivedAt && c.isIncome === (x.targetType === 'income'));
-  const quick = useMemo(() => quickTargets(tx, examples, usable).map(targetValue), [tx, examples, categories, accounts]);
+  // The likeliest choices from what was filed before (D-80): the first one is one big tap.
+  const predicted = useMemo(() => predictTargets(tx, history, categories, usable, 4), [tx, history, categories, accounts]);
+  const quick = predicted.map(targetValue);
+  // A big first choice only when it rests on something; otherwise the usual choices, all alike.
+  const best = predicted.sure ? quick[0] : undefined;
+  const alternatives = predicted.sure ? quick.slice(1) : quick;
+  const why = tx.suggestion && best === targetValue({ targetType: tx.suggestion.targetType, targetId: tx.suggestion.targetId }) ? tx.suggestion.reason : '';
 
   // A loan without its own budget line, or a trip with parts, needs one more choice before applying.
   const extraFor = (v: string) => {
@@ -186,15 +192,24 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
   const selectId = `cls-${tx.id}`;
   return (
     <>
-      <div className="quick-targets" role="group" aria-label={t('inbox.classifyLabel', { name: tx.descriptionRaw })}>
-        {quick.map((v) => (
-          <button key={v} type="button" className={`chip ${value === v ? 'chip-on' : ''}`} disabled={busy} onClick={() => choose(v)}>
-            {targetLabel(v, tx, categories, accounts)}
+      <div className="predict" role="group" aria-label={t('inbox.classifyLabel', { name: tx.descriptionRaw })}>
+        {best && (
+          <button type="button" className={`button predict-main ${value === best ? 'predict-picked' : ''}`} disabled={busy} onClick={() => choose(best)}>
+            <span aria-hidden="true">✓ </span>
+            {targetLabel(best, tx, categories, accounts)}
           </button>
-        ))}
-        <button type="button" className="chip chip-more" disabled={busy} onClick={() => setPicking(true)}>
-          {value && !quick.includes(value) ? targetLabel(value, tx, categories, accounts) : t('inbox.more')}
-        </button>
+        )}
+        {why && <p className="predict-why">{why}</p>}
+        <div className="quick-targets">
+          {alternatives.map((v) => (
+            <button key={v} type="button" className={`chip ${value === v ? 'chip-on' : ''}`} disabled={busy} onClick={() => choose(v)}>
+              {targetLabel(v, tx, categories, accounts)}
+            </button>
+          ))}
+          <button type="button" className="chip chip-more" disabled={busy} onClick={() => setPicking(true)}>
+            {value && !quick.includes(value) ? targetLabel(value, tx, categories, accounts) : t('inbox.other')}
+          </button>
+        </div>
       </div>
       {(cur.needsPick || cur.event) && (
         <form className="classify" onSubmit={submit}>

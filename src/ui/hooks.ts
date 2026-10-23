@@ -8,6 +8,7 @@ import type { MonthKey, ScenarioChange, Settings, StoreName, StoreRecords } from
 import type { Vault } from '../storage/vault';
 import { getSettings } from './actions';
 import { buildBudgetInput } from './budgetInput';
+import { filedHistory, type FiledRow } from '../domain/learn';
 import { t } from '../i18n';
 
 export const VaultContext = createContext<Vault | null>(null);
@@ -33,6 +34,13 @@ export function useSettings(): Settings {
   const vault = useVault();
   useStore('settings');
   return getSettings(vault);
+}
+
+/** Transactions already filed under one target: what inbox predictions learn from (D-80). */
+export function useFiledHistory(): FiledRow[] {
+  const transactions = useStore('transactions');
+  const allocations = useStore('allocations');
+  return useMemo(() => filedHistory(transactions, allocations), [transactions, allocations]);
 }
 
 /** Provisions and trips filled from the provisions account's balance this month (D-69). */

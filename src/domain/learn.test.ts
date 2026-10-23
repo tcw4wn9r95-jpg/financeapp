@@ -14,7 +14,8 @@ import {
   historyMatch,
   learn,
   learnOnImport,
-  quickTargets,
+  predictTargets,
+  type FiledRow,
   matchRule,
   readAiAnswers,
   redact,
@@ -274,20 +275,34 @@ describe('the monthly provisions move is recognised (D-55)', () => {
   });
 });
 
-describe('one-tap choices in the inbox (D-73)', () => {
-  it('the suggestion first, then this merchant before, then the most used for money going the same way', () => {
-    const examples = [
-      example('AUCHAN', -40, 'groceries', '2026-02-01'),
-      example('AUCHAN', -40, 'groceries', '2026-02-08'),
-      example('AUCHAN', -60, 'home', '2026-02-09'),
-      example('CAFE', -4, 'eatingOut', '2026-02-10'),
-      example('CAFE', -4, 'eatingOut', '2026-02-11'),
-      example('SHELL', -50, 'transport', '2026-02-12'),
-      example('EMPLOYER', 3000, 'salary', '2026-02-25', 'income'),
-    ];
-    const t = tx('AUCHAN', -35, { status: 'suggested', suggestion: { targetType: 'category', targetId: 'fun', confidence: 0.6, decidedBy: 'history', reason: '' } });
-    const ids = quickTargets(t, examples, (x) => x.targetId !== 'transport', 5).map((x) => x.targetId);
-    expect(ids).toEqual(['fun', 'groceries', 'home', 'eatingOut']);
-    expect(quickTargets(tx('NEW EMPLOYER', 100), examples, () => true).map((x) => x.targetId)).toEqual(['salary']);
+describe('predicting the category from what was filed before (D-80)', () => {
+  const filed = (desc: string, amount: number, targetId: string, date: string, targetType: 'category' | 'income' = 'category'): FiledRow => ({
+    tx: tx(desc, amount, { date, status: 'reconciled' }),
+    target: { targetType, targetId },
+  });
+  const cats = [
+    { id: 'groceries', name: 'Groceries', isIncome: false },
+    { id: 'eatingOut', name: 'Eating out', isIncome: false },
+    { id: 'health', name: 'Health', isIncome: false },
+    { id: 'salary', name: 'Salary', isIncome: true },
+  ];
+  const history = [
+    filed('DEBIT TPV AUCHAN KIRCHBERG', -64, 'groceries', '2026-08-01'),
+    filed('DEBIT TPV AUCHAN CLOCHE D OR', -40, 'groceries', '2026-08-15'),
+    filed('DEBIT TPV CAFE DES ARTISTES', -12, 'eatingOut', '2026-08-20'),
+    filed('PHARMACIE DU CENTRE', -18, 'health', '2026-09-01'),
+    filed('CREDIT TRANSFER FROM EMPLOYER SA SALAIRE', 5000, 'salary', '2026-08-25', 'income'),
+  ];
+  it('a similar merchant text wins, even with another shop name around it', () => {
+    expect(predictTargets(tx('DEBIT TPV AUCHAN GASPERICH', -33, { date: '2026-10-02' }), history, cats, () => true)[0]).toEqual({ targetType: 'category', targetId: 'groceries' });
+  });
+  it('only money going the same way is compared; a sure suggestion comes first', () => {
+    const t = tx('CREDIT TRANSFER FROM EMPLOYER SA SALAIRE', 5100, { date: '2026-10-25' });
+    expect(predictTargets(t, history, cats, () => true)[0]).toEqual({ targetType: 'income', targetId: 'salary' });
+    const sure = { ...t, suggestion: { targetType: 'category' as const, targetId: 'health', confidence: 1, decidedBy: 'rule' as const, reason: '' } };
+    expect(predictTargets(sure, history, cats, () => true)[0]!.targetId).toBe('health');
+  });
+  it('nothing alike yet: common merchant words are matched to category names', () => {
+    expect(predictTargets(tx('LIDL BERTRANGE', -25, { date: '2026-10-02' }), [], cats, () => true)[0]).toEqual({ targetType: 'category', targetId: 'groceries' });
   });
 });

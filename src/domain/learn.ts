@@ -141,44 +141,143 @@ export function historyMatch(t: Transaction, examples: readonly TrainingExample[
   return { ...best.target, confidence: Math.round(confidence * 100) / 100, count: best.n, of: pool.length };
 }
 
+// ----------------------------------------------------------- predicting
+
+/** A transaction the user already filed under one target: what predictions learn from (D-80). */
+export interface FiledRow {
+  tx: Transaction;
+  target: Target;
+}
+
 /**
- * The few targets most likely for a transaction, best first (D-73): its
- * suggestion, what this merchant was filed under before, then what is used
- * most for money going the same way. Shown as one-tap choices in the inbox.
+ * Filed transactions with a single target (a category, income or a transfer
+ * to an own account), from the ledger itself: the full text, exact amount,
+ * account and counterparty are all there to compare with.
  */
-export function quickTargets(
-  t: Transaction,
-  examples: readonly TrainingExample[],
-  usable: (target: Target) => boolean,
-  n = 5,
-): Target[] {
-  const out: Target[] = [];
-  const seen = new Set<string>();
-  const add = (x: Target) => {
-    const k = targetKey(x);
-    if (seen.has(k) || out.length >= n || !usable(x)) return;
-    seen.add(k);
-    out.push(x);
-  };
-  if (t.suggestion) add({ targetType: t.suggestion.targetType, targetId: t.suggestion.targetId });
-  const dir = t.amount < 0 ? 'out:' : 'in:';
-  const rank = (pool: readonly TrainingExample[]) => {
-    const votes = new Map<string, { target: Target; n: number; last: string }>();
-    for (const e of pool) {
-      const k = targetKey(e.chosenTarget);
-      const v = votes.get(k) ?? { target: e.chosenTarget, n: 0, last: '' };
-      v.n++;
-      if (e.timestamp > v.last) v.last = e.timestamp;
-      votes.set(k, v);
+export function filedHistory(transactions: readonly Transaction[], allocations: readonly Allocation[]): FiledRow[] {
+  const byTx = new Map<Id, Allocation[]>();
+  for (const a of allocations) byTx.set(a.transactionId, [...(byTx.get(a.transactionId) ?? []), a]);
+  const txById = new Map(transactions.map((t) => [t.id, t]));
+  const accountIds = new Set(transactions.map((t) => t.accountId));
+  const out: FiledRow[] = [];
+  for (const t of transactions) {
+    if (t.isMirror || (t.status !== 'reconciled' && t.status !== 'locked')) continue;
+    const own = byTx.get(t.id) ?? [];
+    if (own.length !== 1) continue;
+    const a = own[0]!;
+    if (a.targetType === 'transfer') {
+      const other = txById.get(a.targetId);
+      const account = other ? other.accountId : accountIds.has(a.targetId) ? a.targetId : undefined;
+      if (account) out.push({ tx: t, target: { targetType: 'transfer', targetId: account } });
+    } else {
+      out.push({ tx: t, target: { targetType: a.targetType, targetId: a.targetId } });
     }
-    return [...votes.values()].sort((a, b) => b.n - a.n || b.last.localeCompare(a.last)).map((v) => v.target);
-  };
-  const sameWay = examples.filter((e) => e.amountBucket.startsWith(dir));
-  if (t.merchantNorm) for (const x of rank(sameWay.filter((e) => e.merchantNorm === t.merchantNorm))) add(x);
-  // The most used recently: the last 300 choices for money going the same way.
-  const recent = [...sameWay].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 300);
-  for (const x of rank(recent)) add(x);
+  }
   return out;
+}
+
+/** Evidence needed before the first guess is offered as the one-tap choice (tuned on real filings, D-80). */
+export const SURE_SCORE = 3;
+
+/** Words that say nothing about what was bought. */
+const NOISE = new Set(
+  'card carte debit credit payment paiement purchase achat transfer virement instant sepa tpv pos contactless apple pay google from to the and for des les pour par avec with sarl sa sas gmbh ltd luxembourg lux lu eur net s-net ref ordre order standing favour favor'.split(' '),
+);
+
+export function words(text: string): string[] {
+  return [...new Set(text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z]+/).filter((w) => w.length >= 3 && !NOISE.has(w)))];
+}
+
+/** Common merchants and words, for when nothing like it was filed yet: a hint matched against category names. */
+const KEYWORDS: [RegExp, RegExp][] = [
+  [/\b(auchan|cactus|delhaize|aldi|lidl|carrefour|match|colruyt|naturata|supermarch|grocer|alima|pall center)/i, /grocer|food|supermarket|courses|aliment/i],
+  [/\b(restaurant|resto|cafe|coffee|bistro|pizza|burger|mcdonald|starbucks|bakery|boulangerie|brasserie|deliveroo|wedely|ubereats|kebab|sushi)/i, /eating|restaurant|food out|dining|sortie/i],
+  [/\b(shell|aral|total|esso|q8|gulf|fuel|essence|parking|cfl|luxtram|uber|bolt|sncf|bus)/i, /transport|car|fuel|mobility/i],
+  [/\b(pharmac|apotheke|doctor|docteur|medecin|dentist|hospital|hopital|chl|laborato|kine|clinic|optic)/i, /health|sant|medical|doctor/i],
+  [/\b(netflix|spotify|disney|apple\.com|icloud|prime|youtube|claude|openai)/i, /netflix|spotify|subscript|icloud|prime|streaming|claude|apple/i],
+  [/\b(ikea|leroy|hornbach|bauhaus|brico|maisons du monde)/i, /home|house|maison/i],
+  [/\b(zara|h&m|primark|decathlon|zalando|uniqlo|mango)/i, /cloth|shopping|fashion/i],
+  [/\b(easyjet|ryanair|luxair|lufthansa|booking|airbnb|hotel|tap air|klm)/i, /travel|holiday|trip|vacation/i],
+  [/\b(salaire|salary|lohn|gehalt|payroll)/i, /salary|salaire|wage/i],
+];
+
+/**
+ * The likeliest targets for an open transaction, best first (D-80): a sure
+ * suggestion, then transactions filed before that look like it (same or
+ * similar merchant text, counterparty account, exact or close amount, same
+ * account; recent ones count more), then common merchant words matched to
+ * category names. Only the same direction (money in or out) is compared.
+ */
+export function predictTargets(
+  t: Transaction,
+  history: readonly FiledRow[],
+  categories: readonly Pick<Category, 'id' | 'name' | 'isIncome' | 'archivedAt'>[],
+  usable: (target: Target) => boolean,
+  n = 4,
+): Target[] & { sure: boolean; score: number } {
+  const scores = new Map<string, { target: Target; score: number }>();
+  const add = (target: Target, score: number) => {
+    if (score <= 0 || !usable(target)) return;
+    const k = targetKey(target);
+    const v = scores.get(k) ?? { target, score: 0 };
+    v.score += score;
+    scores.set(k, v);
+  };
+  if (t.suggestion) add({ targetType: t.suggestion.targetType, targetId: t.suggestion.targetId }, 50 * t.suggestion.confidence);
+
+  const mine = words(`${t.descriptionRaw} ${t.counterparty}`);
+  const now = Date.parse(t.date);
+  const neighbours: { target: Target; s: number }[] = [];
+  for (const h of history) {
+    const x = h.tx;
+    if (x.id === t.id || Math.sign(x.amount) !== Math.sign(t.amount)) continue;
+    let s = 0;
+    if (t.merchantNorm && x.merchantNorm === t.merchantNorm) s += 6;
+    else {
+      const theirs = words(`${x.descriptionRaw} ${x.counterparty}`);
+      const common = mine.filter((w) => theirs.includes(w)).length;
+      if (common) s += (5 * common) / Math.max(mine.length, theirs.length);
+    }
+    if (t.counterpartyIbanLast4 && x.counterpartyIbanLast4 === t.counterpartyIbanLast4) s += 4;
+    if (s === 0) continue; // nothing in common but direction
+    if (x.amount === t.amount) s += 2;
+    else if (Math.abs(x.amount - t.amount) <= Math.abs(t.amount) * 0.15) s += 0.75;
+    if (x.accountId === t.accountId) s += 0.5;
+    const days = Math.abs(now - Date.parse(x.date)) / 86_400_000;
+    neighbours.push({ target: h.target, s: s * Math.pow(0.5, days / 365) });
+  }
+  neighbours.sort((a, b) => b.s - a.s);
+  for (const nb of neighbours.slice(0, 25)) add(nb.target, nb.s);
+
+  // Nothing alike yet: merchant words → category names.
+  for (const [merchant, name] of KEYWORDS) {
+    if (!merchant.test(`${t.descriptionRaw} ${t.counterparty}`)) continue;
+    for (const c of categories) if (!c.archivedAt && !c.isIncome && t.amount < 0 && name.test(c.name)) add({ targetType: 'category', targetId: c.id }, 1.5);
+    for (const c of categories) if (!c.archivedAt && c.isIncome && t.amount > 0 && name.test(c.name)) add({ targetType: 'income', targetId: c.id }, 1.5);
+  }
+  const evidence = new Set(scores.keys());
+  // Still room: what is used most lately for money going the same way.
+  if (scores.size < n) {
+    const recent = history
+      // Transfers between own accounts are paired on their own (D-71): not a fallback guess.
+      .filter((h) => h.tx.id !== t.id && h.target.targetType !== 'transfer' && Math.sign(h.tx.amount) === Math.sign(t.amount) && h.tx.date <= t.date)
+      .sort((a, b) => b.tx.date.localeCompare(a.tx.date))
+      .slice(0, 200);
+    const freq = new Map<string, { target: Target; n: number }>();
+    for (const h of recent) {
+      const k = targetKey(h.target);
+      const v = freq.get(k) ?? { target: h.target, n: 0 };
+      v.n++;
+      freq.set(k, v);
+    }
+    for (const v of [...freq.values()].sort((a, b) => b.n - a.n)) if (!scores.has(targetKey(v.target))) add(v.target, 0.01 * v.n / Math.max(1, recent.length));
+  }
+  const ranked = [...scores.values()].sort((a, b) => b.score - a.score).slice(0, n);
+  return Object.assign(
+    ranked.map((v) => v.target),
+    // Whether the first guess rests on something (a suggestion, similar filings, a known merchant word).
+    { sure: ranked.length > 0 && evidence.has(targetKey(ranked[0]!.target)) && ranked[0]!.score >= SURE_SCORE, score: ranked[0]?.score ?? 0 },
+  );
 }
 
 // ------------------------------------------------------------- deciding
