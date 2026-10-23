@@ -6,7 +6,7 @@ import { acceptSuggestion } from '../domain/reconcile';
 import type { Transaction } from '../domain/types';
 import { Vault } from '../storage/vault';
 import { applyChanges, ledgerView } from './importActions';
-import { categoryInUse, saveAccount, saveSettings } from './actions';
+import { categoryInUse, saveAccount, saveCategory, saveMonthPlan, saveSettings } from './actions';
 
 async function vault() {
   const v = new Vault({ dbName: `loan-${Math.random()}`, iterations: 1000 });
@@ -59,5 +59,21 @@ describe('loan with a monthly payment (D-48)', () => {
     expect(month).toMatchObject({ assigned: 35000, activity: -35000, available: 0 });
     const loanSide = v.list('transactions').find((t) => t.accountId === loanId)!;
     expect(loanSide.amount).toBe(35000);
+  });
+});
+
+describe('planning a budget line month by month (D-77)', () => {
+  it('only months that differ from the usual amount get their own amount', async () => {
+    const v = await vault();
+    await saveCategory(v, { name: 'Salary', groupId: 'fixed', rolloverMode: 'reset', isIncome: true, monthlyDefault: 500000, fromMonth: '2026-01' });
+    const id = v.list('categories')[0]!.id;
+    const plan = new Map<string, number>(Array.from({ length: 12 }, (_, i) => [`2026-${String(i + 1).padStart(2, '0')}`, 500000]));
+    plan.set('2026-12', 1000000); // 13th month
+    plan.set('2026-07', 750000);
+    expect(await saveMonthPlan(v, id, plan)).toBe(2);
+    expect(v.list('budgetOverrides').map((o) => [o.month, o.amount]).sort()).toEqual([['2026-07', 750000], ['2026-12', 1000000]]);
+    plan.set('2026-07', 500000); // back to the usual amount: its own amount goes
+    await saveMonthPlan(v, id, plan);
+    expect(v.list('budgetOverrides').map((o) => o.month)).toEqual(['2026-12']);
   });
 });

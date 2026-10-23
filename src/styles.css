@@ -2119,3 +2119,53 @@ input[type='date']::-webkit-date-and-time-value {
   font-size: 0.875rem;
   opacity: 0.85;
 }
+
+/* Month-by-month plan (D-77) */
+.plan-year {
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+.plan-all {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+.plan-all input,
+.plan-months input {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  font: inherit;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  background: var(--surface);
+  color: var(--text);
+}
+.plan-months {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem 0.75rem;
+  margin: 0.5rem 0 0.75rem;
+}
+.plan-months li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.875rem;
+}
+.plan-months input {
+  width: 100%;
+}
+.plan-differs label {
+  font-weight: 650;
+}
+.plan-differs input {
+  border-color: var(--ink);
+}
+.income-facts {
+  margin-top: 0.5rem;
+}

@@ -1,10 +1,12 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import type { CategoryMonth } from '../../domain/budget';
-import { compareMonths, currentMonth, isMonthKey } from '../../domain/dates';
-import { CATEGORY_GROUPS, type Category, type MonthKey } from '../../domain/types';
+import type { BudgetMonth, CategoryMonth } from '../../domain/budget';
+import { compareMonths, currentMonth, isMonthKey, monthOf } from '../../domain/dates';
+import { formatMoneyInput, parseMoney } from '../../domain/money';
+import { parseRecurrence } from '../../domain/plan';
+import type { Category, CategoryGroup, MonthKey } from '../../domain/types';
 import { monthName, t } from '../../i18n';
-import { backdateToStart, saveSettings, resetOverride, setDefaultFrom, setOverride } from '../actions';
-import { backdateDefaults, invested } from '../../domain/budget';
+import { backdateToStart, saveMonthPlan, saveSettings, resetOverride, setDefaultFrom, setOverride } from '../actions';
+import { backdateDefaults, defaultFor, invested } from '../../domain/budget';
 import { Dialog } from '../components/Dialog';
 import { MoneyField, TextField, useMoneyInput } from '../components/fields';
 import { Money } from '../components/Money';
@@ -73,10 +75,20 @@ export function BudgetPage() {
   const budget = useBudgetMonth(month);
   const categories = useStore('categories');
   const [editing, setEditing] = useState<Category | null>(null);
+  const [planning, setPlanning] = useState<Category | null>(null);
+  const provisions = useStore('provisions');
+  // A provision whose bill date has passed, or that has not started, with nothing in it this month is not shown (D-76).
+  const finished = (c: Category, m: MonthKey, cm: CategoryMonth | undefined) => {
+    const p = c.groupId === 'provisions' ? provisions.find((x) => x.categoryId === c.id) : undefined;
+    if (!p || !cm) return false;
+    const empty = cm.assigned === 0 && cm.activity === 0 && Math.abs(cm.available) < 100;
+    const expired = !parseRecurrence(p.recurrence) && compareMonths(monthOf(p.dueDate), m) < 0;
+    const notStarted = !!p.startDate && compareMonths(monthOf(p.startDate), m) > 0;
+    return empty && (expired || notStarted);
+  };
   const setMonth = (m: MonthKey) => navigate(`budget/${m}`);
 
   const expense = categories.filter((c) => !c.isIncome && !c.archivedAt);
-  const income = categories.filter((c) => c.isIncome).sort((a, b) => a.sortOrder - b.sortOrder);
 
   return (
     <>
@@ -98,8 +110,9 @@ export function BudgetPage() {
               {t('budget.noCategories')} <a href={href('categories')}>{t('budget.addCategories')}</a>
             </p>
           )}
-          {CATEGORY_GROUPS.map((g) => {
-            const cats = expense.filter((c) => c.groupId === g).sort((a, b) => a.sortOrder - b.sortOrder);
+          <IncomeSection month={month} budget={budget} onPlan={setPlanning} />
+          {BUDGET_ORDER.map((g) => {
+            const cats = expense.filter((c) => c.groupId === g && !finished(c, month, budget.categories.get(c.id))).sort((a, b) => a.sortOrder - b.sortOrder);
             if (cats.length === 0) return null;
             const rows = cats.map((c) => [c, budget.categories.get(c.id)!] as const);
             const available = rows.reduce((s, [, m]) => s + m.available, 0);
@@ -121,48 +134,22 @@ export function BudgetPage() {
             );
           })}
 
-          <section className="card" aria-labelledby="income-h">
-            <h2 id="income-h">{t('budget.incomeTitle')}</h2>
-            <ul className="plain-list">
-              <li className="split-row">
-                <span>{t('budget.incomeReceived')}</span>
-                <Money cents={budget.income} />
-              </li>
-              {budget.heldForNextMonth !== 0 && (
-                <li className="split-row">
-                  <span>{t('budget.heldForNext')}</span>
-                  <Money cents={budget.heldForNextMonth} />
-                </li>
-              )}
-              <li className="split-row">
-                <span>{t('budget.assignedThisMonth')}</span>
-                <Money cents={-budget.assignedTotal} />
-              </li>
-              {budget.returnedFromLastMonth !== 0 && (
-                <li className="split-row">
-                  <span>{t('budget.returned')}</span>
-                  <Money cents={budget.returnedFromLastMonth} plusSign />
-                </li>
-              )}
-              {budget.uncategorised !== 0 && (
-                <li className="split-row">
-                  <span>
-                    {t('budget.uncategorised')} <a href={href('transactions', { filter: 'new', month })}>{t('budget.review')}</a>
-                  </span>
-                  <Money cents={budget.uncategorised} />
-                </li>
-              )}
-            </ul>
-            {income.length > 0 && <p className="hint">{t('budget.incomeHint', { names: income.map((c) => c.name).join(', ') })}</p>}
-            {income.some((c) => c.nextMonthFromDay) && (
-              <p className="hint">{t('budget.incomeNextHint', { names: income.filter((c) => c.nextMonthFromDay).map((c) => c.name).join(', ') })}</p>
-            )}
-          </section>
+
         </>
       )}
       {editing && budget && (
-        <AssignDialog category={editing} month={month} m={budget.categories.get(editing.id)!} onClose={() => setEditing(null)} />
+        <AssignDialog
+          category={editing}
+          month={month}
+          m={budget.categories.get(editing.id)!}
+          onClose={() => setEditing(null)}
+          onPlan={() => {
+            setPlanning(editing);
+            setEditing(null);
+          }}
+        />
       )}
+      {planning && <MonthPlanDialog category={planning} month={month} onClose={() => setPlanning(null)} />}
     </>
   );
 }
@@ -202,7 +189,7 @@ function BudgetRow({ category, m, onEdit }: { category: Category; m: CategoryMon
   );
 }
 
-function AssignDialog({ category, month, m, onClose }: { category: Category; month: MonthKey; m: CategoryMonth; onClose: () => void }) {
+function AssignDialog({ category, month, m, onClose, onPlan }: { category: Category; month: MonthKey; m: CategoryMonth; onClose: () => void; onPlan: () => void }) {
   const vault = useVault();
   const notify = useToast();
   const amount = useMoneyInput(m.assigned);
@@ -262,8 +249,163 @@ function AssignDialog({ category, month, m, onClose }: { category: Category; mon
               {t('budget.resetToDefault')}
             </button>
           )}
+          {category.groupId !== 'provisions' && category.groupId !== 'events' && !auto && (
+            <button type="button" className="button button-quiet" disabled={busy} onClick={onPlan}>
+              {t('budget.planByMonth')}
+            </button>
+          )}
         </div>
       </form>
+    </Dialog>
+  );
+}
+
+/** Budget order (D-76): income first, then fixed, variable, provisions; the rest after. */
+const BUDGET_ORDER: readonly CategoryGroup[] = ['fixed', 'variable', 'provisions', 'events', 'savings', 'investments'];
+
+/** Income on top: what each income line is expected to bring this month and what came in (D-76). */
+function IncomeSection({ month, budget, onPlan }: { month: MonthKey; budget: BudgetMonth; onPlan: (c: Category) => void }) {
+  const categories = useStore('categories');
+  const defaults = useStore('budgetDefaults');
+  const overrides = useStore('budgetOverrides');
+  const income = categories.filter((c) => c.isIncome && !c.archivedAt).sort((a, b) => a.sortOrder - b.sortOrder);
+  const expected = (id: string) => overrides.find((o) => o.categoryId === id && o.month === month)?.amount ?? defaultFor(defaults, id, month)?.monthlyAmount ?? 0;
+  return (
+    <section className="group" aria-labelledby="income-h">
+      <div className="group-head">
+        <h2 id="income-h">{t('budget.incomeTitle')}</h2>
+        <span className="muted">{t('budget.received')} <Money cents={budget.income} /></span>
+      </div>
+      {income.length > 0 && (
+        <ul className="rows">
+          {income.map((c) => {
+            const got = budget.incomeByCategory.get(c.id) ?? 0;
+            const exp = expected(c.id);
+            const special = overrides.some((o) => o.categoryId === c.id && o.month === month);
+            return (
+              <li key={c.id}>
+                <button type="button" className="row-button" onClick={() => onPlan(c)} aria-label={t('budget.planIncome', { name: c.name })}>
+                  <span className="row-main">
+                    <span className="row-title">
+                      {c.name}
+                      {special && <span className="badge">{t('budget.overrideBadge')}</span>}
+                    </span>
+                    <span className="row-sub">
+                      {t('budget.expected')} <Money cents={exp} />
+                      {c.nextMonthFromDay ? <> · {t('budget.forNextShort')}</> : null}
+                    </span>
+                    <span className="row-bar" aria-hidden="true"><span style={{ width: `${exp > 0 ? Math.min(100, Math.round((got / exp) * 100)) : got > 0 ? 100 : 0}%` }} /></span>
+                  </span>
+                  <span className="row-end"><Money cents={got} className="row-amount" /></span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <ul className="plain-list facts income-facts">
+        {budget.heldForNextMonth !== 0 && (
+          <li className="split-row"><span>{t('budget.heldForNext')}</span><Money cents={budget.heldForNextMonth} /></li>
+        )}
+        <li className="split-row"><span>{t('budget.assignedThisMonth')}</span><Money cents={-budget.assignedTotal} /></li>
+        {budget.returnedFromLastMonth !== 0 && (
+          <li className="split-row"><span>{t('budget.returned')}</span><Money cents={budget.returnedFromLastMonth} plusSign /></li>
+        )}
+        {budget.uncategorised !== 0 && (
+          <li className="split-row">
+            <span>{t('budget.uncategorised')} <a href={href('inbox')}>{t('budget.review')}</a></span>
+            <Money cents={budget.uncategorised} />
+          </li>
+        )}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * Optional month-by-month plan for one budget line (D-77). By default every
+ * month has the usual amount; change any month (a 13th-month salary, the
+ * insurance in March) and only that month gets its own amount.
+ */
+function MonthPlanDialog({ category, month, onClose }: { category: Category; month: MonthKey; onClose: () => void }) {
+  const vault = useVault();
+  const notify = useToast();
+  const settings = useSettings();
+  const defaults = useStore('budgetDefaults');
+  const overrides = useStore('budgetOverrides');
+  const [year, setYear] = useState(Number(month.slice(0, 4)));
+  const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`).filter((m) => compareMonths(m, settings.budgetStartMonth) >= 0);
+  const usual = (m: MonthKey) => defaultFor(defaults, category.id, m)?.monthlyAmount ?? 0;
+  const initial = (m: MonthKey) => overrides.find((o) => o.categoryId === category.id && o.month === m)?.amount ?? usual(m);
+  const [texts, setTexts] = useState<Record<string, string>>({});
+  const [all, setAll] = useState('');
+  const [busy, setBusy] = useState(false);
+  const textOf = (m: MonthKey) => texts[m] ?? formatMoneyInput(initial(m));
+  const cents = (m: MonthKey) => parseMoney(textOf(m));
+  const invalid = months.some((m) => {
+    const c = cents(m);
+    return c === null || c < 0;
+  });
+  const total = months.reduce((s, m) => s + Math.max(0, cents(m) ?? 0), 0);
+
+  async function save() {
+    if (invalid) return;
+    setBusy(true);
+    try {
+      const amounts = months.map((m) => cents(m)!);
+      // The same every month: that is the usual amount from the first month on, not twelve exceptions.
+      if (amounts.every((a) => a === amounts[0]) && amounts[0] !== usual(months[0]!)) await setDefaultFrom(vault, category.id, amounts[0]!, months[0]!);
+      const n = await saveMonthPlan(vault, category.id, new Map(months.map((m, i) => [m, amounts[i]!])));
+      notify(n === 1 ? t('budget.planSavedOne', { name: category.name }) : n ? t('budget.planSaved', { name: category.name, n }) : t('budget.planSame', { name: category.name }));
+      onClose();
+    } catch {
+      notify(t('common.unexpectedError'), 'error');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open title={t('budget.planTitle', { name: category.name })} onClose={onClose}>
+      <p className="hint">{category.isIncome ? t('budget.planIncomeHint') : t('budget.planHint')}</p>
+      <div className="row plan-year">
+        <button type="button" className="button button-quiet button-small" aria-label={t('budget.prevYear')} onClick={() => { setTexts({}); setYear(year - 1); }}>‹</button>
+        <strong>{year}</strong>
+        <button type="button" className="button button-quiet button-small" aria-label={t('budget.nextYear')} onClick={() => { setTexts({}); setYear(year + 1); }}>›</button>
+      </div>
+      <div className="plan-all">
+        <input inputMode="decimal" placeholder={t('budget.sameEveryMonth')} aria-label={t('budget.sameEveryMonth')} value={all} onChange={(e) => setAll(e.target.value)} />
+        <button
+          type="button"
+          className="button button-small"
+          disabled={parseMoney(all) === null}
+          onClick={() => setTexts(Object.fromEntries(months.map((m) => [m, all])))}
+        >
+          {t('budget.applyAllMonths')}
+        </button>
+      </div>
+      <ul className="plain-list plan-months">
+        {months.map((m) => {
+          const c = cents(m);
+          const differs = c !== null && c !== usual(m);
+          return (
+            <li key={m} className={differs ? 'plan-differs' : undefined}>
+              <label htmlFor={`pm-${m}`}>{monthName(m)}</label>
+              <input
+                id={`pm-${m}`}
+                inputMode="decimal"
+                value={textOf(m)}
+                aria-invalid={c === null || (c ?? 0) < 0}
+                onChange={(e) => setTexts({ ...texts, [m]: e.target.value })}
+              />
+            </li>
+          );
+        })}
+      </ul>
+      <p className="split-row"><span>{t('budget.planTotal', { year })}</span><strong><Money cents={total} /></strong></p>
+      <div className="row">
+        <button type="button" className="button button-primary" disabled={busy || invalid || months.length === 0} onClick={() => void save()}>{t('common.save')}</button>
+        <button type="button" className="button button-quiet" onClick={onClose}>{t('common.cancel')}</button>
+      </div>
     </Dialog>
   );
 }

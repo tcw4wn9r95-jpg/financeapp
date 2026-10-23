@@ -1,4 +1,4 @@
-import { backdateDefaults } from '../domain/budget';
+import { backdateDefaults, defaultFor } from '../domain/budget';
 import { buildManualEntry, stamp, systemClock, type ManualEntry } from '../domain/ledger';
 import { addMonths, compareMonths, currentMonth, monthDiff, monthOf } from '../domain/dates';
 import { provisionSchedule, type CloseEventPlan } from '../domain/plan';
@@ -358,6 +358,33 @@ export async function setOverride(vault: Vault, categoryId: Id, month: MonthKey,
     ? { ...same, amount, note, updatedAt: new Date().toISOString() }
     : { ...(stamp(systemClock, 'manual') as BudgetOverride), categoryId, month, amount, note };
   await vault.put('budgetOverrides', record);
+}
+
+/**
+ * Save a month-by-month plan for a budget line (D-77). A month whose amount is
+ * the usual monthly amount needs nothing; any other month gets its own amount
+ * (an override), and an override equal to the usual amount is removed.
+ */
+export async function saveMonthPlan(vault: Vault, categoryId: Id, plan: ReadonlyMap<MonthKey, Cents>): Promise<number> {
+  const defaults = vault.list('budgetDefaults');
+  const overrides = vault.list('budgetOverrides');
+  const ops: WriteOp[] = [];
+  let special = 0;
+  for (const [month, amount] of plan) {
+    const usual = defaultFor(defaults, categoryId, month)?.monthlyAmount ?? 0;
+    const same = overrides.find((o) => o.categoryId === categoryId && o.month === month);
+    if (amount === usual) {
+      if (same) ops.push({ type: 'delete', store: 'budgetOverrides', id: same.id });
+      continue;
+    }
+    special++;
+    const record: BudgetOverride = same
+      ? { ...same, amount, updatedAt: new Date().toISOString() }
+      : { ...(stamp(systemClock, 'manual') as BudgetOverride), categoryId, month, amount, note: '' };
+    ops.push({ type: 'put', store: 'budgetOverrides', record });
+  }
+  if (ops.length) await vault.write(ops);
+  return special;
 }
 
 export async function resetOverride(vault: Vault, overrideId: Id): Promise<void> {

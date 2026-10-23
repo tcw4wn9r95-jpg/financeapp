@@ -91,6 +91,8 @@ export interface BudgetMonth {
   month: MonthKey;
   categories: Map<Id, CategoryMonth>;
   income: Cents;
+  /** Income counted this month, per income category. */
+  incomeByCategory: Map<Id, Cents>;
   assignedTotal: Cents;
   activityTotal: Cents;
   /** Activity on on-budget accounts not covered by a category or income allocation. */
@@ -138,6 +140,7 @@ export function overrideFor(
 interface MonthActivity {
   byCategory: Map<Id, Cents>;
   income: Cents;
+  incomeByCategory: Map<Id, Cents>;
   uncategorised: Cents;
   /** Income received in this month that counts in the next one. */
   held: Cents;
@@ -169,7 +172,7 @@ function activityByMonth(input: BudgetInput): Map<MonthKey, MonthActivity> {
   const bucket = (month: MonthKey): MonthActivity => {
     let b = out.get(month);
     if (!b) {
-      b = { byCategory: new Map(), income: 0, uncategorised: 0, held: 0 };
+      b = { byCategory: new Map(), income: 0, incomeByCategory: new Map(), uncategorised: 0, held: 0 };
       out.set(month, b);
     }
     return b;
@@ -190,10 +193,13 @@ function activityByMonth(input: BudgetInput): Map<MonthKey, MonthActivity> {
         if (from && Number(t.date.slice(8, 10)) >= from) {
           // Paid for next month (D-74): counted then; held until then.
           const next = addMonths(raw, 1);
-          bucket(compareMonths(next, input.startMonth) < 0 ? input.startMonth : next).income += a.amount;
+          const nb = bucket(compareMonths(next, input.startMonth) < 0 ? input.startMonth : next);
+          nb.income += a.amount;
+          nb.incomeByCategory.set(a.targetId, (nb.incomeByCategory.get(a.targetId) ?? 0) + a.amount);
           if (compareMonths(raw, input.startMonth) >= 0) b.held += a.amount;
         } else {
           b.income += a.amount;
+          b.incomeByCategory.set(a.targetId, (b.incomeByCategory.get(a.targetId) ?? 0) + a.amount);
         }
         covered += a.amount;
       } else if (a.targetType === 'transfer') {
@@ -251,7 +257,7 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
   let returned = 0;
 
   for (const month of months) {
-    const act = activity.get(month) ?? { byCategory: new Map(), income: 0, uncategorised: 0, held: 0 };
+    const act = activity.get(month) ?? { byCategory: new Map(), income: 0, incomeByCategory: new Map(), uncategorised: 0, held: 0 };
     const cats = new Map<Id, CategoryMonth>();
     const nextCarry = new Map<Id, Cents>();
     let nextReturned = 0;
@@ -320,6 +326,7 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       month,
       categories: cats,
       income: act.income,
+      incomeByCategory: act.incomeByCategory,
       assignedTotal,
       activityTotal,
       uncategorised: act.uncategorised,
