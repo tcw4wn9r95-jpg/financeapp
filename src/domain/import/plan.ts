@@ -113,22 +113,30 @@ export function embeddedDate(t: Pick<Transaction, 'date' | 'descriptionRaw'>): I
 const PAIR_WINDOW_NAMED_DAYS = 7;
 
 /**
- * Days between two rows that look like the two sides of one transfer between
- * own accounts, or undefined. Same amount with opposite signs, different
- * accounts, a transfer-like text on either side, and within 4 days, or 7 when
- * either text names the other account; a date written in the text counts too (D-71).
+ * Do these two rows read like the two sides of a transfer between own accounts, and how many days apart
+ * are they? Different accounts, a transfer-like text on both sides (or one naming the account), within
+ * 4 days, or 7 when a text names the other account or carries the date; a date written in the text counts
+ * too (D-71, D-81). Amounts are not compared here.
  */
-export function transferGap(t: Transaction, c: Transaction, accounts: readonly Account[]): number | undefined {
-  if (c.id === t.id || c.accountId === t.accountId || c.amount !== -t.amount || t.amount === 0) return undefined;
+export function transferDays(t: Transaction, c: Transaction, accounts: readonly Account[]): number | undefined {
+  if (c.id === t.id || c.accountId === t.accountId) return undefined;
   const pointed = recogniseAccount(t, accounts)?.id === c.accountId || recogniseAccount(c, accounts)?.id === t.accountId;
-  if (!pointed && !looksLikeTransfer(t) && !looksLikeTransfer(c)) return undefined;
+  // Both sides must look like a transfer (or the text names the account): one side alone is how a
+  // payment to a person got paired with an unrelated top-up of the same amount.
+  if (!pointed && !(looksLikeTransfer(t) && looksLikeTransfer(c))) return undefined;
   const dates = (x: Transaction) => [x.date, x.valueDate, embeddedDate(x)].filter(Boolean) as string[];
   const days = Math.min(...dates(t).flatMap((a) => dates(c).map((b) => dayDiff(a, b))));
   return days <= (pointed || embeddedDate(t) || embeddedDate(c) ? PAIR_WINDOW_NAMED_DAYS : PAIR_WINDOW_DAYS) ? days : undefined;
 }
 
+/** Days between two rows that are the two sides of one transfer: same amount, opposite signs (D-71). */
+export function transferGap(t: Transaction, c: Transaction, accounts: readonly Account[]): number | undefined {
+  if (c.amount !== -t.amount || t.amount === 0) return undefined;
+  return transferDays(t, c, accounts);
+}
+
 const TRANSFER_WORDS =
-  /transfer|virement|[üu]berweisung|standing order|ordre permanent|payment from|payment received|paiement re[çc]u|^to |^from |top.?up|revolut|compte|savings|[ée]pargne|in favour of|••\d{4}|own account/i;
+  /transfer|virement|[üu]berweisung|standing order|ordre permanent|payment from|payment received|paiement re[çc]u|^to |^from |top.?up|apple pay deposit|revolut|compte|savings|[ée]pargne|in favour of|••\d{4}|own account/i;
 
 export function looksLikeTransfer(t: Pick<Transaction, 'descriptionRaw' | 'counterpartyIbanLast4'>): boolean {
   return TRANSFER_WORDS.test(t.descriptionRaw) || !!t.counterpartyIbanLast4;

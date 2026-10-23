@@ -2,11 +2,11 @@ import { useMemo, useState, type FormEvent } from 'react';
 import { formatDate } from '../../domain/dates';
 import { systemClock } from '../../domain/ledger';
 import { formatMoneyInput, parseMoney } from '../../domain/money';
-import { classify, mergeChanges, ReconcileError, similar, unclassify, type Classification, type SplitLine } from '../../domain/reconcile';
+import { applyToView, classify, mergeChanges, ReconcileError, similar, unclassify, type Changes, type Classification, type LedgerView, type SplitLine } from '../../domain/reconcile';
 import { predictTargets, type Target } from '../../domain/learn';
 import { CATEGORY_GROUPS, type Account, type Category, type Transaction } from '../../domain/types';
 import { t } from '../../i18n';
-import { applyChanges, ledgerView } from '../importActions';
+import { applyChanges, cleanUpLedger, ledgerView } from '../importActions';
 import { applyUserChanges } from '../learnActions';
 import { useFiledHistory, useStore, useVault } from '../hooks';
 import { groupLabel } from '../labels';
@@ -96,9 +96,6 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
   const transactions = useStore('transactions');
   const history = useFiledHistory();
   const [value, setValue] = useState(initial);
-  // The loan's own category when it has one (D-48), else a category that looks like loans.
-  const [repaymentPick, setRepaymentPick] = useState('');
-  const guessedRepayment = categories.find((c) => !c.isIncome && /loan|pr[eê]t|cr[ée]dit|kredit/i.test(c.name))?.id ?? '';
   const [all, setAll] = useState(true);
   const [showSimilar, setShowSimilar] = useState(false);
   // Identical rows the user unticked in the list: they are left in the inbox.
@@ -114,31 +111,29 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
       ? accounts.some((a) => a.id === x.targetId && !a.closedAt && a.id !== tx.accountId)
       : categories.some((c) => c.id === x.targetId && !c.archivedAt && c.isIncome === (x.targetType === 'income'));
   // The likeliest choices from what was filed before (D-80): the first one is one big tap.
-  const predicted = useMemo(() => predictTargets(tx, history, categories, usable, 4), [tx, history, categories, accounts]);
+  const predicted = useMemo(() => predictTargets(tx, history, categories, usable, 4, accounts), [tx, history, categories, accounts]);
   const quick = predicted.map(targetValue);
   // A big first choice only when it rests on something; otherwise the usual choices, all alike.
   const best = predicted.sure ? quick[0] : undefined;
   const alternatives = predicted.sure ? quick.slice(1) : quick;
   const why = tx.suggestion && best === targetValue({ targetType: tx.suggestion.targetType, targetId: tx.suggestion.targetId }) ? tx.suggestion.reason : '';
 
-  // A loan without its own budget line, or a trip with parts, needs one more choice before applying.
+  // A trip with parts needs one more choice before applying. A loan never does (D-82): a repayment
+  // is a transfer to the loan and nothing else; when the loan has its own budget line (from its monthly
+  // payment) the payment counts there without asking.
   const extraFor = (v: string) => {
     const d = decodeTarget(v);
     const target = d?.kind === 'transfer' ? accounts.find((a) => a.id === d.accountId) : undefined;
     const isRepayment = !!target && target.type === 'loan' && tx.amount < 0 && accounts.find((a) => a.id === tx.accountId)?.type !== 'loan';
     const ownCategory = target?.categoryId && categories.some((c) => c.id === target.categoryId) ? target.categoryId : '';
     const event = d?.kind === 'category' ? events.find((e) => e.categoryId === d.categoryId && e.subBudgets.length > 0) : undefined;
-    return { d, target, isRepayment, ownCategory, needsPick: isRepayment && !ownCategory, event };
+    return { d, target, isRepayment, ownCategory, event };
   };
   const cur = extraFor(value);
-  const repaymentCategory = cur.ownCategory || repaymentPick || guessedRepayment;
   const [subBudget, setSubBudget] = useState('');
   const toChoice = (v: string, sb = ''): Classification | undefined => {
     const x = extraFor(v);
-    if (x.isRepayment && x.d?.kind === 'transfer') {
-      const cat = x.ownCategory || (v === value ? repaymentPick || guessedRepayment : '');
-      return cat ? { ...x.d, categoryId: cat } : undefined;
-    }
+    if (x.isRepayment && x.d?.kind === 'transfer') return x.ownCategory ? { ...x.d, categoryId: x.ownCategory } : x.d;
     return x.d?.kind === 'category' && x.event && sb ? { ...x.d, subBudget: sb } : x.d;
   };
   const choice = toChoice(value, subBudget);
@@ -147,13 +142,24 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
   async function apply(how: Classification, label: string) {
     setBusy(true);
     try {
-      const view = ledgerView(vault);
-      const bulk = all && picked.length > 0 && how.kind !== 'transfer';
-      const targets = bulk ? [tx, ...picked] : [tx];
-      const changes = mergeChanges(...targets.map((x) => classify(x, how, view, systemClock)));
+      // Identical rows are filed one after the other, each seeing the one before: identical transfers
+      // must not claim the same row on the other side (D-82).
+      const targets = all && picked.length > 0 ? [tx, ...picked] : [tx];
+      let view: LedgerView = ledgerView(vault);
+      const parts: Changes[] = [];
+      for (const x of targets) {
+        const ch = classify(x, how, view, systemClock);
+        parts.push(ch);
+        view = applyToView(view, ch);
+      }
+      const changes = mergeChanges(...parts);
       await applyUserChanges(vault, changes);
+      // Filing one side can complete a transfer: the other side is matched at once (D-82).
+      const matched = (await cleanUpLedger(vault)).paired;
       const ids = targets.map((x) => x.id);
-      const text = targets.length > 1 ? t('inbox.filedMany', { n: targets.length, label }) : t('inbox.filed', { label });
+      const text =
+        (targets.length > 1 ? t('inbox.filedMany', { n: targets.length, label }) : t('inbox.filed', { label })) +
+        (matched > 0 ? ` ${matched === 1 ? t('inbox.alsoMatchedOne') : t('inbox.alsoMatched', { n: matched })}` : '');
       notify(text, 'ok', {
         label: t('inbox.undo'),
         run: () => void undo(ids),
@@ -179,7 +185,7 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
   function choose(v: string) {
     const x = extraFor(v);
     setValue(v);
-    if (x.needsPick || x.event) return;
+    if (x.event) return;
     const how = toChoice(v);
     if (how) void apply(how, targetLabel(v, tx, categories, accounts));
   }
@@ -211,30 +217,16 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
           </button>
         </div>
       </div>
-      {(cur.needsPick || cur.event) && (
+      {cur.event && (
         <form className="classify" onSubmit={submit}>
-          {cur.needsPick && (
-            <>
-              <label htmlFor={`${selectId}-cat`} className="visually-hidden">{t('inbox.repaymentCategory')}</label>
-              <select id={`${selectId}-cat`} value={repaymentCategory} onChange={(e) => setRepaymentPick(e.target.value)} aria-describedby={`${selectId}-cat-hint`}>
-                <option value="">{t('inbox.repaymentCategory')}</option>
-                {categories.filter((c) => !c.isIncome).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </>
-          )}
-          {cur.event && (
-            <>
-              <label htmlFor={`${selectId}-sb`} className="visually-hidden">{t('inbox.subBudget')}</label>
-              <select id={`${selectId}-sb`} value={subBudget} onChange={(e) => setSubBudget(e.target.value)}>
-                <option value="">{t('inbox.subBudget')}</option>
-                {cur.event.subBudgets.map((b) => <option key={b.name} value={b.name}>{b.name}</option>)}
-              </select>
-            </>
-          )}
+          <label htmlFor={`${selectId}-sb`} className="visually-hidden">{t('inbox.subBudget')}</label>
+          <select id={`${selectId}-sb`} value={subBudget} onChange={(e) => setSubBudget(e.target.value)}>
+            <option value="">{t('inbox.subBudget')}</option>
+            {cur.event.subBudgets.map((b) => <option key={b.name} value={b.name}>{b.name}</option>)}
+          </select>
           <button className="button button-primary" disabled={!choice || busy}>{t('inbox.apply')}</button>
         </form>
       )}
-      {cur.needsPick && <p id={`${selectId}-cat-hint`} className="hint">{t('inbox.repaymentHint', { name: cur.target!.name })}</p>}
       <div className="classify-more">
         <button type="button" className="link-button" onClick={() => setSplitting(true)} disabled={busy}>{t('inbox.split')}</button>
         {others.length > 0 && (

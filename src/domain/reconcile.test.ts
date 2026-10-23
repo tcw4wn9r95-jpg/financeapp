@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { budgetForMonth } from './budget';
-import { classify, cleanUpMirrors, fileSuggestedTransfers, pairOpenTransfers, ReconcileError, unclassify } from './reconcile';
+import { classify, cleanUpMirrors, fileSuggestedTransfers, pairOpenTransfers, repairWeakPairs, settleGroupedTransfers, ReconcileError, unclassify } from './reconcile';
 import { testClock, World } from './testkit';
 import type { Allocation, Transaction } from './types';
 
@@ -190,5 +190,107 @@ describe('sure transfer suggestions are filed without a tap (D-71)', () => {
     expect(of('a')).toHaveLength(1);
     expect(of('b')).toEqual(['category:carCat']);
     expect(of('c')).toEqual([]);
+  });
+
+  it('a loan without its own budget line is just a transfer to the loan: no category, no question (D-82)', () => {
+    const w = new World('2026-01');
+    w.account('rev', 'current', 0);
+    w.accounts.push({ id: 'ikea', createdAt: '', updatedAt: '', source: 'manual', name: 'Ikea loan', type: 'loan', institution: '', ibanLast4: '', openingBalance: -200000 });
+    const a: Transaction = { ...tx('a', 'rev', -23754, '2026-08-07'), status: 'suggested', suggestion: { targetType: 'transfer', targetId: 'ikea', confidence: 0.9, decidedBy: 'rule', reason: 'Repayment of Ikea loan' } };
+    const { changes, filed } = fileSuggestedTransfers({ accounts: w.accounts, transactions: [a], allocations: [] }, testClock());
+    expect(filed).toBe(1);
+    expect(changes.putAllocations.map((x) => x.targetType)).toEqual(['transfer', 'transfer']);
+    expect(changes.putTransactions.find((t) => t.accountId === 'ikea')!.amount).toBe(23754); // the loan goes down
+  });
+});
+
+describe('transfers sent in pieces and received as one (D-81)', () => {
+  const row = (id: string, accountId: string, amount: number, date: string, descriptionRaw: string, over: Partial<Transaction> = {}): Transaction => ({
+    ...tx(id, accountId, amount, date), descriptionRaw, merchantNorm: descriptionRaw.toUpperCase(), importBatchId: 'b', ...over,
+  });
+  const base = () => {
+    const w = new World('2026-01');
+    w.account('rev', 'current', 0);
+    w.account('flex', 'savings', 0);
+    return w;
+  };
+
+  it('300 + 350 + 600 + 1,450 sent, 2,700 received: the received row and the pieces are filed together', () => {
+    const w = base();
+    const pieces = [300, 350, 600, 1450].map((e, i) => row(`p${i}`, 'rev', -e * 100, '2026-08-22', 'To EUR Compte flexible'));
+    const big = row('big', 'flex', 270000, '2026-08-24', 'Flexible savings: money in');
+    const other = row('other', 'rev', -100000, '2026-08-22', 'To EUR Compte flexible'); // not part of it
+    const { changes, settled } = settleGroupedTransfers({ accounts: w.accounts, transactions: [...pieces, big, other], allocations: [] }, testClock());
+    expect(settled).toBe(1);
+    const filed = changes.putTransactions.map((t) => t.id).sort();
+    expect(filed).toEqual(['big', 'p0', 'p1', 'p2', 'p3']);
+    expect(changes.putAllocations.find((a) => a.transactionId === 'big')).toMatchObject({ targetType: 'transfer', targetId: 'rev' });
+    expect(changes.putAllocations.filter((a) => a.targetId === 'flex')).toHaveLength(4);
+  });
+
+  it('pieces already filed as transfers to the account (pointing at it) are completed, not refiled', () => {
+    const w = base();
+    const mk = (id: string, e: number): Transaction => row(id, 'rev', -e * 100, '2026-08-22', 'To EUR Compte flexible', { status: 'reconciled' });
+    const pieces = [mk('a', 300), mk('b', 350)];
+    const al = pieces.map((p): Allocation => ({ id: `al-${p.id}`, createdAt: '', updatedAt: '', source: 'manual', transactionId: p.id, targetType: 'transfer', targetId: 'flex', amount: p.amount, confidence: 1, decidedBy: 'user', reason: '' }));
+    const big = row('big', 'flex', 65000, '2026-08-23', 'Flexible savings: money in');
+    const { changes, settled } = settleGroupedTransfers({ accounts: w.accounts, transactions: [...pieces, big], allocations: al }, testClock());
+    expect(settled).toBe(1);
+    expect(changes.putAllocations.find((a) => a.transactionId === 'big')).toMatchObject({ targetId: 'rev' });
+  });
+
+  it('a sum that does not fit, or rows too far apart, is left in the inbox', () => {
+    const w = base();
+    const a = row('a', 'rev', -30000, '2026-08-22', 'To EUR Compte flexible');
+    const b = row('b', 'rev', -35000, '2026-07-01', 'To EUR Compte flexible');
+    const big = row('big', 'flex', 65000, '2026-08-23', 'Flexible savings: money in');
+    expect(settleGroupedTransfers({ accounts: w.accounts, transactions: [a, b, big], allocations: [] }, testClock()).settled).toBe(0);
+  });
+});
+
+describe('pairing picks the best match overall and repairs weak pairs (D-81)', () => {
+  const row = (id: string, accountId: string, amount: number, date: string, descriptionRaw: string, over: Partial<Transaction> = {}): Transaction => ({
+    ...tx(id, accountId, amount, date), descriptionRaw, merchantNorm: descriptionRaw.toUpperCase(), importBatchId: 'b', ...over,
+  });
+  const auto = (id: string, from: string, to: string, amount: number): Allocation => ({
+    id, createdAt: '', updatedAt: '', source: 'manual', transactionId: from, targetType: 'transfer', targetId: to, amount, confidence: 1, decidedBy: 'rule', reason: 'Same amount in X, 1 day(s) apart',
+  });
+
+  it('a top-up whose text carries its date goes with the row of that date, not a payment a day apart', () => {
+    const w = new World('2026-01');
+    w.account('spk', 'current', 0);
+    w.account('rev', 'current', 0);
+    w.account('dia', 'current', 0);
+    const diana = row('diana', 'dia', 50000, '2026-01-29', 'Apple Pay deposit by *7418');
+    const pablo = row('pablo', 'rev', -50000, '2026-01-28', 'Transfer to Pablo Sebastian Burneo');
+    const spk = row('spk', 'spk', -50000, '2026-02-02', 'DEBIT REVOLUT**3501* 29.01');
+    const { changes } = pairOpenTransfers({ accounts: w.accounts, transactions: [diana, pablo, spk], allocations: [] }, testClock());
+    expect(changes.putAllocations.map((a) => `${a.transactionId}>${a.targetId}`).sort()).toEqual(['diana>spk', 'spk>diana']);
+  });
+
+  it('an automatic pair with a better partner waiting in the inbox is undone; a pair the user made stays', () => {
+    const w = new World('2026-01');
+    w.account('spk', 'current', 0);
+    w.account('rev', 'current', 0);
+    w.account('dia', 'current', 0);
+    const diana = row('diana', 'dia', 50000, '2026-01-29', 'Apple Pay deposit by *7418', { status: 'reconciled' });
+    const pablo = row('pablo', 'rev', -50000, '2026-01-28', 'Transfer to Pablo Sebastian Burneo', { status: 'reconciled' });
+    const spk = row('spk', 'spk', -50000, '2026-02-02', 'DEBIT REVOLUT**3501* 29.01');
+    const allocations = [auto('a1', 'diana', 'pablo', 50000), auto('a2', 'pablo', 'diana', -50000)];
+    const r = repairWeakPairs({ accounts: w.accounts, transactions: [diana, pablo, spk], allocations }, testClock());
+    expect(r.reopened).toBe(2);
+    expect(r.changes.deleteAllocations.sort()).toEqual(['a1', 'a2']);
+    const mine = allocations.map((a) => ({ ...a, decidedBy: 'user' as const }));
+    expect(repairWeakPairs({ accounts: w.accounts, transactions: [diana, pablo, spk], allocations: mine }, testClock()).reopened).toBe(0);
+  });
+
+  it('a pair neither naming the account nor transfer-like on both sides is undone (payment to a person vs a refund)', () => {
+    const w = new World('2026-01');
+    w.account('spk', 'current', 0);
+    w.account('rev', 'current', 0);
+    const kine = row('kine', 'rev', -1359, '2026-05-30', 'Kine Madalena Martins', { status: 'reconciled' });
+    const axa = row('axa', 'spk', 1359, '2026-05-26', 'CREDIT TRANSFER FROM AXA ASSURANCES', { status: 'reconciled' });
+    const r = repairWeakPairs({ accounts: w.accounts, transactions: [kine, axa], allocations: [auto('x1', 'kine', 'axa', -1359), auto('x2', 'axa', 'kine', 1359)] }, testClock());
+    expect(r.reopened).toBe(2);
   });
 });

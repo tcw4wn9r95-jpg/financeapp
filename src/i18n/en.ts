@@ -382,6 +382,7 @@ export const en = {
   'security.recoveryNote': 'Your recovery key keeps working after a passphrase change.',
 
   // data
+  'ledger.pairsUndone': '{n} rows paired automatically by mistake are back in the inbox.',
   'ledger.transfersPaired': '{n} transfers between your accounts recognised and filed.',
   'ledger.transferPairedOne': '1 transfer between your accounts recognised and filed.',
   'ledger.mirrorCleanedOne': '1 duplicated transfer removed: that account now matches its own statement.',
@@ -532,6 +533,8 @@ export const en = {
   'inbox.other': 'Other…',
   'inbox.filed': 'Filed: {label}.',
   'inbox.filedMany': '{n} filed: {label}.',
+  'inbox.alsoMatchedOne': 'The other side of the transfer was matched too.',
+  'inbox.alsoMatched': '{n} matching transfers were filed too.',
   'inbox.undo': 'Undo',
   'inbox.undone': 'Back in the inbox.',
   'inbox.pickTitle': 'File as',
@@ -553,9 +556,6 @@ export const en = {
   'inbox.transferFromName': 'Transfer from {name}',
   'inbox.showMore': 'Show more ({n} left)',
   'inbox.subBudget': 'Sub-budget (optional)',
-  'inbox.repaymentCategory': 'Budget category for this repayment',
-  'inbox.repaymentCounts': 'Counts in {category}, the loan’s own budget line.',
-  'inbox.repaymentHint': 'The payment counts in this budget category, and the balance of {name} goes down by the same amount.',
   'inbox.repaymentOf': 'Repayment of {name}',
   'inbox.splitTitle': 'Split',
   'inbox.remaining': 'left to assign',

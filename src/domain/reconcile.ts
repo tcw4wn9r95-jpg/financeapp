@@ -1,6 +1,6 @@
 import { accountBalances } from './budget';
 import { stamp, type Clock } from './ledger';
-import { makeMirror, recogniseAccount, transferGap } from './import/plan';
+import { looksLikeTransfer, makeMirror, recogniseAccount, transferDays, transferGap } from './import/plan';
 import type { Account, Allocation, Cents, Id, ImportBatch, Statement, Transaction } from './types';
 
 /**
@@ -160,31 +160,43 @@ export function pairOpenTransfers(view: LedgerView, clock: Clock): { changes: Ch
   const allocated = new Map<Id, Allocation[]>();
   for (const a of view.allocations) allocated.set(a.transactionId, [...(allocated.get(a.transactionId) ?? []), a]);
   const loan = new Set(view.accounts.filter((a) => a.type === 'loan').map((a) => a.id));
+  const eligible = view.transactions.filter((c) => !c.isMirror && !loan.has(c.accountId) && c.status !== 'locked');
+  // Rows by amount: only the opposite amount can be the other side.
+  const byAmount = new Map<number, Transaction[]>();
+  for (const c of eligible) byAmount.set(c.amount, [...(byAmount.get(c.amount) ?? []), c]);
+  const isOpen = (t: Transaction) => (t.status === 'new' || t.status === 'suggested') && !allocated.has(t.id);
+
+  // Every possible pair, best first: the best match overall wins, not the first row by date. A top-up
+  // whose text carries the exact date goes with the row of that date, not with another payment of the
+  // same amount a day apart (D-81).
+  const candidates: { t: Transaction; c: Transaction; gap: number; pointed: boolean }[] = [];
+  for (const t of eligible) {
+    if (!isOpen(t)) continue;
+    const pointedId = recogniseAccount(t, view.accounts)?.id;
+    for (const c of byAmount.get(-t.amount) ?? []) {
+      const own = allocated.get(c.id) ?? [];
+      // Still open, or filed as a transfer to t's account with no row on t's side.
+      const free = own.length === 0 ? c.status === 'new' || c.status === 'suggested' : own.length === 1 && own[0]!.targetType === 'transfer' && own[0]!.targetId === t.accountId;
+      if (!free) continue;
+      const gap = transferGap(t, c, view.accounts);
+      if (gap === undefined) continue;
+      // Two open rows are found from both sides: keep one.
+      if (isOpen(c) && c.id < t.id) continue;
+      candidates.push({ t, c, gap, pointed: c.accountId === pointedId });
+    }
+  }
+  candidates.sort((a, b) => Number(b.pointed) - Number(a.pointed) || a.gap - b.gap || a.t.date.localeCompare(b.t.date));
+
   const used = new Set<Id>();
   let paired = 0;
-  const open = view.transactions.filter((t) => (t.status === 'new' || t.status === 'suggested') && !t.isMirror && !loan.has(t.accountId) && !allocated.has(t.id));
-  for (const t of [...open].sort((a, b) => a.date.localeCompare(b.date))) {
-    if (used.has(t.id)) continue;
-    const pointed = recogniseAccount(t, view.accounts)?.id;
-    const candidates = view.transactions
-      .filter((c) => !used.has(c.id) && !c.isMirror && !loan.has(c.accountId) && c.status !== 'locked')
-      .map((c) => {
-        const own = allocated.get(c.id) ?? [];
-        // Still open, or filed as a transfer to t's account with no row on t's side.
-        const free = own.length === 0 ? (c.status === 'new' || c.status === 'suggested') : own.length === 1 && own[0]!.targetType === 'transfer' && own[0]!.targetId === t.accountId;
-        const gap = free ? transferGap(t, c, view.accounts) : undefined;
-        return { c, gap, own };
-      })
-      .filter((x) => x.gap !== undefined)
-      .sort((a, b) => Number(b.c.accountId === pointed) - Number(a.c.accountId === pointed) || a.gap! - b.gap!);
-    const best = candidates[0];
-    if (!best) continue;
-    const { c, own } = best;
-    const reason = `Same amount in ${view.accounts.find((a) => a.id === c.accountId)?.name ?? 'another account'}, ${best.gap} day(s) apart`;
+  for (const { t, c, gap } of candidates) {
+    if (used.has(t.id) || used.has(c.id)) continue;
+    const own = allocated.get(c.id) ?? [];
+    const reason = `Same amount in ${view.accounts.find((a) => a.id === c.accountId)?.name ?? 'another account'}, ${gap} day(s) apart`;
     for (const a of own) ch.deleteAllocations.push(a.id);
     for (const x of [t, c]) {
       const { suggestion: _s, ...plain } = x;
-      ch.putTransactions.push({ ...plain, status: x.status === 'locked' ? 'locked' : 'reconciled', updatedAt: clock.now() });
+      ch.putTransactions.push({ ...plain, status: 'reconciled', updatedAt: clock.now() });
     }
     const link = (from: Transaction, to: Transaction): Allocation => ({
       ...stamp(clock, 'manual'),
@@ -204,6 +216,134 @@ export function pairOpenTransfers(view: LedgerView, clock: Clock): { changes: Ch
   return { changes: ch, paired };
 }
 
+/**
+ * Several transfers sent as one (D-81): 300 + 350 + 600 + 1,450 from one account arrive as a single
+ * 2,700 in another, whose own export shows one purchase. The big row is filed as a transfer from that
+ * account and the small ones as transfers to the other, so none stays in the inbox. The small rows are
+ * open, or already filed as transfers to this account (they point at the account, not at a row).
+ * Only a sum that is exact, within a week and from transfer-like texts counts; if two groups fit, the
+ * closer one wins.
+ */
+export function settleGroupedTransfers(view: LedgerView, clock: Clock): { changes: Changes; settled: number } {
+  const ch = emptyChanges();
+  const allocated = new Map<Id, Allocation[]>();
+  for (const a of view.allocations) allocated.set(a.transactionId, [...(allocated.get(a.transactionId) ?? []), a]);
+  const loan = new Set(view.accounts.filter((a) => a.type === 'loan').map((a) => a.id));
+  const rows = view.transactions.filter((t) => !t.isMirror && !loan.has(t.accountId) && t.status !== 'locked');
+  const isOpen = (t: Transaction) => (t.status === 'new' || t.status === 'suggested') && !allocated.has(t.id);
+  const used = new Set<Id>();
+  const alloc = (from: Transaction, toAccount: Id, reason: string): Allocation => ({
+    ...stamp(clock, 'manual'),
+    transactionId: from.id,
+    targetType: 'transfer',
+    targetId: toAccount,
+    amount: from.amount,
+    confidence: 1,
+    decidedBy: 'rule',
+    reason,
+  });
+  let settled = 0;
+  const open = rows.filter(isOpen).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+  for (const big of open) {
+    if (used.has(big.id)) continue;
+    // Candidates by account: rows of the opposite sign that are free and look like the other side.
+    const byAccount = new Map<Id, { c: Transaction; days: number }[]>();
+    for (const c of rows) {
+      if (c.accountId === big.accountId || used.has(c.id) || Math.sign(c.amount) === Math.sign(big.amount) || Math.abs(c.amount) >= Math.abs(big.amount)) continue;
+      const own = allocated.get(c.id) ?? [];
+      const free = own.length === 0 ? isOpen(c) : own.length === 1 && own[0]!.targetType === 'transfer' && own[0]!.targetId === big.accountId;
+      if (!free) continue;
+      const days = transferDays(big, c, view.accounts);
+      if (days !== undefined) byAccount.set(c.accountId, [...(byAccount.get(c.accountId) ?? []), { c, days }]);
+    }
+    let best: { account: Id; members: Transaction[]; score: number } | undefined;
+    for (const [account, list] of byAccount) {
+      const pool = list.slice(0, 12);
+      for (let mask = 1; mask < 1 << pool.length; mask++) {
+        let sum = 0;
+        let size = 0;
+        let score = 0;
+        for (let i = 0; i < pool.length; i++) if (mask & (1 << i)) { sum += pool[i]!.c.amount; size++; score += pool[i]!.days; }
+        if (size < 2 || sum !== -big.amount) continue;
+        if (!best || score < best.score) best = { account, members: pool.filter((_, i) => mask & (1 << i)).map((x) => x.c), score };
+      }
+    }
+    if (!best) continue;
+    const other = view.accounts.find((a) => a.id === best!.account)?.name ?? 'another account';
+    const reason = `${best.members.length} transfers in ${other} add up to this amount`;
+    for (const x of [big, ...best.members]) {
+      for (const a of allocated.get(x.id) ?? []) ch.deleteAllocations.push(a.id);
+      const { suggestion: _s, ...plain } = x;
+      ch.putTransactions.push({ ...plain, status: 'reconciled', updatedAt: clock.now() });
+      used.add(x.id);
+    }
+    ch.putAllocations.push(alloc(big, best.account, reason));
+    for (const m of best.members) ch.putAllocations.push(alloc(m, big.accountId, reason));
+    settled += 1;
+  }
+  return { changes: ch, settled };
+}
+
+/**
+ * Undo pairings the app made on weak evidence (D-81), so the rows can be paired again properly:
+ * - an automatic pair of own accounts that neither names the account nor has a transfer-like text on
+ *   both sides (a payment to a person paired with a top-up of the same amount);
+ * - a pairing with a clearly better partner waiting in the inbox (the open row's text carries the exact
+ *   date of that very row, a day closer than the partner it has).
+ * Both rows of a pair go back to the inbox; pairs the user made are never touched.
+ */
+export function repairWeakPairs(view: LedgerView, clock: Clock): { changes: Changes; reopened: number } {
+  const ch = emptyChanges();
+  const txById = new Map(view.transactions.map((t) => [t.id, t]));
+  const done = new Set<Id>();
+  let reopened = 0;
+  const reopen = (a: Transaction, b: Transaction) => {
+    for (const x of [a, b]) {
+      for (const al of view.allocations.filter((al) => al.transactionId === x.id)) ch.deleteAllocations.push(al.id);
+      const { suggestion: _s, ...plain } = x;
+      ch.putTransactions.push({ ...plain, status: 'new', updatedAt: clock.now() });
+      done.add(x.id);
+    }
+    reopened += 2;
+  };
+  const autoPairs: { t: Transaction; o: Transaction }[] = [];
+  const seen = new Set<string>();
+  for (const a of view.allocations) {
+    if (a.targetType !== 'transfer' || a.decidedBy !== 'rule' || !a.reason.startsWith('Same amount in')) continue;
+    const t = txById.get(a.transactionId);
+    const o = txById.get(a.targetId);
+    if (!t || !o || t.isMirror || o.isMirror || t.status === 'locked' || o.status === 'locked') continue;
+    const key = [t.id, o.id].sort().join('|');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    autoPairs.push({ t, o });
+  }
+  for (const { t, o } of autoPairs) {
+    const named = recogniseAccount(t, view.accounts)?.id === o.accountId || recogniseAccount(o, view.accounts)?.id === t.accountId;
+    if (!named && !(looksLikeTransfer(t) && looksLikeTransfer(o))) reopen(t, o);
+  }
+  const gapOf = new Map<Id, { partner: Transaction; gap: number }>();
+  for (const { t, o } of autoPairs) {
+    if (done.has(t.id)) continue;
+    const gap = transferGap(t, o, view.accounts);
+    if (gap !== undefined) {
+      gapOf.set(t.id, { partner: o, gap });
+      gapOf.set(o.id, { partner: t, gap });
+    }
+  }
+  const openRows = view.transactions.filter((x) => (x.status === 'new' || x.status === 'suggested') && !x.isMirror && !done.has(x.id));
+  for (const x of openRows) {
+    for (const c of view.transactions) {
+      if (c.amount !== -x.amount || c.accountId === x.accountId) continue;
+      const cur = gapOf.get(c.id);
+      if (!cur || done.has(c.id) || done.has(cur.partner.id)) continue;
+      const better = transferGap(x, c, view.accounts);
+      if (better !== undefined && better + 1 <= cur.gap) reopen(c, cur.partner);
+    }
+  }
+  return { changes: ch, reopened };
+}
+
 /** The view after a set of changes (for steps that build on each other). */
 export function applyToView(view: LedgerView, ch: Changes): LedgerView {
   const dT = new Set(ch.deleteTransactions);
@@ -221,7 +361,7 @@ export function applyToView(view: LedgerView, ch: Changes): LedgerView {
  * File the inbox rows whose suggestion is a transfer to an own account the
  * app is sure about (a rule, the account named in the text, the monthly
  * provisions move): paired with the other side, or pointing at the account
- * (D-71). A loan payment is filed only when the loan has its own budget line.
+ * (D-71). A loan payment is a transfer to the loan, counted in its own budget line if it has one (D-82).
  */
 export function fileSuggestedTransfers(view: LedgerView, clock: Clock, minConfidence = 0.9): { changes: Changes; filed: number } {
   let v = view;
@@ -232,10 +372,10 @@ export function fileSuggestedTransfers(view: LedgerView, clock: Clock, minConfid
     if (t.status !== 'suggested' || !sg || sg.targetType !== 'transfer' || sg.confidence < minConfidence) continue;
     const target = view.accounts.find((a) => a.id === sg.targetId);
     if (!target || target.closedAt || target.id === t.accountId) continue;
-    if (target.type === 'loan' && !target.categoryId) continue;
     const fresh = v.transactions.find((x) => x.id === t.id);
     if (!fresh || fresh.status !== 'suggested') continue;
-    const how: Classification = target.type === 'loan' && t.amount < 0 ? { kind: 'transfer', accountId: target.id, categoryId: target.categoryId! } : { kind: 'transfer', accountId: target.id };
+    // A loan repayment counts in the loan's own budget line when it has one, else it is just a transfer (D-82).
+    const how: Classification = target.type === 'loan' && t.amount < 0 && target.categoryId ? { kind: 'transfer', accountId: target.id, categoryId: target.categoryId } : { kind: 'transfer', accountId: target.id };
     const ch = classify(fresh, how, v, clock, sg.decidedBy === 'history' ? 'history' : 'rule', sg.reason);
     all.push(ch);
     v = applyToView(v, ch);

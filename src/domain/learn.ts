@@ -1,5 +1,5 @@
 import { stamp, type Clock } from './ledger';
-import { looksLikeTransfer, type LedgerChanges } from './import/plan';
+import { looksLikeTransfer, recogniseAccount, type LedgerChanges } from './import/plan';
 import { maskCardNumbers, stripIbans } from './import/text';
 import type { Changes } from './reconcile';
 import type { Account, Allocation, Category, Cents, Id, Rule, RuleConditions, Suggestion, TargetType, TrainingExample, Transaction } from './types';
@@ -188,6 +188,34 @@ export function words(text: string): string[] {
   return [...new Set(text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z]+/).filter((w) => w.length >= 3 && !NOISE.has(w)))];
 }
 
+/**
+ * How telling each word is: words in many filed transactions (visa, card,
+ * debit…) say nothing; a shop name says a lot (D-81). Cached per history.
+ */
+const idfCache = new WeakMap<readonly FiledRow[], { weight: (w: string) => number; words: Map<Id, string[]> }>();
+function textModel(history: readonly FiledRow[]) {
+  let m = idfCache.get(history);
+  if (m) return m;
+  const df = new Map<string, number>();
+  const perTx = new Map<Id, string[]>();
+  for (const h of history) {
+    const ws = words(`${h.tx.descriptionRaw} ${h.tx.counterparty}`);
+    perTx.set(h.tx.id, ws);
+    for (const w of ws) df.set(w, (df.get(w) ?? 0) + 1);
+  }
+  const N = Math.max(1, history.length);
+  m = {
+    // 0 for a word in more than 3% of filed transactions, up to ~5 for a word seen once.
+    weight: (w) => {
+      const d = df.get(w) ?? 0;
+      return d / N > 0.03 ? 0 : Math.log((N + 1) / (d + 1));
+    },
+    words: perTx,
+  };
+  idfCache.set(history, m);
+  return m;
+}
+
 /** Common merchants and words, for when nothing like it was filed yet: a hint matched against category names. */
 const KEYWORDS: [RegExp, RegExp][] = [
   [/\b(auchan|cactus|delhaize|aldi|lidl|carrefour|match|colruyt|naturata|supermarch|grocer|alima|pall center)/i, /grocer|food|supermarket|courses|aliment/i],
@@ -214,6 +242,7 @@ export function predictTargets(
   categories: readonly Pick<Category, 'id' | 'name' | 'isIncome' | 'archivedAt'>[],
   usable: (target: Target) => boolean,
   n = 4,
+  accounts: readonly Account[] = [],
 ): Target[] & { sure: boolean; score: number } {
   const scores = new Map<string, { target: Target; score: number }>();
   const add = (target: Target, score: number) => {
@@ -225,21 +254,32 @@ export function predictTargets(
   };
   if (t.suggestion) add({ targetType: t.suggestion.targetType, targetId: t.suggestion.targetId }, 50 * t.suggestion.confidence);
 
+  // A transfer to an own account is only guessed when something says so (D-81): the text names the
+  // account, or an earlier row with the very same counterparty went there. A card purchase is not one.
+  const named = recogniseAccount(t, accounts);
+  if (named) add({ targetType: 'transfer', targetId: named.id }, 8);
+
+  const model = textModel(history);
   const mine = words(`${t.descriptionRaw} ${t.counterparty}`);
+  const myWeight = mine.reduce((sum, w) => sum + model.weight(w), 0);
   const now = Date.parse(t.date);
   const neighbours: { target: Target; s: number }[] = [];
   for (const h of history) {
     const x = h.tx;
     if (x.id === t.id || Math.sign(x.amount) !== Math.sign(t.amount)) continue;
+    const sameMerchant = !!t.merchantNorm && x.merchantNorm === t.merchantNorm;
+    const sameIban = !!t.counterpartyIbanLast4 && x.counterpartyIbanLast4 === t.counterpartyIbanLast4;
+    if (h.target.targetType === 'transfer' && !sameMerchant && !sameIban) continue;
     let s = 0;
-    if (t.merchantNorm && x.merchantNorm === t.merchantNorm) s += 6;
-    else {
-      const theirs = words(`${x.descriptionRaw} ${x.counterparty}`);
-      const common = mine.filter((w) => theirs.includes(w)).length;
-      if (common) s += (5 * common) / Math.max(mine.length, theirs.length);
+    if (sameMerchant) s += 6;
+    else if (myWeight > 0) {
+      const theirs = model.words.get(x.id) ?? [];
+      let common = 0;
+      for (const w of mine) if (theirs.includes(w)) common += model.weight(w);
+      s += (5 * common) / Math.max(myWeight, 1e-9);
     }
-    if (t.counterpartyIbanLast4 && x.counterpartyIbanLast4 === t.counterpartyIbanLast4) s += 4;
-    if (s === 0) continue; // nothing in common but direction
+    if (sameIban) s += 4;
+    if (s < 0.5) continue; // nothing telling in common
     if (x.amount === t.amount) s += 2;
     else if (Math.abs(x.amount - t.amount) <= Math.abs(t.amount) * 0.15) s += 0.75;
     if (x.accountId === t.accountId) s += 0.5;

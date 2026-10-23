@@ -59,14 +59,7 @@ function Review({ items }: { items: Transaction[] }) {
   const grouped = useMemo(() => byRepeats(filtered), [filtered]);
   const shown = sort === 'repeats' ? grouped.items : filtered;
   const suggestedCount = inAccount.filter((x) => x.status === 'suggested').length;
-  // A loan without its own budget category needs the category picked by hand (D-29, D-48).
-  const isLoan = (id: string) => accounts.find((a) => a.id === id)?.type === 'loan';
-  const needsCategory = (id: string) => {
-    const a = accounts.find((x) => x.id === id);
-    return a?.type === 'loan' && !a.categoryId;
-  };
-  // Loan repayments need a budget category, so they are confirmed one by one.
-  const suggested = shown.filter((x) => x.status === 'suggested' && !(x.suggestion?.targetType === 'transfer' && needsCategory(x.suggestion.targetId)));
+  const suggested = shown.filter((x) => x.status === 'suggested');
 
   async function accept(list: Transaction[]) {
     try {
@@ -126,10 +119,7 @@ function Review({ items }: { items: Transaction[] }) {
             {sort === 'repeats' && (grouped.count.get(tx.id) ?? 1) > 1 && (
               <p className="repeat-count">{t('inbox.repeats', { n: grouped.count.get(tx.id)! })}</p>
             )}
-            <ClassifyControl
-              tx={tx}
-              initial={tx.suggestion?.targetType === 'transfer' && isLoan(tx.suggestion.targetId) ? `xfer:${tx.suggestion.targetId}` : ''}
-            />
+            <ClassifyControl tx={tx} />
           </li>
         ))}
       </ul>

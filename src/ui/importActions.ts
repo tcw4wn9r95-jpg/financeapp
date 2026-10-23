@@ -1,7 +1,7 @@
 import { BUILT_IN_MAPPINGS, type MappingSpec } from '../domain/import/csv';
 import type { FileContent } from '../domain/import/detect';
 import type { LedgerChanges } from '../domain/import/plan';
-import { cleanUpMirrors, fileSuggestedTransfers, pairOpenTransfers, type Changes } from '../domain/reconcile';
+import { cleanUpMirrors, fileSuggestedTransfers, pairOpenTransfers, repairWeakPairs, settleGroupedTransfers, type Changes } from '../domain/reconcile';
 import { stamp, systemClock } from '../domain/ledger';
 import type { BankMapping, Id } from '../domain/types';
 import { pdfToLines, type PdfJsLike } from '../infra/pdf';
@@ -121,33 +121,44 @@ export async function applyChanges(vault: Vault, ch: Changes): Promise<void> {
  * Remove mirrors that duplicate what an account's own statement already shows
  * (D-68). Runs after every import and when the vault is unlocked.
  */
-let cleaning: Promise<{ mirrors: number; paired: number }> = Promise.resolve({ mirrors: 0, paired: 0 });
+export interface CleanUpResult {
+  mirrors: number;
+  paired: number;
+  /** Rows sent back to the inbox because their automatic pairing looked wrong. */
+  reopened: number;
+}
+let cleaning: Promise<CleanUpResult> = Promise.resolve({ mirrors: 0, paired: 0, reopened: 0 });
 /**
  * Remove mirrors that duplicate what an account's own statement already shows
  * (D-68), then pair the transfers between own accounts still in the inbox
  * (D-71). Runs after every import, when the vault is unlocked and after a restore.
  */
-export function cleanUpLedger(vault: Vault): Promise<{ mirrors: number; paired: number }> {
+export function cleanUpLedger(vault: Vault): Promise<CleanUpResult> {
   // One at a time: two runs computed on the same data would apply the same fix twice.
   cleaning = cleaning.then(
     async () => {
       const m = cleanUpMirrors(ledgerView(vault), systemClock);
       if (m.fixed > 0) await applyChanges(vault, m.changes);
+      const w = repairWeakPairs(ledgerView(vault), systemClock);
+      if (w.reopened > 0) await applyChanges(vault, w.changes);
       const p = pairOpenTransfers(ledgerView(vault), systemClock);
       if (p.paired > 0) await applyChanges(vault, p.changes);
+      const g = settleGroupedTransfers(ledgerView(vault), systemClock);
+      if (g.settled > 0) await applyChanges(vault, g.changes);
       const f = fileSuggestedTransfers(ledgerView(vault), systemClock);
       if (f.filed > 0) await applyChanges(vault, f.changes);
-      return { mirrors: m.fixed, paired: p.paired + f.filed };
+      return { mirrors: m.fixed, paired: p.paired + g.settled + f.filed, reopened: w.reopened };
     },
-    () => ({ mirrors: 0, paired: 0 }),
+    () => ({ mirrors: 0, paired: 0, reopened: 0 }),
   );
   return cleaning;
 }
 
 /** One message for what the clean-up did, or nothing. */
-export function cleanUpMessage(r: { mirrors: number; paired: number }): string | undefined {
+export function cleanUpMessage(r: CleanUpResult): string | undefined {
   const parts = [
     r.paired === 1 ? t('ledger.transferPairedOne') : r.paired > 1 ? t('ledger.transfersPaired', { n: r.paired }) : '',
+    r.reopened > 0 ? t('ledger.pairsUndone', { n: r.reopened }) : '',
     r.mirrors === 1 ? t('ledger.mirrorCleanedOne') : r.mirrors > 1 ? t('ledger.mirrorsCleaned', { n: r.mirrors }) : '',
   ].filter(Boolean);
   return parts.length ? parts.join(' ') : undefined;
