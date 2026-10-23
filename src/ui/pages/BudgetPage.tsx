@@ -3,11 +3,13 @@ import type { BudgetMonth, CategoryMonth } from '../../domain/budget';
 import { addMonths, compareMonths, currentMonth, isMonthKey, monthOf } from '../../domain/dates';
 import { formatMoney, formatMoneyInput, parseMoney } from '../../domain/money';
 import { parseRecurrence } from '../../domain/plan';
-import type { Category, CategoryGroup, MonthKey } from '../../domain/types';
+import type { Category, CategoryGroup, MonthKey, Transaction } from '../../domain/types';
 import { monthName, t } from '../../i18n';
 import { backdateToStart, removeDefault, saveMonthPlan, saveSettings, resetOverride, setDefaultFrom, setOverride } from '../actions';
 import { backdateDefaults, defaultFor, futureChanges, invested } from '../../domain/budget';
 import { Dialog } from '../components/Dialog';
+import { CategoryTransactions } from '../components/CategoryTransactions';
+import { TransactionDialog } from './TransactionsPage';
 import { MoneyField, TextField, useMoneyInput } from '../components/fields';
 import { Money } from '../components/Money';
 import { MonthNav } from '../components/MonthNav';
@@ -190,6 +192,13 @@ function BudgetRow({ category, m, onEdit }: { category: Category; m: CategoryMon
 }
 
 function AssignDialog({ category, month, m, onClose, onPlan }: { category: Category; month: MonthKey; m: CategoryMonth; onClose: () => void; onPlan: () => void }) {
+  // A transaction opened from the list replaces this dialog until it closes (D-85).
+  const [opened, setOpened] = useState<Transaction | null>(null);
+  if (opened) return <TransactionDialog tx={opened} onClose={() => setOpened(null)} />;
+  return <AssignForm category={category} month={month} m={m} onClose={onClose} onPlan={onPlan} onOpen={setOpened} />;
+}
+
+function AssignForm({ category, month, m, onClose, onPlan, onOpen }: { category: Category; month: MonthKey; m: CategoryMonth; onClose: () => void; onPlan: () => void; onOpen: (tx: Transaction) => void }) {
   const vault = useVault();
   const notify = useToast();
   const amount = useMoneyInput(m.assigned);
@@ -256,6 +265,7 @@ function AssignDialog({ category, month, m, onClose, onPlan }: { category: Categ
           )}
         </div>
       </form>
+      <CategoryTransactions categoryId={category.id} month={month} onOpen={onOpen} />
     </Dialog>
   );
 }
@@ -328,6 +338,12 @@ function IncomeSection({ month, budget, onPlan }: { month: MonthKey; budget: Bud
  * insurance in March) and only that month gets its own amount.
  */
 function MonthPlanDialog({ category, month, onClose }: { category: Category; month: MonthKey; onClose: () => void }) {
+  const [opened, setOpened] = useState<Transaction | null>(null);
+  if (opened) return <TransactionDialog tx={opened} onClose={() => setOpened(null)} />;
+  return <MonthPlanForm category={category} month={month} onClose={onClose} onOpen={setOpened} />;
+}
+
+function MonthPlanForm({ category, month, onClose, onOpen }: { category: Category; month: MonthKey; onClose: () => void; onOpen: (tx: Transaction) => void }) {
   const vault = useVault();
   const notify = useToast();
   const settings = useSettings();
@@ -366,6 +382,7 @@ function MonthPlanDialog({ category, month, onClose }: { category: Category; mon
 
   return (
     <Dialog open title={t('budget.planTitle', { name: category.name })} onClose={onClose}>
+      {category.isIncome && <CategoryTransactions categoryId={category.id} month={month} onOpen={onOpen} />}
       <ChangesAhead category={category} />
       <h3 className="plan-h">{t('budget.byMonthTitle')}</h3>
       <p className="hint">{category.isIncome ? t('budget.planIncomeHint') : t('budget.planHint')}</p>

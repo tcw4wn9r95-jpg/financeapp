@@ -95,8 +95,12 @@ export interface BudgetMonth {
   incomeByCategory: Map<Id, Cents>;
   assignedTotal: Cents;
   activityTotal: Cents;
-  /** Activity on on-budget accounts not covered by a category or income allocation. */
+  /** Activity on on-budget accounts not filed yet (no category, income or transfer). */
   uncategorised: Cents;
+  /** Transfers between own budget accounts this month, by row (D-85); 0 when both sides fall in the month. */
+  transit: Cents;
+  /** Transfers to or from off-budget accounts this month (a loan repayment without a budget line). */
+  offBudget: Cents;
   /** Leftovers from last month's reset/sweep categories returned this month. */
   returnedFromLastMonth: Cents;
   readyToAssign: Cents;
@@ -168,6 +172,10 @@ interface MonthActivity {
   income: Cents;
   incomeByCategory: Map<Id, Cents>;
   uncategorised: Cents;
+  /** Transfers between own budget accounts, each row by its own amount and date (D-85). */
+  transit: Cents;
+  /** Transfers to or from off-budget accounts (a loan without its own budget line). */
+  offBudget: Cents;
   /** Income received in this month that counts in the next one. */
   held: Cents;
 }
@@ -198,7 +206,7 @@ function activityByMonth(input: BudgetInput): Map<MonthKey, MonthActivity> {
   const bucket = (month: MonthKey): MonthActivity => {
     let b = out.get(month);
     if (!b) {
-      b = { byCategory: new Map(), income: 0, incomeByCategory: new Map(), uncategorised: 0, held: 0 };
+      b = { byCategory: new Map(), income: 0, incomeByCategory: new Map(), uncategorised: 0, transit: 0, offBudget: 0, held: 0 };
       out.set(month, b);
     }
     return b;
@@ -229,11 +237,15 @@ function activityByMonth(input: BudgetInput): Map<MonthKey, MonthActivity> {
         }
         covered += a.amount;
       } else if (a.targetType === 'transfer') {
-        // Between two on-budget accounts: no budget effect. A transfer to or
-        // from an off-budget account (a loan) moves money in or out of the
-        // budget, so it stays uncategorised and hits Ready to assign (D-10).
+        // Each transfer row counts by its own amount and date (D-85): the two sides of a transfer
+        // between budget accounts cancel out (in the same month; across a month end the money is
+        // in transit for a few days), and a side whose other half is missing cannot vanish. A
+        // transfer to or from an off-budget account (a loan) moves money in or out of the budget
+        // and hits Ready to assign (D-10).
         const other = txnAccount.get(a.targetId);
-        if (other !== undefined && onBudget.has(other)) covered += a.amount;
+        if (other !== undefined && onBudget.has(other)) b.transit += a.amount;
+        else b.offBudget += a.amount;
+        covered += a.amount;
       }
       // provision / event allocations are budgeted from M3; until then they
       // fall through to "uncategorised" so the invariant still holds.
@@ -283,7 +295,7 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
   let returned = 0;
 
   for (const month of months) {
-    const act = activity.get(month) ?? { byCategory: new Map(), income: 0, incomeByCategory: new Map(), uncategorised: 0, held: 0 };
+    const act = activity.get(month) ?? { byCategory: new Map(), income: 0, incomeByCategory: new Map(), uncategorised: 0, transit: 0, offBudget: 0, held: 0 };
     const cats = new Map<Id, CategoryMonth>();
     const nextCarry = new Map<Id, Cents>();
     let nextReturned = 0;
@@ -346,7 +358,7 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       });
     }
 
-    ready += openingFunds(input.accounts, month, input.startMonth) + act.income + act.uncategorised + returned - assignedTotal;
+    ready += openingFunds(input.accounts, month, input.startMonth) + act.income + act.uncategorised + act.transit + act.offBudget + returned - assignedTotal;
     assertCents(ready);
     result.push({
       month,
@@ -356,6 +368,8 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       assignedTotal,
       activityTotal,
       uncategorised: act.uncategorised,
+      transit: act.transit,
+      offBudget: act.offBudget,
       returnedFromLastMonth: returned,
       readyToAssign: ready,
       heldForNextMonth: act.held,
@@ -456,4 +470,128 @@ export function invested(input: Pick<BudgetInput, 'categories' | 'transactions' 
     out.byCategory.set(a.targetId, (out.byCategory.get(a.targetId) ?? 0) + v);
   }
   return out;
+}
+
+/** Where Ready to assign comes from, from the budget start through `month` (D-85). */
+export interface ReadyExplained {
+  month: MonthKey;
+  /** Balances of the budget accounts when they start counting. */
+  opening: Cents;
+  /** Income received, per income category. */
+  income: Cents;
+  incomeByCategory: Map<Id, Cents>;
+  /** Given to categories, per category group (negative of what was assigned). */
+  assigned: Cents;
+  assignedByGroup: Map<string, Cents>;
+  /** Leftovers of reset categories handed back. */
+  returned: Cents;
+  /** Not filed yet: money in and money out still in the inbox. */
+  unfiled: Cents;
+  /** Transfers between own budget accounts whose two sides do not cancel out (yet). */
+  transit: Cents;
+  /** Loans repaid without their own budget line, and other off-budget transfers. */
+  offBudget: Cents;
+  readyToAssign: Cents;
+  /** Cross-check: cash in the budget accounts at the month end, money held in categories, income held for next month. */
+  cash: Cents;
+  inCategories: Cents;
+  held: Cents;
+}
+
+export function explainReady(input: BudgetInput, month: MonthKey): ReadyExplained | undefined {
+  const months = computeBudget(input, month);
+  const last = months.at(-1);
+  if (!last) return undefined;
+  const groupOf = new Map(input.categories.map((c) => [c.id, c.groupId as string]));
+  const out: ReadyExplained = {
+    month,
+    opening: 0,
+    income: 0,
+    incomeByCategory: new Map(),
+    assigned: 0,
+    assignedByGroup: new Map(),
+    returned: 0,
+    unfiled: 0,
+    transit: 0,
+    offBudget: 0,
+    readyToAssign: last.readyToAssign,
+    cash: 0,
+    inCategories: 0,
+    held: last.heldForNextMonth,
+  };
+  for (const m of months) {
+    out.opening += openingFunds(input.accounts, m.month, input.startMonth);
+    out.income += m.income;
+    for (const [id, v] of m.incomeByCategory) out.incomeByCategory.set(id, (out.incomeByCategory.get(id) ?? 0) + v);
+    out.returned += m.returnedFromLastMonth;
+    out.unfiled += m.uncategorised;
+    out.transit += m.transit;
+    out.offBudget += m.offBudget;
+    for (const [id, cm] of m.categories) {
+      out.assigned -= cm.assigned;
+      const g = groupOf.get(id) ?? 'other';
+      out.assignedByGroup.set(g, (out.assignedByGroup.get(g) ?? 0) - cm.assigned);
+    }
+  }
+  const balances = accountBalances(input.accounts, input.transactions, `${month}-31`);
+  for (const a of input.accounts) if (isOnBudget(a)) out.cash += balances.get(a.id) ?? 0;
+  for (const cm of last.categories.values()) out.inCategories += cm.available;
+  return out;
+}
+
+export interface LooseTransfer {
+  tx: Transaction;
+  amount: Cents;
+  /** 'transit': between budget accounts but its other side is missing or falls later; 'offBudget': to or from a loan or other off-budget account. */
+  kind: 'transit' | 'offBudget';
+}
+
+/**
+ * The transfer rows behind the "transfers" lines of `explainReady` (D-85),
+ * through the end of `month`, newest first: transfers between budget accounts
+ * that do not cancel out against their other side (in the same month), and
+ * every transfer to or from an off-budget account.
+ */
+export function looseTransfers(input: BudgetInput, month: MonthKey): LooseTransfer[] {
+  const end = `${month}-31`;
+  const onBudget = new Set(input.accounts.filter(isOnBudget).map((a) => a.id));
+  const accountIds = new Set(input.accounts.map((a) => a.id));
+  const byId = new Map(input.transactions.map((t) => [t.id, t]));
+  const out: LooseTransfer[] = [];
+  // Transfers between budget accounts, grouped by who points at whom: a group
+  // whose rows add up to zero cancels out (one move settled by several, too).
+  const parent = new Map<Id, Id>();
+  const root = (id: Id): Id => {
+    let r = id;
+    while (parent.get(r) !== undefined && parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(id, r);
+    return r;
+  };
+  const inside: { tx: Transaction; amount: Cents }[] = [];
+  for (const a of input.allocations) {
+    if (a.targetType !== 'transfer') continue;
+    const tx = byId.get(a.transactionId);
+    if (!tx || !onBudget.has(tx.accountId) || tx.date > end) continue;
+    const other = accountIds.has(a.targetId) ? a.targetId : byId.get(a.targetId)?.accountId;
+    if (other === undefined || !onBudget.has(other)) {
+      out.push({ tx, amount: a.amount, kind: 'offBudget' });
+      continue;
+    }
+    inside.push({ tx, amount: a.amount });
+    if (!parent.has(tx.id)) parent.set(tx.id, tx.id);
+    const mate = byId.get(a.targetId);
+    if (mate && mate.date <= end) {
+      if (!parent.has(mate.id)) parent.set(mate.id, mate.id);
+      parent.set(root(tx.id), root(mate.id));
+    }
+  }
+  const net = new Map<Id, Cents>();
+  for (const r of inside) net.set(root(r.tx.id), (net.get(root(r.tx.id)) ?? 0) + r.amount);
+  const open = inside.filter((r) => net.get(root(r.tx.id)) !== 0);
+  // A transfer filed against the other account (D-68) has no partner row: those
+  // of a month that add up to zero cancel out too.
+  const byMonth = new Map<MonthKey, Cents>();
+  for (const r of open) byMonth.set(monthOf(r.tx.date), (byMonth.get(monthOf(r.tx.date)) ?? 0) + r.amount);
+  for (const r of open) if (byMonth.get(monthOf(r.tx.date)) !== 0) out.push({ ...r, kind: 'transit' });
+  return out.sort((x, y) => y.tx.date.localeCompare(x.tx.date));
 }

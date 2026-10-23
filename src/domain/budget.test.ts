@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accountBalances, backdateDefaults, budgetForMonth, computeBudget, defaultFor, invested, isOnBudget } from './budget';
+import { accountBalances, backdateDefaults, budgetForMonth, computeBudget, defaultFor, explainReady, invested, looseTransfers, isOnBudget } from './budget';
 import { lastDayOfMonth, monthRange } from './dates';
 import { World } from './testkit';
 
@@ -327,5 +327,85 @@ describe('salary paid at the end of the month for the next one (D-74)', () => {
     expect([jan!.income, jan!.readyToAssign, jan!.heldForNextMonth]).toEqual([0, 0, eur(5000)]);
     expect([feb!.income, feb!.readyToAssign, feb!.heldForNextMonth]).toEqual([eur(5000), eur(5000), 0]);
     expect(mar!.income).toBe(eur(5000));
+  });
+});
+
+describe('transfers in the budget, row by row (D-85)', () => {
+  const cash = (w: World, month: string) => {
+    const b = accountBalances(w.accounts, w.transactions, lastDayOfMonth(month));
+    return w.accounts.filter(isOnBudget).reduce((s, a) => s + (b.get(a.id) ?? 0), 0);
+  };
+  const check = (w: World, through: string) => {
+    for (const m of computeBudget(w.input(), through)) {
+      let av = 0;
+      for (const c of m.categories.values()) av += c.available;
+      expect(m.readyToAssign + av + m.heldForNextMonth).toBe(cash(w, m.month));
+    }
+  };
+  it('a transfer pointing at an account whose other side does not exist cannot make money vanish', () => {
+    const w = new World('2026-01');
+    w.account('a', 'current', eur(1000));
+    w.account('b', 'savings', 0);
+    w.transactions.push({ id: 't', createdAt: '', updatedAt: '', source: 'manual', accountId: 'a', date: '2026-01-10', amount: eur(500), descriptionRaw: 'from b', merchantNorm: 'B', counterparty: '', status: 'reconciled' });
+    w.allocations.push({ id: 'x', createdAt: '', updatedAt: '', source: 'manual', transactionId: 't', targetType: 'transfer', targetId: 'b', amount: eur(500), confidence: 1, decidedBy: 'user', reason: '' });
+    check(w, '2026-03');
+    expect(computeBudget(w.input(), '2026-01')[0]!.transit).toBe(eur(500));
+  });
+  it('a transfer whose two sides fall in different months is in transit for that month end', () => {
+    const w = new World('2026-01');
+    w.account('a', 'current', eur(1000));
+    w.account('b', 'current', 0);
+    const out = { id: 'o', createdAt: '', updatedAt: '', source: 'manual' as const, accountId: 'a', date: '2026-01-31', amount: eur(-300), descriptionRaw: 'to b', merchantNorm: 'B', counterparty: '', status: 'reconciled' as const };
+    const inn = { ...out, id: 'i', accountId: 'b', date: '2026-02-02', amount: eur(300) };
+    w.transactions.push(out, inn);
+    w.allocations.push(
+      { id: 'x1', createdAt: '', updatedAt: '', source: 'manual', transactionId: 'o', targetType: 'transfer', targetId: 'i', amount: eur(-300), confidence: 1, decidedBy: 'user', reason: '' },
+      { id: 'x2', createdAt: '', updatedAt: '', source: 'manual', transactionId: 'i', targetType: 'transfer', targetId: 'o', amount: eur(300), confidence: 1, decidedBy: 'user', reason: '' },
+    );
+    check(w, '2026-03');
+    const [jan, feb] = computeBudget(w.input(), '2026-02');
+    expect([jan!.transit, feb!.transit, feb!.readyToAssign]).toEqual([eur(-300), eur(300), eur(1000)]);
+  });
+});
+
+describe('explaining Ready to assign (D-85)', () => {
+  it('the parts add up to Ready to assign, and so does the cross-check with the accounts', () => {
+    const w = new World('2026-01');
+    w.account('bank', 'current', eur(2000));
+    w.account('sav', 'savings', eur(500));
+    w.account('loan', 'loan', eur(-5000));
+    w.income('salary');
+    w.category('food', 'variable', 'roll');
+    w.category('phone', 'fixed', 'reset');
+    w.setDefault('food', eur(400));
+    w.setDefault('phone', eur(40));
+    w.earn('bank', '2026-01-25', eur(3000), 'salary');
+    w.spend('bank', '2026-01-10', eur(350), 'food');
+    w.spend('bank', '2026-02-05', eur(30), 'phone');
+    w.entry('bank', '2026-02-10', eur(-200), { kind: 'transfer', toAccountId: 'sav' });
+    w.entry('bank', '2026-02-12', eur(-100), { kind: 'transfer', toAccountId: 'loan' });
+    w.entry('bank', '2026-02-14', eur(-25), { kind: 'none' });
+    const x = explainReady(w.input(), '2026-02')!;
+    const parts = x.opening + x.income + x.assigned + x.returned + x.unfiled + x.transit + x.offBudget;
+    expect(parts).toBe(x.readyToAssign);
+    expect(x.cash - x.inCategories - x.held).toBe(x.readyToAssign);
+    expect([x.opening, x.income, x.offBudget, x.unfiled, x.transit]).toEqual([eur(2500), eur(3000), eur(-100), eur(-25), 0]);
+  });
+
+  it('lists the transfers behind the transfer lines: loans, and moves whose other side is missing or later', () => {
+    const w = new World('2026-01');
+    w.account('bank', 'current', eur(2000));
+    w.account('sav', 'savings', 0);
+    w.account('loan', 'loan', eur(-5000));
+    w.entry('bank', '2026-01-10', eur(-200), { kind: 'transfer', toAccountId: 'sav' });
+    w.entry('bank', '2026-01-12', eur(-100), { kind: 'transfer', toAccountId: 'loan' });
+    w.entry('bank', '2026-01-31', eur(-50), { kind: 'transfer', toAccountId: 'sav' });
+    // The savings side of the last move shows on 1 February.
+    const late = w.transactions.find((t) => t.accountId === 'sav' && t.amount === eur(50))!;
+    late.date = '2026-02-01';
+    const jan = looseTransfers(w.input(), '2026-01');
+    expect(jan.map((r) => [r.kind, r.amount])).toEqual([['transit', eur(-50)], ['offBudget', eur(-100)]]);
+    expect(jan.filter((r) => r.kind === 'transit').reduce((s, r) => s + r.amount, 0)).toBe(explainReady(w.input(), '2026-01')!.transit);
+    expect(looseTransfers(w.input(), '2026-02').map((r) => r.kind)).toEqual(['offBudget']);
   });
 });

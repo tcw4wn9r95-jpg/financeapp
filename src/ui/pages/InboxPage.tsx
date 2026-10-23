@@ -367,7 +367,8 @@ function AutoLog() {
   const [text, setText] = useState('');
   const [by, setBy] = useState<'' | 'rule' | 'history' | 'ai'>('');
   const [accountId, setAccountId] = useState('');
-  const [target, setTarget] = useState('');
+  // A budget line links here with its category preselected (D-85).
+  const [target, setTarget] = useState(useRoute().query.get('target') ?? '');
   const [sort, setSort] = useState<LogSort>('filed');
   const log = useMemo(() => autoApplied(allocations, transactions), [allocations, transactions]);
   const txById = useMemo(() => new Map(transactions.map((x) => [x.id, x])), [transactions]);

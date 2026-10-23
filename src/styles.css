@@ -606,6 +606,51 @@ main {
   background: var(--neg-bg);
   color: var(--neg);
 }
+.rta-why {
+  margin: 0.6rem 0 0;
+  font-size: 0.85rem;
+}
+.explain-list details > summary {
+  cursor: pointer;
+  list-style: none;
+  display: block;
+  min-height: 0;
+  color: var(--text);
+  font-weight: 400;
+}
+.explain-list details > summary::-webkit-details-marker {
+  display: none;
+}
+.explain-list details > summary > .split-row > span:first-child::after {
+  content: ' ›';
+  color: var(--muted);
+}
+.explain-list details[open] > summary > .split-row > span:first-child::after {
+  content: ' ⌄';
+}
+.explain-detail {
+  margin: 0.4rem 0 0 0.75rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.explain-list .hint {
+  margin: 0.2rem 0 0;
+}
+.explain-total {
+  border-top: 2px solid var(--border) !important;
+}
+.cat-tx {
+  margin-top: 1.25rem;
+}
+.filed-by {
+  white-space: nowrap;
+}
+.filed-rule,
+.filed-history,
+.filed-ai {
+  color: var(--warn);
+  font-weight: 500;
+}
 .card .rta {
   border: 0;
   padding: 0;
