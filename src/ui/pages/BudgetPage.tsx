@@ -1,12 +1,12 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import type { BudgetMonth, CategoryMonth } from '../../domain/budget';
-import { compareMonths, currentMonth, isMonthKey, monthOf } from '../../domain/dates';
-import { formatMoneyInput, parseMoney } from '../../domain/money';
+import { addMonths, compareMonths, currentMonth, isMonthKey, monthOf } from '../../domain/dates';
+import { formatMoney, formatMoneyInput, parseMoney } from '../../domain/money';
 import { parseRecurrence } from '../../domain/plan';
 import type { Category, CategoryGroup, MonthKey } from '../../domain/types';
 import { monthName, t } from '../../i18n';
-import { backdateToStart, saveMonthPlan, saveSettings, resetOverride, setDefaultFrom, setOverride } from '../actions';
-import { backdateDefaults, defaultFor, invested } from '../../domain/budget';
+import { backdateToStart, removeDefault, saveMonthPlan, saveSettings, resetOverride, setDefaultFrom, setOverride } from '../actions';
+import { backdateDefaults, defaultFor, futureChanges, invested } from '../../domain/budget';
 import { Dialog } from '../components/Dialog';
 import { MoneyField, TextField, useMoneyInput } from '../components/fields';
 import { Money } from '../components/Money';
@@ -251,7 +251,7 @@ function AssignDialog({ category, month, m, onClose, onPlan }: { category: Categ
           )}
           {category.groupId !== 'provisions' && category.groupId !== 'events' && !auto && (
             <button type="button" className="button button-quiet" disabled={busy} onClick={onPlan}>
-              {t('budget.planByMonth')}
+              {t('budget.planAhead')}
             </button>
           )}
         </div>
@@ -366,6 +366,8 @@ function MonthPlanDialog({ category, month, onClose }: { category: Category; mon
 
   return (
     <Dialog open title={t('budget.planTitle', { name: category.name })} onClose={onClose}>
+      <ChangesAhead category={category} />
+      <h3 className="plan-h">{t('budget.byMonthTitle')}</h3>
       <p className="hint">{category.isIncome ? t('budget.planIncomeHint') : t('budget.planHint')}</p>
       <div className="row plan-year">
         <button type="button" className="button button-quiet button-small" aria-label={t('budget.prevYear')} onClick={() => { setTexts({}); setYear(year - 1); }}>‹</button>
@@ -407,5 +409,71 @@ function MonthPlanDialog({ category, month, onClose }: { category: Category; mon
         <button type="button" className="button button-quiet" onClick={onClose}>{t('common.cancel')}</button>
       </div>
     </Dialog>
+  );
+}
+
+/**
+ * Changes ahead for one budget line (D-78): from a month on its usual amount
+ * becomes another, or it stops (a loan paid off, a raise, a subscription
+ * cancelled). The budget and the forecast follow from that month.
+ */
+function ChangesAhead({ category }: { category: Category }) {
+  const vault = useVault();
+  const notify = useToast();
+  const categories = useStore('categories');
+  const defaults = useStore('budgetDefaults');
+  const now = currentMonth();
+  const changes = futureChanges(categories, defaults, now).filter((c) => c.categoryId === category.id);
+  const months = Array.from({ length: 36 }, (_, i) => addMonths(now, i + 1));
+  const [from, setFrom] = useState(months[0]!);
+  const [stops, setStops] = useState(false);
+  const amount = useMoneyInput();
+  const usualNow = defaultFor(defaults, category.id, now)?.monthlyAmount ?? 0;
+  const value = stops ? 0 : amount.cents;
+  const valid = value !== null && value >= 0 && (stops || amount.text.trim() !== '');
+
+  async function add() {
+    if (!valid) return;
+    await setDefaultFrom(vault, category.id, value!, from);
+    notify(stops ? t('budget.changeStops', { name: category.name, month: monthName(from) }) : t('budget.changeSaved', { name: category.name, month: monthName(from) }));
+    amount.setText('');
+    setStops(false);
+  }
+
+  return (
+    <section className="changes-ahead" aria-labelledby="ca-h">
+      <h3 id="ca-h" className="plan-h">{t('budget.changesAhead')}</h3>
+      <p className="hint">{t('budget.usualNow', { amount: formatMoney(usualNow) })}</p>
+      {changes.length > 0 && (
+        <ul className="plain-list move-list">
+          {changes.map((c) => (
+            <li key={c.defaultId} className="split-row">
+              <span>
+                {t('budget.fromMonth', { month: monthName(c.month) })}: {c.after === 0 ? <strong>{t('budget.stops')}</strong> : <Money cents={c.after} />}
+                <span className="muted"> ({t('budget.wasAmount', { amount: formatMoney(c.before) })})</span>
+              </span>
+              <button type="button" className="link-button" aria-label={t('common.delete')} onClick={() => void removeDefault(vault, c.defaultId)}>✕</button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="change-form">
+        <label>
+          <span>{t('budget.fromLabel')}</span>
+          <select value={from} onChange={(e) => setFrom(e.target.value)}>
+            {months.map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>{t('budget.newAmount')}</span>
+          <input inputMode="decimal" placeholder="0,00" disabled={stops} value={stops ? '' : amount.text} onChange={(e) => amount.setText(e.target.value)} />
+        </label>
+        <label className="check check-inline">
+          <input type="checkbox" checked={stops} onChange={(e) => setStops(e.target.checked)} />
+          {category.isIncome ? t('budget.incomeStops') : t('budget.lineStops')}
+        </label>
+        <button type="button" className="button button-small" disabled={!valid} onClick={() => void add()}>{t('budget.addChange')}</button>
+      </div>
+    </section>
   );
 }

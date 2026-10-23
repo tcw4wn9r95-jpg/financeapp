@@ -109,6 +109,32 @@ export function isOnBudget(account: Pick<Account, 'type'>): boolean {
   return account.type !== 'loan';
 }
 
+/** A planned change of a budget line's usual monthly amount (D-78). */
+export interface LineChange {
+  categoryId: Id;
+  defaultId: Id;
+  month: MonthKey;
+  before: Cents;
+  after: Cents;
+}
+
+/**
+ * Changes to usual monthly amounts dated after `from` (a raise, a loan that
+ * ends, a subscription that stops), soonest first. Provisions and trips follow
+ * their own schedules and are left out.
+ */
+export function futureChanges(categories: readonly Category[], defaults: readonly BudgetDefault[], from: MonthKey): LineChange[] {
+  const own = new Set(categories.filter((c) => c.isIncome || (c.groupId !== 'provisions' && c.groupId !== 'events')).map((c) => c.id));
+  const out: LineChange[] = [];
+  for (const d of defaults) {
+    if (!own.has(d.categoryId) || compareMonths(d.effectiveFrom, from) <= 0) continue;
+    const before = defaultFor(defaults, d.categoryId, addMonths(d.effectiveFrom, -1))?.monthlyAmount ?? 0;
+    if (before === d.monthlyAmount) continue;
+    out.push({ categoryId: d.categoryId, defaultId: d.id, month: d.effectiveFrom, before, after: d.monthlyAmount });
+  }
+  return out.sort((a, b) => a.month.localeCompare(b.month));
+}
+
 /** Default monthly amount for a category in a month, from the dated history. */
 export function defaultFor(
   defaults: readonly BudgetDefault[],

@@ -1,8 +1,8 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { currentMonth, formatDate, monthOf, parseDate, todayIso } from '../../domain/dates';
+import { addMonths, currentMonth, formatDate, monthOf, parseDate, todayIso } from '../../domain/dates';
 import { firstBelow, type ForecastResult } from '../../domain/forecast';
 import { addMonthsToDate, amountFor, occurrences, eventPlanParts, eventStatus, formatRecurrence, monthlySetAside, nextDue, parseRecurrence, planCloseEvent, provisionSchedule, provisionStatus, type Recurrence } from '../../domain/plan';
-import { planPartAmount } from '../../domain/budget';
+import { futureChanges, planPartAmount } from '../../domain/budget';
 import { provisionWindow, tripWindow } from '../../domain/buckets';
 import { formatMoney, formatMoneyInput, parseMoney } from '../../domain/money';
 import type { EventFund, Provision, SubBudget, Transaction } from '../../domain/types';
@@ -135,6 +135,7 @@ function Forecast() {
   return (
     <>
       <ForecastView result={result} />
+      <ChangesAheadCard />
       <p className="hint">{t('plan.how')} <a href={href('settings', { section: 'budget' })}>{t('plan.setBuffer')}</a></p>
     </>
   );
@@ -683,3 +684,43 @@ function CloseDialog({ event, onClose }: { event: EventFund; onClose: () => void
 // re-exported helpers for other pages
 export { formatRecurrence, parseDate };
 export type { Recurrence };
+
+/** Every planned change of a usual monthly amount in the next two years, with its effect each month (D-78). */
+function ChangesAheadCard() {
+  const categories = useStore('categories');
+  const defaults = useStore('budgetDefaults');
+  const now = currentMonth();
+  const until = addMonths(now, 24);
+  const changes = futureChanges(categories, defaults, now).filter((c) => c.month <= until);
+  const cat = (id: string) => categories.find((c) => c.id === id);
+  return (
+    <section className="card" aria-labelledby="ca-all-h">
+      <h2 id="ca-all-h">{t('budget.changesAhead')}</h2>
+      {changes.length === 0 ? (
+        <p className="muted">{t('plan.noChangesAhead')}</p>
+      ) : (
+        <ul className="plain-list move-list">
+          {changes.map((c) => {
+            const k = cat(c.categoryId);
+            // Effect on the month's money: more income or less spending is positive.
+            const effect = (c.after - c.before) * (k?.isIncome ? 1 : -1);
+            return (
+              <li key={c.defaultId} className="split-row">
+                <span>
+                  <strong>{monthName(c.month)}</strong> · {k?.name ?? '?'}{' '}
+                  <span className="muted">
+                    {formatMoney(c.before)} → {c.after === 0 ? t('budget.stops') : formatMoney(c.after)}
+                  </span>
+                </span>
+                <span>
+                  <Money cents={effect} plusSign /> {t('plan.perMonthShort')}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <p className="hint">{t('plan.changesAheadHow')}</p>
+    </section>
+  );
+}

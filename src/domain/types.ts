@@ -263,11 +263,15 @@ export interface TrainingExample extends BaseRecord {
 }
 
 export interface ScenarioChange {
+  /** 'expense' | 'income' | 'oneOff', or 'line': a change to one budget line (D-79). */
   type: string;
   start: MonthKey;
   end?: MonthKey;
+  /** Signed for 'line' with mode 'adjust' and for 'oneOff'; otherwise positive. */
   amount: Cents;
   target?: { targetType: TargetType; targetId: Id };
+  /** 'line' only: add `amount` (plus or minus) to the line's monthly amount, or set it to `amount` (0 = it stops). */
+  mode?: 'adjust' | 'set';
 }
 
 export interface Scenario extends BaseRecord {

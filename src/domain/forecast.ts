@@ -108,12 +108,36 @@ function planned(input: BudgetInput, categoryId: Id, month: MonthKey): Cents | u
   return defaultFor(input.defaults, categoryId, month)?.monthlyAmount;
 }
 
+/**
+ * What-if changes to budget lines (D-79), as month amounts of their own: the
+ * line's planned amount plus or minus the change, or the amount set (0 stops it).
+ */
+export function withLineChanges(budget: BudgetInput, changes: readonly ScenarioChange[], from: MonthKey, through: MonthKey): BudgetInput {
+  const lines = changes.filter((c) => c.type === 'line' && c.target);
+  if (lines.length === 0) return budget;
+  const overrides = [...budget.overrides];
+  for (const c of lines) {
+    const id = c.target!.targetId;
+    const last = c.end && c.end < through ? c.end : through;
+    for (let m = c.start < from ? from : c.start; m <= last; m = addMonths(m, 1)) {
+      const base = overrides.find((o) => o.categoryId === id && o.month === m)?.amount ?? defaultFor(budget.defaults, id, m)?.monthlyAmount ?? 0;
+      const amount = c.mode === 'set' ? c.amount : Math.max(0, base + c.amount);
+      const i = overrides.findIndex((o) => o.categoryId === id && o.month === m);
+      const record = { id: `scenario:${id}:${m}`, createdAt: '', updatedAt: '', source: 'manual' as const, categoryId: id, month: m, amount, note: '' };
+      if (i >= 0) overrides[i] = record;
+      else overrides.push(record);
+    }
+  }
+  return { ...budget, overrides };
+}
+
 /** Scheduled cash items over the horizon (exported for tests and the item list). */
 export function scheduleItems(f: ForecastInput): CashItem[] {
-  const { today, budget } = f;
+  const { today } = f;
   const tomorrow = addDays(today, 1);
   const thisMonth = monthOf(today);
   const lastMonth = addMonths(thisMonth, f.months - 1);
+  const budget = withLineChanges(f.budget, f.changes ?? [], thisMonth, lastMonth);
   const end = lastDayOfMonth(lastMonth);
   const h = history(budget, today);
   const items: CashItem[] = [];
@@ -188,6 +212,7 @@ export function scheduleItems(f: ForecastInput): CashItem[] {
   }
 
   for (const c of f.changes ?? []) {
+    if (c.type === 'line') continue; // already in the budget lines above
     const last = c.end ?? lastMonth;
     for (let m = c.start; m <= last && m <= lastMonth; m = addMonths(m, 1)) {
       if (c.type === 'oneOff') {

@@ -159,6 +159,34 @@ describe('forecast (F9)', () => {
   });
 });
 
+describe('what if on budget lines (D-79)', () => {
+  it('groceries −100 a month, salary +300 from January, rent stops in June', async () => {
+    const { forecast: fc } = await import('./forecast');
+    const { World: W } = await import('./testkit');
+    const w = new W('2026-08');
+    w.account('bank', 'current', eur(2000));
+    w.income('salary');
+    w.category('rent', 'fixed', 'reset');
+    w.category('groceries', 'variable', 'roll');
+    w.setDefault('salary', eur(5000));
+    w.setDefault('rent', eur(1800));
+    w.setDefault('groceries', eur(600));
+    const base = fc({ today: '2026-10-10', months: 12, budget: w.input(), provisions: [], events: [] });
+    const what = fc({
+      today: '2026-10-10', months: 12, budget: w.input(), provisions: [], events: [],
+      changes: [
+        { type: 'line', mode: 'adjust', start: '2026-11', amount: eur(-100), target: { targetType: 'category', targetId: 'groceries' } },
+        { type: 'line', mode: 'adjust', start: '2027-01', amount: eur(300), target: { targetType: 'income', targetId: 'salary' } },
+        { type: 'line', mode: 'set', start: '2027-06', amount: 0, target: { targetType: 'category', targetId: 'rent' } },
+      ],
+    });
+    const diff = (m: string) => what.months.find((x) => x.month === m)!.end - base.months.find((x) => x.month === m)!.end;
+    expect(diff('2026-11')).toBe(eur(100));
+    expect(diff('2027-01')).toBe(eur(100 * 3 + 300));
+    expect(diff('2027-06') - diff('2027-05')).toBe(eur(100 + 300 + 1800));
+  });
+});
+
 describe('provision schedule: start, target date, target amount (D-49)', () => {
   it('car insurance 1,200 € due 15/06/2026, saving from January: 200 a month, then 100 a month for the yearly cycle', () => {
     expect(provisionSchedule(provision({ dueDate: '2026-06-15', startDate: '2026-01-01' }), '2026-01')).toEqual([

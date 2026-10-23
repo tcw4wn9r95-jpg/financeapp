@@ -2169,3 +2169,18 @@ input[type='date']::-webkit-date-and-time-value {
 .income-facts {
   margin-top: 0.5rem;
 }
+.change-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.change-form > label:not(.check) {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.plan-h {
+  margin: 1rem 0 0.25rem;
+  font-size: 1rem;
+}

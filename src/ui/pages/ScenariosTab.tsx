@@ -20,6 +20,7 @@ import { ForecastView } from './PlanPage';
 
 const HORIZON = 24;
 const TYPES: [ScenarioChange['type'], MessageKey][] = [
+  ['line', 'scenario.type.line'],
   ['expense', 'scenario.type.expense'],
   ['income', 'scenario.type.income'],
   ['oneOff', 'scenario.type.oneOff'],
@@ -52,6 +53,8 @@ export function ScenariosTab() {
 
 function Compare({ scenario }: { scenario: Scenario }) {
   const settings = useSettings();
+  const categories = useStore('categories');
+  const lineName = (c: ScenarioChange) => categories.find((x) => x.id === c.target?.targetId)?.name ?? '?';
   const baseline = useForecast(HORIZON);
   const changes = useMemo(() => scenario.changes, [scenario]);
   const result = useForecast(HORIZON, changes);
@@ -65,10 +68,14 @@ function Compare({ scenario }: { scenario: Scenario }) {
         {scenario.changes.map((c, i) => (
           <li key={i} className="split-row">
             <span>
-              {t(TYPES.find(([k]) => k === c.type)?.[1] ?? 'scenario.type.expense')} · {monthName(c.start)}
+              {c.type === 'line' ? lineName(c) : t(TYPES.find(([k]) => k === c.type)?.[1] ?? 'scenario.type.expense')} · {monthName(c.start)}
               {c.type !== 'oneOff' && (c.end ? ` – ${monthName(c.end)}` : ` ${t('scenario.onwards')}`)}
             </span>
-            <Money cents={c.type === 'income' ? Math.abs(c.amount) : c.type === 'expense' ? -Math.abs(c.amount) : c.amount} plusSign />
+            {c.type === 'line' && c.mode === 'set' ? (
+              <span>{c.amount === 0 ? t('scenario.stops') : <>{t('scenario.setTo')} <Money cents={c.amount} /></>}</span>
+            ) : (
+              <Money cents={c.type === 'income' ? Math.abs(c.amount) : c.type === 'expense' ? -Math.abs(c.amount) : c.amount} plusSign />
+            )}
           </li>
         ))}
         <li className="split-row">
@@ -97,6 +104,9 @@ interface Line {
   amount: string;
   /** One-off only: money coming in (a bonus, a sale) rather than going out. */
   inflow: boolean;
+  /** Budget line changes (D-79): which line, and more by, less by or set to. */
+  categoryId: string;
+  how: 'plus' | 'minus' | 'set';
 }
 
 function ScenarioDialog({ existing, onClose }: { existing: Scenario | undefined; onClose: () => void }) {
@@ -104,26 +114,47 @@ function ScenarioDialog({ existing, onClose }: { existing: Scenario | undefined;
   const notify = useToast();
   const [name, setName] = useState(existing?.name ?? '');
   const first = addMonths(currentMonth(), 1);
+  const blank = (): Line => ({ type: 'line', start: first, end: '', amount: '', inflow: false, categoryId: '', how: 'minus' });
   const months = Array.from({ length: HORIZON }, (_, i) => addMonths(currentMonth(), i));
   const [lines, setLines] = useState<Line[]>(
-    existing?.changes.map((c) => ({ type: c.type, start: c.start, end: c.end ?? '', amount: formatMoneyInput(Math.abs(c.amount)), inflow: c.type === 'oneOff' && c.amount > 0 })) ?? [
-      { type: 'expense', start: first, end: '', amount: '', inflow: false },
-    ],
+    existing?.changes.map((c) => ({
+      type: c.type,
+      start: c.start,
+      end: c.end ?? '',
+      amount: formatMoneyInput(Math.abs(c.amount)),
+      inflow: c.type === 'oneOff' && c.amount > 0,
+      categoryId: c.target?.targetId ?? '',
+      how: c.mode === 'set' ? 'set' : c.amount < 0 ? 'minus' : 'plus',
+    })) ?? [blank()],
   );
   const [error, setError] = useState('');
+  const categories = useStore('categories');
+  // Lines the forecast plans from their monthly amounts: income, fixed, variable, investments.
+  const lineOptions = categories
+    .filter((c) => !c.archivedAt && (c.isIncome || c.groupId === 'fixed' || c.groupId === 'variable' || c.groupId === 'investments'))
+    .sort((a, b) => Number(b.isIncome) - Number(a.isIncome) || a.groupId.localeCompare(b.groupId) || a.sortOrder - b.sortOrder);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     const parsed = lines.map((l) => ({ ...l, cents: parseCents(l.amount) }));
     if (!name.trim()) return setError(t('scenario.needName'));
-    if (parsed.length === 0 || parsed.some((l) => l.cents === null || l.cents === 0)) return setError(t('scenario.needAmount'));
+    if (parsed.some((l) => l.type === 'line' && !l.categoryId)) return setError(t('scenario.needLine'));
+    if (parsed.length === 0 || parsed.some((l) => l.cents === null || (l.cents === 0 && !(l.type === 'line' && l.how === 'set')))) return setError(t('scenario.needAmount'));
     if (parsed.some((l) => l.end && l.end < l.start)) return setError(t('scenario.endBeforeStart'));
-    const changes: ScenarioChange[] = parsed.map((l) => ({
-      type: l.type,
-      start: l.start,
-      ...(l.end && l.type !== 'oneOff' ? { end: l.end } : {}),
-      amount: l.type === 'oneOff' && !l.inflow ? -Math.abs(l.cents!) : Math.abs(l.cents!),
-    }));
+    const changes: ScenarioChange[] = parsed.map((l) => {
+      const base = { start: l.start, ...(l.end && l.type !== 'oneOff' ? { end: l.end } : {}) };
+      if (l.type === 'line') {
+        const cat = categories.find((c) => c.id === l.categoryId);
+        return {
+          ...base,
+          type: 'line',
+          target: { targetType: cat?.isIncome ? 'income' : 'category', targetId: l.categoryId },
+          mode: l.how === 'set' ? 'set' : 'adjust',
+          amount: l.how === 'minus' ? -Math.abs(l.cents!) : Math.abs(l.cents!),
+        } satisfies ScenarioChange;
+      }
+      return { ...base, type: l.type, amount: l.type === 'oneOff' && !l.inflow ? -Math.abs(l.cents!) : Math.abs(l.cents!) };
+    });
     const record: Scenario = existing
       ? { ...existing, name: name.trim(), changes, updatedAt: new Date().toISOString() }
       : { ...stamp(systemClock, 'manual'), name: name.trim(), changes };
@@ -152,6 +183,19 @@ function ScenarioDialog({ existing, onClose }: { existing: Scenario | undefined;
             <SelectField label={t('scenario.type')} value={l.type} onChange={(e) => set(i, { type: e.target.value as Line['type'] })}>
               {TYPES.map(([k, key]) => <option key={k} value={k}>{t(key)}</option>)}
             </SelectField>
+            {l.type === 'line' && (
+              <>
+                <SelectField label={t('scenario.line')} value={l.categoryId} onChange={(e) => set(i, { categoryId: e.target.value })}>
+                  <option value="">{t('common.choose')}</option>
+                  {lineOptions.map((c) => <option key={c.id} value={c.id}>{c.name}{c.isIncome ? ` (${t('categories.income')})` : ''}</option>)}
+                </SelectField>
+                <SelectField label={t('scenario.how')} value={l.how} onChange={(e) => set(i, { how: e.target.value as Line['how'] })}>
+                  <option value="plus">{t('scenario.howPlus')}</option>
+                  <option value="minus">{t('scenario.howMinus')}</option>
+                  <option value="set">{t('scenario.howSet')}</option>
+                </SelectField>
+              </>
+            )}
             {l.type === 'oneOff' && (
               <SelectField label={t('scenario.direction')} value={l.inflow ? 'in' : 'out'} onChange={(e) => set(i, { inflow: e.target.value === 'in' })}>
                 <option value="out">{t('scenario.moneyOut')}</option>
@@ -173,7 +217,7 @@ function ScenarioDialog({ existing, onClose }: { existing: Scenario | undefined;
             )}
           </fieldset>
         ))}
-        <button type="button" className="button button-quiet" onClick={() => setLines([...lines, { type: 'expense', start: first, end: '', amount: '', inflow: false }])}>+ {t('scenario.addChange')}</button>
+        <button type="button" className="button button-quiet" onClick={() => setLines([...lines, blank()])}>+ {t('scenario.addChange')}</button>
         {error && <p className="field-error" role="alert">{error}</p>}
         <div className="row">
           <button className="button button-primary">{t('common.save')}</button>
@@ -185,7 +229,9 @@ function ScenarioDialog({ existing, onClose }: { existing: Scenario | undefined;
 }
 
 function AmountField({ line, onChange }: { line: Line; onChange: (v: string) => void }) {
-  const hint = line.type === 'oneOff' ? t('scenario.oneOffHint') : line.type === 'income' ? t('scenario.incomeHint') : t('scenario.expenseHint');
+  const hint =
+    line.type === 'line' ? (line.how === 'set' ? t('scenario.setHint') : t('scenario.lineHint'))
+    : line.type === 'oneOff' ? t('scenario.oneOffHint') : line.type === 'income' ? t('scenario.incomeHint') : t('scenario.expenseHint');
   const invalid = line.amount.trim() !== '' && parseCents(line.amount) === null;
   return (
     <TextField

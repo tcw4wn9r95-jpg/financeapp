@@ -387,6 +387,11 @@ export async function saveMonthPlan(vault: Vault, categoryId: Id, plan: Readonly
   return special;
 }
 
+/** Remove one planned change of a usual monthly amount (D-78). */
+export async function removeDefault(vault: Vault, id: Id): Promise<void> {
+  await vault.write([{ type: 'delete', store: 'budgetDefaults', id }]);
+}
+
 export async function resetOverride(vault: Vault, overrideId: Id): Promise<void> {
   await vault.remove('budgetOverrides', overrideId);
 }
