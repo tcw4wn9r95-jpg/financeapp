@@ -20,6 +20,11 @@ export function ReadyToAssign({ month, compact = false }: { month: BudgetMonth; 
         <span aria-hidden="true">{icon} </span>
         {message}
       </p>
+      {month.heldForNextMonth > 0 && (
+        <p className="rta-held">
+          {t('rta.held')} <Money cents={month.heldForNextMonth} />
+        </p>
+      )}
     </section>
   );
 }

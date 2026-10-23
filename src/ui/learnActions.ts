@@ -16,11 +16,12 @@ import {
 import { inbox, type Changes } from '../domain/reconcile';
 import type { BudgetInput } from '../domain/budget';
 import { currentMonth } from '../domain/dates';
-import { eventPlans, provisionsMoveByMonth } from '../domain/plan';
+import { provisionsMoveByMonth } from '../domain/plan';
 import type { Id, Rule, RuleConditions, Transaction } from '../domain/types';
 import { askClaude, MAX_BATCH } from '../infra/claude';
 import type { Vault, WriteOp } from '../storage/vault';
 import { getSettings, saveSettings } from './actions';
+import { buildBudgetInput } from './budgetInput';
 import { applyChanges, cleanUpLedger } from './importActions';
 
 /** Writes for the learning layer (M4); the logic lives in /src/domain/learn.ts. */
@@ -42,18 +43,17 @@ export function learnContext(vault: Vault): LearnContext {
 
 /** The budget input as the hooks build it, straight from the vault (for actions outside React). */
 export function budgetInputFromVault(vault: Vault): BudgetInput {
-  const settings = getSettings(vault);
-  return {
-    startMonth: settings.budgetStartMonth,
+  return buildBudgetInput({
+    settings: getSettings(vault),
     categories: vault.list('categories'),
     defaults: vault.list('budgetDefaults'),
     overrides: vault.list('budgetOverrides'),
     accounts: vault.list('accounts'),
     transactions: vault.list('transactions'),
     allocations: vault.list('allocations'),
-    plans: eventPlans(vault.list('events')),
-    ...(settings.sweepTargetCategoryId ? { sweepTargetCategoryId: settings.sweepTargetCategoryId } : {}),
-  };
+    events: vault.list('events'),
+    provisions: vault.list('provisions'),
+  });
 }
 
 /** Apply a classification the user made, and remember it for next time. */

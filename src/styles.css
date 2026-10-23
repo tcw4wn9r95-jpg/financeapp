@@ -2114,3 +2114,8 @@ input[type='date']::-webkit-date-and-time-value {
   font: inherit;
   cursor: pointer;
 }
+.rta-held {
+  margin: 0.25rem 0 0;
+  font-size: 0.875rem;
+  opacity: 0.85;
+}

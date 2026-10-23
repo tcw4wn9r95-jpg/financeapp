@@ -128,6 +128,12 @@ export function BudgetPage() {
                 <span>{t('budget.incomeReceived')}</span>
                 <Money cents={budget.income} />
               </li>
+              {budget.heldForNextMonth !== 0 && (
+                <li className="split-row">
+                  <span>{t('budget.heldForNext')}</span>
+                  <Money cents={budget.heldForNextMonth} />
+                </li>
+              )}
               <li className="split-row">
                 <span>{t('budget.assignedThisMonth')}</span>
                 <Money cents={-budget.assignedTotal} />
@@ -148,6 +154,9 @@ export function BudgetPage() {
               )}
             </ul>
             {income.length > 0 && <p className="hint">{t('budget.incomeHint', { names: income.map((c) => c.name).join(', ') })}</p>}
+            {income.some((c) => c.nextMonthFromDay) && (
+              <p className="hint">{t('budget.incomeNextHint', { names: income.filter((c) => c.nextMonthFromDay).map((c) => c.name).join(', ') })}</p>
+            )}
           </section>
         </>
       )}
@@ -202,6 +211,8 @@ function AssignDialog({ category, month, m, onClose }: { category: Category; mon
   const [busy, setBusy] = useState(false);
   const cents = amount.cents;
   const invalid = cents === null || cents < 0;
+  // Free savings fill this category on their own (D-75); a typed amount replaces that for the month.
+  const auto = useBudgetInput().availableTargets?.get(category.id)?.has(month) && !m.overrideId;
 
   const run = async (fn: () => Promise<void>, message: string) => {
     setBusy(true);
@@ -223,6 +234,7 @@ function AssignDialog({ category, month, m, onClose }: { category: Category; mon
 
   return (
     <Dialog open title={t('budget.assignTitle', { name: category.name, month: monthName(month) })} onClose={onClose}>
+      {auto && <p className="notice">{t('budget.autoFree')}</p>}
       <form onSubmit={submitOverride} noValidate>
         <ul className="plain-list facts">
           <li className="split-row"><span>{t('budget.defaultIs')}</span><Money cents={m.defaultAmount} /></li>

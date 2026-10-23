@@ -1,5 +1,5 @@
-import { computeBudget, type BudgetInput } from './budget';
-import { addMonths, compareMonths, monthOf } from './dates';
+import { computeBudget, type BudgetInput, type BudgetMonth } from './budget';
+import { addMonths, compareMonths, monthOf, monthRange } from './dates';
 import { amountFor, nextDue, occurrences, parseRecurrence } from './plan';
 import type { Cents, EventFund, Id, IsoDate, MonthKey, Provision, Transaction } from './types';
 
@@ -80,8 +80,14 @@ export function allBucketWindows(provisions: readonly Provision[], events: reado
 }
 
 /** Share the provisions account's balance between the buckets, soonest due first. */
-export function fillBuckets(input: BudgetInput, month: MonthKey, accountId: Id | undefined, windows: readonly BucketWindow[]): BucketsSummary {
-  const months = computeBudget(input, month);
+export function fillBuckets(
+  input: BudgetInput,
+  month: MonthKey,
+  accountId: Id | undefined,
+  windows: readonly BucketWindow[],
+  computed?: readonly BudgetMonth[],
+): BucketsSummary {
+  const months = computed ? computed.filter((m) => compareMonths(m.month, month) <= 0) : computeBudget(input, month);
   const rows = windows.map((w) => {
     let planned = 0;
     let net = 0;
@@ -186,3 +192,25 @@ export function tripWindow(e: EventFund): BucketWindow {
   return { categoryId: e.categoryId, target: e.targetAmount, cycleStart: monthOf(e.startDate ?? e.createdAt.slice(0, 10)), due };
 }
 
+
+/**
+ * Free savings by month (D-75): what the provisions account holds beyond what
+ * provisions and trips should hold, for every month from the budget start
+ * through `through`. Given as available targets to a savings category (the
+ * Emergency fund), it takes that money out of Ready to assign, which then
+ * shows only money free to spend.
+ */
+export function freeSavingsByMonth(
+  input: BudgetInput,
+  provisions: readonly Provision[],
+  events: readonly EventFund[],
+  accountId: Id,
+  through: MonthKey,
+): Map<MonthKey, Cents> {
+  const computed = computeBudget(input, through);
+  const out = new Map<MonthKey, Cents>();
+  for (const m of monthRange(input.startMonth, through)) {
+    out.set(m, fillBuckets(input, m, accountId, allBucketWindows(provisions, events, m), computed).free);
+  }
+  return out;
+}

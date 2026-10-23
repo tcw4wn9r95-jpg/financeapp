@@ -176,6 +176,8 @@ export function ProvisionsMoveCard() {
   const names = new Map<string, string>([...provisions.map((p) => [p.categoryId, p.name] as const), ...events.map((e) => [e.categoryId, e.name] as const)]);
   const short = [...summary.views.values()].filter((v) => v.toMove > 0).sort((x, y) => y.toMove - x.toMove);
   const freeName = categories.find((c) => c.id === settings.sweepTargetCategoryId)?.name ?? t('move.freeSavings');
+  // Local state: the checkbox answers at once, the save follows.
+  const [freeAuto, setFreeAuto] = useState(settings.freeSavingsAuto !== false);
   const accountSelect = (
     <SelectField
       label={t('move.account')}
@@ -220,6 +222,19 @@ export function ProvisionsMoveCard() {
           <details className="move-settings">
             <summary>{t('move.settings', { name: account.name })}</summary>
             {accountSelect}
+            {settings.sweepTargetCategoryId && (
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={freeAuto}
+                  onChange={(e) => {
+                    setFreeAuto(e.target.checked);
+                    void saveSettings(vault, { freeSavingsAuto: e.target.checked }).then(() => notify(t('settings.saved')));
+                  }}
+                />
+                <span>{t('move.freeAuto', { name: freeName })}</span>
+              </label>
+            )}
             <p className="hint">{t('move.how', { name: account.name })}</p>
           </details>
         </>

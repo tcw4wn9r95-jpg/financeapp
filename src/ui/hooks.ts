@@ -1,5 +1,4 @@
 import { taxCashItems } from './taxParams';
-import { eventPlans } from '../domain/plan';
 import { createContext, useContext, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { computeBudget, type BudgetInput, type BudgetMonth } from '../domain/budget';
 import { compareMonths, currentMonth, todayIso } from '../domain/dates';
@@ -8,6 +7,7 @@ import { forecast, type CashItem, type ForecastResult } from '../domain/forecast
 import type { MonthKey, ScenarioChange, Settings, StoreName, StoreRecords } from '../domain/types';
 import type { Vault } from '../storage/vault';
 import { getSettings } from './actions';
+import { buildBudgetInput } from './budgetInput';
 import { t } from '../i18n';
 
 export const VaultContext = createContext<Vault | null>(null);
@@ -56,20 +56,13 @@ export function useBudgetInput(): BudgetInput {
   const transactions = useStore('transactions');
   const allocations = useStore('allocations');
   const events = useStore('events');
+  const provisions = useStore('provisions');
+  // Settings is a fresh object each render: depend on the fields used.
+  const { budgetStartMonth, sweepTargetCategoryId, provisionsAccountId, freeSavingsAuto } = settings;
   return useMemo(
-    () => ({
-      startMonth: settings.budgetStartMonth,
-      // Trips are budgeted by their dated parts (D-54).
-      plans: eventPlans(events),
-      categories,
-      defaults,
-      overrides,
-      accounts,
-      transactions,
-      allocations,
-      ...(settings.sweepTargetCategoryId ? { sweepTargetCategoryId: settings.sweepTargetCategoryId } : {}),
-    }),
-    [settings.budgetStartMonth, settings.sweepTargetCategoryId, categories, defaults, overrides, accounts, transactions, allocations, events],
+    () => buildBudgetInput({ settings, categories, defaults, overrides, accounts, transactions, allocations, events, provisions }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [budgetStartMonth, sweepTargetCategoryId, provisionsAccountId, freeSavingsAuto, categories, defaults, overrides, accounts, transactions, allocations, events, provisions],
   );
 }
 

@@ -191,7 +191,7 @@ describe('F2 rollover', () => {
   });
 });
 
-describe('invariant: Ready to assign + Σ available = on-budget cash', () => {
+describe('invariant: Ready to assign + Σ available + held for next month = on-budget cash', () => {
   // Deterministic pseudo-random ledger (LCG) so failures are reproducible.
   function lcg(seed: number) {
     let s = seed;
@@ -209,6 +209,8 @@ describe('invariant: Ready to assign + Σ available = on-budget cash', () => {
     w.account('sav', 'savings', eur(10000));
     w.account('loan', 'loan', eur(-100000));
     w.income('salary');
+    // Half the ledgers: salary paid at the end of the month for the next one (D-74).
+    if (seed % 2 === 0) w.categories.find((c) => c.id === 'salary')!.nextMonthFromDay = 20;
     const modes = ['roll', 'reset', 'sweep'] as const;
     for (let i = 0; i < 8; i++) {
       w.category(`c${i}`, 'variable', modes[i % 3]!);
@@ -233,7 +235,11 @@ describe('invariant: Ready to assign + Σ available = on-budget cash', () => {
     // Pre-start transaction is folded into the start month.
     w.spend('bank', '2025-12-30', 999, 'c0');
 
-    const months = computeBudget(w.input('c7'), '2026-06');
+    // A category whose available follows a target in some months (D-75).
+    const targets = new Map([['c3', new Map([['2026-02', 12345], ['2026-05', 50000]])]]);
+    const months = computeBudget({ ...w.input('c7'), availableTargets: targets }, '2026-06');
+    expect(months[1]!.categories.get('c3')!.available).toBe(12345);
+    expect(months[4]!.categories.get('c3')!.available).toBe(50000);
     expect(months.map((m) => m.month)).toEqual(monthRange('2026-01', '2026-06'));
     const onBudget = w.accounts.filter(isOnBudget).map((a) => a.id);
     for (const m of months) {
@@ -241,7 +247,7 @@ describe('invariant: Ready to assign + Σ available = on-budget cash', () => {
       const cash = onBudget.reduce((s, id) => s + balances.get(id)!, 0);
       let available = 0;
       for (const c of m.categories.values()) available += c.available;
-      expect(m.readyToAssign + available).toBe(cash);
+      expect(m.readyToAssign + available + m.heldForNextMonth).toBe(cash);
       expect(Number.isSafeInteger(m.readyToAssign)).toBe(true);
     }
   });
@@ -306,5 +312,20 @@ describe('investments (D-57)', () => {
     expect(inv).toMatchObject({ total: 55000, year: 55000, month: 25000 });
     expect(invested(w.input(), '2026-09').total).toBe(30000);
     expect(budgetForMonth(w.input(), '2026-03')!.categories.get('etf')!.activity).toBe(-30000);
+  });
+});
+
+describe('salary paid at the end of the month for the next one (D-74)', () => {
+  it('received from the 20th it counts next month, and is held until then', () => {
+    const w = new World('2026-01');
+    w.account('bank', 'current', 0);
+    w.income('salary');
+    w.categories.find((c) => c.id === 'salary')!.nextMonthFromDay = 20;
+    w.earn('bank', '2026-01-28', eur(5000), 'salary');
+    w.earn('bank', '2026-03-02', eur(5000), 'salary'); // late: counts in its own month
+    const [jan, feb, mar] = computeBudget(w.input(), '2026-03');
+    expect([jan!.income, jan!.readyToAssign, jan!.heldForNextMonth]).toEqual([0, 0, eur(5000)]);
+    expect([feb!.income, feb!.readyToAssign, feb!.heldForNextMonth]).toEqual([eur(5000), eur(5000), 0]);
+    expect(mar!.income).toBe(eur(5000));
   });
 });

@@ -215,6 +215,8 @@ export interface CategoryDraft {
   fromMonth?: MonthKey;
   /** Last month of this amount; from the month after, the category gets nothing (D-47). */
   untilMonth?: MonthKey;
+  /** Income paid for the next month from this day (D-74); absent turns it off. */
+  nextMonthFromDay?: number;
 }
 
 /** The month a new default should start: this month, but never before the budget starts. */
@@ -237,8 +239,9 @@ export function suggestedFromMonth(vault: Vault): MonthKey {
 export async function saveCategory(vault: Vault, draft: CategoryDraft, existing?: Category): Promise<void> {
   const { monthlyDefault, fromMonth, untilMonth, ...fields } = draft;
   const sortOrder = existing?.sortOrder ?? Math.max(-1, ...vault.list('categories').map((c) => c.sortOrder)) + 1;
+  const { nextMonthFromDay: _n, ...before } = existing ?? (stamp(systemClock, 'manual') as Category);
   const record: Category = {
-    ...(existing ?? (stamp(systemClock, 'manual') as Category)),
+    ...before,
     ...fields,
     sortOrder,
     updatedAt: new Date().toISOString(),

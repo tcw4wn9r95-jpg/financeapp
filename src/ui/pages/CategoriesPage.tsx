@@ -97,6 +97,9 @@ export function CategoriesPage() {
   );
 }
 
+/** Income from this day of the month counts next month, when the category is paid for the next month. */
+const NEXT_MONTH_FROM_DAY = 20;
+
 function CategoryDialog({ existing, preset, onClose }: { existing: Category | undefined; preset: { isIncome: boolean; groupId: CategoryGroup }; onClose: () => void }) {
   const vault = useVault();
   const notify = useToast();
@@ -109,6 +112,8 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
   const [isIncome] = useState(existing?.isIncome ?? preset.isIncome);
   const [groupId, setGroupId] = useState<CategoryGroup>(existing?.groupId ?? preset.groupId);
   const [mode, setMode] = useState<RolloverMode>(existing?.rolloverMode ?? 'roll');
+  // Income paid at the end of a month for the next one (D-74).
+  const [forNext, setForNext] = useState(!!existing?.nextMonthFromDay);
   const amount = useMoneyInput(current ?? (existing ? undefined : 0));
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -123,6 +128,7 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
     try {
       await saveCategory(vault, {
         name: name.trim(), groupId, rolloverMode: isIncome ? 'reset' : mode, isIncome,
+        ...(isIncome && forNext ? { nextMonthFromDay: NEXT_MONTH_FROM_DAY } : {}),
         ...(changedDefault || until ? { monthlyDefault: amount.cents ?? current ?? 0, fromMonth } : {}),
         ...(until ? { untilMonth: until } : {}),
       }, existing);
@@ -163,6 +169,14 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
             </fieldset>
             {mode === 'sweep' && !settings.sweepTargetCategoryId && <p className="notice notice-warn">⚠ {t('categories.noSweepTarget')}</p>}
           </>
+        )}
+        {isIncome && (
+          <label className="check">
+            <input type="checkbox" checked={forNext} onChange={(e) => setForNext(e.target.checked)} />
+            <span>
+              <strong>{t('categories.forNextMonth')}</strong> — {t('categories.forNextMonthHint', { day: NEXT_MONTH_FROM_DAY })}
+            </span>
+          </label>
         )}
         <MoneyField label={isIncome ? t('categories.expectedIncome') : t('categories.defaultAmount')} state={amount} hint={isIncome ? t('categories.expectedIncomeHint') : t('categories.defaultHint')} />
         <SelectField label={t('categories.appliesFrom')} value={fromMonth} onChange={(e) => setFromMonth(e.target.value)} hint={t('categories.appliesFromHint')}>

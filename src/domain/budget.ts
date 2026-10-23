@@ -1,4 +1,4 @@
-import { compareMonths, monthDiff, monthOf, monthRange } from './dates';
+import { addMonths, compareMonths, monthDiff, monthOf, monthRange } from './dates';
 import { assertCents } from './money';
 import type {
   Account,
@@ -30,8 +30,13 @@ import type {
  *   + uncategorised activity up to the month + leftovers returned so far
  *   − everything assigned up to the month.
  *
- * Invariant (tested): for every month, Ready to assign + Σ available equals the
- * total balance of on-budget accounts at month end.
+ * - Income in a category paid for the next month (D-74) received from its
+ *   day on counts in the next month; until then it is "held for next month".
+ * - A category with a target for a month (D-75, free savings) is assigned
+ *   whatever makes its available equal that target.
+ *
+ * Invariant (tested): for every month, Ready to assign + Σ available + held
+ * for next month equals the total balance of on-budget accounts at month end.
  */
 
 export interface BudgetInput {
@@ -45,6 +50,11 @@ export interface BudgetInput {
   sweepTargetCategoryId?: Id;
   /** Categories budgeted by a plan of dated parts (trips) instead of defaults (D-54). */
   plans?: ReadonlyMap<Id, readonly PlanPart[]>;
+  /**
+   * What a category's available should be in a month (D-75): it is assigned
+   * the difference. An override for that month still wins.
+   */
+  availableTargets?: ReadonlyMap<Id, ReadonlyMap<MonthKey, Cents>>;
 }
 
 /**
@@ -88,6 +98,8 @@ export interface BudgetMonth {
   /** Leftovers from last month's reset/sweep categories returned this month. */
   returnedFromLastMonth: Cents;
   readyToAssign: Cents;
+  /** Income already received this month that counts next month (D-74). */
+  heldForNextMonth: Cents;
 }
 
 /** On-budget accounts carry spendable money. Loans are tracked but off-budget (D-10). */
@@ -127,6 +139,8 @@ interface MonthActivity {
   byCategory: Map<Id, Cents>;
   income: Cents;
   uncategorised: Cents;
+  /** Income received in this month that counts in the next one. */
+  held: Cents;
 }
 
 /**
@@ -136,6 +150,7 @@ interface MonthActivity {
 function activityByMonth(input: BudgetInput): Map<MonthKey, MonthActivity> {
   const onBudget = new Set(input.accounts.filter(isOnBudget).map((a) => a.id));
   const incomeIds = new Set(input.categories.filter((c) => c.isIncome).map((c) => c.id));
+  const nextFrom = new Map(input.categories.filter((c) => c.isIncome && c.nextMonthFromDay).map((c) => [c.id, c.nextMonthFromDay!]));
   const expenseIds = new Set(input.categories.filter((c) => !c.isIncome).map((c) => c.id));
 
   const allocsByTxn = new Map<Id, Allocation[]>();
@@ -154,7 +169,7 @@ function activityByMonth(input: BudgetInput): Map<MonthKey, MonthActivity> {
   const bucket = (month: MonthKey): MonthActivity => {
     let b = out.get(month);
     if (!b) {
-      b = { byCategory: new Map(), income: 0, uncategorised: 0 };
+      b = { byCategory: new Map(), income: 0, uncategorised: 0, held: 0 };
       out.set(month, b);
     }
     return b;
@@ -171,7 +186,15 @@ function activityByMonth(input: BudgetInput): Map<MonthKey, MonthActivity> {
         b.byCategory.set(a.targetId, (b.byCategory.get(a.targetId) ?? 0) + a.amount);
         covered += a.amount;
       } else if (a.targetType === 'income' && incomeIds.has(a.targetId)) {
-        b.income += a.amount;
+        const from = nextFrom.get(a.targetId);
+        if (from && Number(t.date.slice(8, 10)) >= from) {
+          // Paid for next month (D-74): counted then; held until then.
+          const next = addMonths(raw, 1);
+          bucket(compareMonths(next, input.startMonth) < 0 ? input.startMonth : next).income += a.amount;
+          if (compareMonths(raw, input.startMonth) >= 0) b.held += a.amount;
+        } else {
+          b.income += a.amount;
+        }
         covered += a.amount;
       } else if (a.targetType === 'transfer') {
         // Between two on-budget accounts: no budget effect. A transfer to or
@@ -228,7 +251,7 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
   let returned = 0;
 
   for (const month of months) {
-    const act = activity.get(month) ?? { byCategory: new Map(), income: 0, uncategorised: 0 };
+    const act = activity.get(month) ?? { byCategory: new Map(), income: 0, uncategorised: 0, held: 0 };
     const cats = new Map<Id, CategoryMonth>();
     const nextCarry = new Map<Id, Cents>();
     let nextReturned = 0;
@@ -249,9 +272,10 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       } else {
         defaultAmount = defaultFor(input.defaults, c.id, month)?.monthlyAmount ?? 0;
       }
-      const assigned = ovr ? ovr.amount : defaultAmount;
       const carryIn = carry.get(c.id) ?? 0;
       const catActivity = act.byCategory.get(c.id) ?? 0;
+      const target = input.availableTargets?.get(c.id)?.get(month);
+      const assigned = ovr ? ovr.amount : target !== undefined ? target - carryIn - catActivity : defaultAmount;
       const available = carryIn + assigned + catActivity;
       assignedTotal += assigned;
       activityTotal += catActivity;
@@ -301,6 +325,7 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       uncategorised: act.uncategorised,
       returnedFromLastMonth: returned,
       readyToAssign: ready,
+      heldForNextMonth: act.held,
     });
     carry = nextCarry;
     returned = nextReturned;

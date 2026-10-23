@@ -162,6 +162,11 @@ export interface Category extends BaseRecord {
   isIncome: boolean;
   /** Display order inside its group. */
   sortOrder: number;
+  /**
+   * Income paid at the end of a month for the next one (a salary): received
+   * on or after this day of the month, it counts in the next month (D-74).
+   */
+  nextMonthFromDay?: number;
   /** Hidden from the budget once its event is closed and nothing is left in it. */
   archivedAt?: string;
 }
@@ -399,6 +404,8 @@ export interface Settings {
   investmentsSetUp?: boolean;
   /** "Keep as is" on the hint about monthly amounts starting after the budget start. */
   lateAmountsKept?: boolean;
+  /** False: the Emergency fund is not filled automatically with free savings (D-75). Default on. */
+  freeSavingsAuto?: boolean;
   /** Merchants whose rule proposal was dismissed. */
   dismissedRuleProposals?: string[];
   /** Optional Claude fallback for transactions nothing else recognises (opt-in, D-37). */
