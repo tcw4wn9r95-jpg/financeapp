@@ -15,6 +15,9 @@ import {
   learn,
   learnOnImport,
   predictTargets,
+  readChatTurn,
+  chatSystemPrompt,
+  chatOpening,
   filterLog,
   type FiledRow,
   matchRule,
@@ -332,5 +335,35 @@ describe('the automatic-filing log: filters and sorting (D-83)', () => {
     expect(ids('date')).toEqual(['2', '3', '1']);
     expect(ids('confidence')).toEqual(['3', '2', '1']);
     expect(ids('amount')).toEqual(['1', '2', '3']);
+  });
+});
+
+describe('asking Claude about one transaction (D-84)', () => {
+  const cats = [
+    { ...base, id: 'groceries', name: 'Groceries', groupId: 'variable', rolloverMode: 'roll', isIncome: false, sortOrder: 0 },
+    { ...base, id: 'gifts', name: 'Gifts', groupId: 'variable', rolloverMode: 'roll', isIncome: false, sortOrder: 1 },
+    { ...base, id: 'salary', name: 'Salary', groupId: 'fixed', rolloverMode: 'reset', isIncome: true, sortOrder: 2 },
+  ] as Category[];
+  const targets = aiTargets(cats);
+  it('an answer must name a known category that fits the direction; unknown alternatives are dropped', () => {
+    expect(readChatTurn({ kind: 'answer', target: 'c1', alternatives: ['c2', 'c9', 'c1'], reason: 'A supermarket.', question: '', options: [] }, targets, -3000)).toMatchObject({ kind: 'answer', target: 'c1', alternatives: ['c2'] });
+    expect(readChatTurn({ kind: 'answer', target: 'c3', alternatives: [], reason: '', question: '', options: [] }, targets, -3000)).toBeUndefined(); // income for money out
+    expect(readChatTurn({ kind: 'answer', target: 'transfer', alternatives: [], reason: '', question: '', options: [] }, targets, -3000)!.target).toBe('transfer');
+  });
+  it('a question needs its text; up to four replies are kept', () => {
+    expect(readChatTurn({ kind: 'question', target: '', alternatives: [], reason: '', question: 'Was it a gift?', options: ['Yes', 'No', 'Paying back', 'Shared dinner', 'Other'] }, targets, -3000)).toMatchObject({ question: 'Was it a gift?', options: ['Yes', 'No', 'Paying back', 'Shared dinner'] });
+    expect(readChatTurn({ kind: 'question', question: '' }, targets, -3000)).toBeUndefined();
+    expect(readChatTurn('nonsense', targets, -3000)).toBeUndefined();
+  });
+  it('the prompt lists the categories by key; the opening carries only the redacted transaction', () => {
+    expect(chatSystemPrompt(targets)).toContain('c2: Gifts (expense, variable)');
+    expect(chatOpening({ ref: '1', merchant: 'PERSONAL TRANSFER', amount: -30, date: '2026-10-01', country: 'LU' })).toContain('"merchant":"PERSONAL TRANSFER"');
+  });
+});
+
+describe('household names never reach Claude in category names (D-84)', () => {
+  it('"Salary Diana" is sent as "Salary Person 2"', () => {
+    const cats = [{ ...base, id: 's', name: 'Salary Diana', groupId: 'fixed', rolloverMode: 'reset', isIncome: true, sortOrder: 0 }] as Category[];
+    expect(aiTargets(cats, ['Diego', 'Diana'])[0]!.name).toBe('Salary Person 2');
   });
 });

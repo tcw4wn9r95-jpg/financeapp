@@ -1,4 +1,4 @@
-import { AI_SCHEMA, aiPrompt, type AiAnswer, type AiTarget, type RedactedItem } from '../domain/learn';
+import { AI_SCHEMA, CHAT_SCHEMA, aiPrompt, type AiAnswer, type AiTarget, type RedactedItem } from '../domain/learn';
 
 /**
  * Optional Claude fallback (D-37). Runs only when the user turned it on,
@@ -44,6 +44,46 @@ export async function askClaude(apiKey: string, items: readonly RedactedItem[], 
     const results = (parsed as { results?: unknown }).results;
     if (!Array.isArray(results)) throw new ClaudeError('invalid');
     return results as AiAnswer[];
+  } catch (e) {
+    if (e instanceof ClaudeError) throw e;
+    if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) throw new ClaudeError('auth');
+    if (e instanceof Anthropic.RateLimitError) throw new ClaudeError('rateLimit');
+    if (e instanceof Anthropic.APIConnectionError) throw new ClaudeError('network');
+    throw new ClaudeError('other');
+  }
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/**
+ * One turn of the "Ask Claude" conversation about a single transaction (D-84).
+ * Returns Claude's structured reply as parsed JSON; the caller checks it.
+ */
+export async function chatWithClaude(apiKey: string, system: string, messages: readonly ChatMessage[]): Promise<{ raw: unknown; text: string }> {
+  const { default: Anthropic } = await import('@anthropic-ai/sdk');
+  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true, maxRetries: 2 });
+  try {
+    const message = await client.beta.messages
+      .stream({
+        model: CLAUDE_MODEL,
+        max_tokens: 2000,
+        betas: ['server-side-fallback-2026-07-01'],
+        fallbacks: 'default',
+        system,
+        output_config: { effort: 'low', format: { type: 'json_schema', schema: CHAT_SCHEMA as unknown as Record<string, unknown> } },
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      })
+      .finalMessage();
+    if (message.stop_reason === 'refusal') throw new ClaudeError('refusal');
+    const text = message.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('');
+    try {
+      return { raw: JSON.parse(text), text };
+    } catch {
+      throw new ClaudeError('invalid');
+    }
   } catch (e) {
     if (e instanceof ClaudeError) throw e;
     if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) throw new ClaudeError('auth');

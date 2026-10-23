@@ -135,7 +135,7 @@ export function householdNames(vault: Vault): string[] {
 export async function askClaudeForInbox(vault: Vault, items: readonly Transaction[]): Promise<LearnResult> {
   const settings = getSettings(vault);
   if (!settings.ai?.enabled || !settings.ai.apiKey) throw new Error('ai-off');
-  const targets = aiTargets(vault.list('categories'));
+  const targets = aiTargets(vault.list('categories'), householdNames(vault));
   const answers = await askClaude(settings.ai.apiKey, redact(items, householdNames(vault)), targets);
   // Re-read: the inbox may have changed while waiting.
   const fresh = items.map((t) => vault.get('transactions', t.id)).filter((t): t is Transaction => !!t && t.status === 'new');

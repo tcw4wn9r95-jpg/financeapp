@@ -10,6 +10,7 @@ import { applyChanges, cleanUpLedger, ledgerView } from '../importActions';
 import { applyUserChanges } from '../learnActions';
 import { useFiledHistory, useStore, useVault } from '../hooks';
 import { groupLabel } from '../labels';
+import { AskClaudeDialog } from './AskClaude';
 import { Dialog } from './Dialog';
 import { Money } from './Money';
 import { useToast } from './Toast';
@@ -103,6 +104,7 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
   const [busy, setBusy] = useState(false);
   const [splitting, setSplitting] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [askingClaude, setAskingClaude] = useState(false);
   const others = useMemo(() => similar(tx, transactions), [tx, transactions]);
   const events = useStore('events');
 
@@ -228,6 +230,7 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
         </form>
       )}
       <div className="classify-more">
+        <button type="button" className="link-button" onClick={() => setAskingClaude(true)} disabled={busy}>{t('askClaude.button')}</button>
         <button type="button" className="link-button" onClick={() => setSplitting(true)} disabled={busy}>{t('inbox.split')}</button>
         {others.length > 0 && (
           <span className="similar-toggle">
@@ -268,6 +271,20 @@ export function ClassifyControl({ tx, onDone, initial = '' }: { tx: Transaction;
         </ul>
       )}
       {splitting && <SplitEditor tx={tx} onClose={() => setSplitting(false)} onDone={onDone} />}
+      {askingClaude && (
+        <AskClaudeDialog
+          tx={tx}
+          onClose={() => setAskingClaude(false)}
+          onPick={(v) => {
+            setAskingClaude(false);
+            choose(v);
+          }}
+          onOther={() => {
+            setAskingClaude(false);
+            setPicking(true);
+          }}
+        />
+      )}
       {picking && (
         <TargetPicker
           tx={tx}

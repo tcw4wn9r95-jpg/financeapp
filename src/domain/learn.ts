@@ -568,12 +568,21 @@ export interface AiTarget {
 }
 
 /** Categories offered to Claude, under short keys so no ids leave the device. */
-export function aiTargets(categories: readonly Category[]): AiTarget[] {
+/** Category names as sent to Claude: household members' names become "Person 1", "Person 2" (D-84). */
+export function maskNames(text: string, names: readonly string[]): string {
+  let out = text;
+  names.forEach((n, i) => {
+    for (const part of n.split(/\s+/).filter((p) => p.length >= 3)) out = out.replace(new RegExp(`\\b${escapeRegex(part)}\\b`, 'gi'), `Person ${i + 1}`);
+  });
+  return out;
+}
+
+export function aiTargets(categories: readonly Category[], names: readonly string[] = []): AiTarget[] {
   return categories
     .filter((c) => !c.archivedAt)
     .map((c, i) => ({
       key: `c${i + 1}`,
-      name: c.name,
+      name: maskNames(c.name, names),
       kind: c.isIncome ? ('income' as const) : ('expense' as const),
       group: c.isIncome ? 'income' : c.groupId,
       target: { targetType: c.isIncome ? ('income' as const) : ('category' as const), targetId: c.id },
@@ -614,6 +623,83 @@ export function aiPrompt(items: readonly RedactedItem[], targets: readonly AiTar
     'Transactions (JSON):',
     JSON.stringify(items),
   ].join('\n');
+}
+
+// ------------------------------------------------------ asking about one
+
+/**
+ * Asking Claude about one transaction, as a short conversation (D-84): Claude
+ * either names a category (with up to two alternatives and a reason) or asks
+ * one clarifying question with a few short replies to tap. Only the redacted
+ * transaction (as for "Ask Claude about N") and the category names are sent,
+ * plus whatever the user types in reply.
+ */
+export const CHAT_SCHEMA = {
+  type: 'object',
+  properties: {
+    kind: { type: 'string', enum: ['answer', 'question'] },
+    target: { type: 'string', description: 'answer: the category key, e.g. "c3"; "transfer" for money moved between the household\'s own accounts; "none" if no category fits.' },
+    alternatives: { type: 'array', items: { type: 'string' }, description: 'answer: up to two other category keys that could also fit.' },
+    reason: { type: 'string', description: 'answer: one short sentence.' },
+    question: { type: 'string', description: 'question: one short question for the household.' },
+    options: { type: 'array', items: { type: 'string' }, description: 'question: two to four short replies the household can tap.' },
+  },
+  required: ['kind', 'target', 'alternatives', 'reason', 'question', 'options'],
+  additionalProperties: false,
+} as const;
+
+export interface ChatTurn {
+  kind: 'answer' | 'question';
+  /** answer: a category key, 'transfer' or 'none'. */
+  target: string;
+  alternatives: string[];
+  reason: string;
+  question: string;
+  options: string[];
+}
+
+export function chatSystemPrompt(targets: readonly AiTarget[]): string {
+  return [
+    'You help a household in Luxembourg file one bank transaction in their budget (amounts in EUR; negative = money out).',
+    'Answer with a category key from the list when you can tell from the merchant, the amount and what the household says.',
+    'When it is genuinely unclear (a person\'s name, a generic shop, a transfer with no context), ask ONE short clarifying question instead, with two to four short replies the household can tap (e.g. "Groceries", "A gift", "Paying back a friend"). Do not ask more than needed; after two answers, decide.',
+    'Income categories only fit money in. A refund belongs to the expense category of what was refunded. Money moved between the household\'s own accounts is "transfer". Use "none" only if nothing fits.',
+    'Keep the reason to one short sentence. Never ask for personal data.',
+    '',
+    'Categories:',
+    ...targets.map((x) => `${x.key}: ${x.name} (${x.kind}${x.kind === 'expense' ? `, ${x.group}` : ''})`),
+  ].join('\n');
+}
+
+export function chatOpening(item: RedactedItem): string {
+  return `Transaction: ${JSON.stringify({ merchant: item.merchant, amount: item.amount, date: item.date, country: item.country })}\nWhich category is it?`;
+}
+
+/** Claude's reply, checked: unknown keys are dropped, a question needs text, an answer needs a known key. */
+export function readChatTurn(raw: unknown, targets: readonly AiTarget[], amount: Cents): ChatTurn | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  const str = (x: unknown) => (typeof x === 'string' ? x.trim() : '');
+  const list = (x: unknown) => (Array.isArray(x) ? x.map(str).filter(Boolean) : []);
+  const fits = (key: string) => {
+    if (key === 'transfer' || key === 'none') return true;
+    const tg = targets.find((x) => x.key === key);
+    return !!tg && !(tg.kind === 'income' && amount < 0);
+  };
+  const kind = r.kind === 'question' ? 'question' : r.kind === 'answer' ? 'answer' : undefined;
+  if (!kind) return undefined;
+  const question = str(r.question);
+  if (kind === 'question' && !question) return undefined;
+  const target = str(r.target);
+  if (kind === 'answer' && !fits(target)) return undefined;
+  return {
+    kind,
+    target: kind === 'answer' ? target : '',
+    alternatives: list(r.alternatives).filter((k) => k !== target && fits(k) && k !== 'none').slice(0, 2),
+    reason: str(r.reason),
+    question: kind === 'question' ? question : '',
+    options: kind === 'question' ? list(r.options).slice(0, 4) : [],
+  };
 }
 
 export interface AiAnswer {
