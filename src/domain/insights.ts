@@ -50,6 +50,8 @@ export interface CategoryAnalysis {
   typical: Cents;
   /** The current month: assigned, spent so far, what is available. */
   assignedNow: Cents;
+  /** The usual monthly amount this month, before any one-month change. */
+  usualNow: Cents;
   spentNow: Cents;
   available: Cents;
   /** The current month's expected total (at least what is spent so far). */
@@ -185,6 +187,8 @@ export function analyseSpending(input: BudgetInput, opts: AnalyseOptions): Spend
     const earlier = avg(full.slice(-6, -3).map((x) => x.s));
     const avg6 = avg(window6.map((x) => x.s));
     const budgetNow = assigned(c.id, current);
+    // The usual amount this month: a one-month change (a cover, D-88) does not move the projection.
+    const usualNow = byMonth.get(current)?.categories.get(c.id)?.defaultAmount ?? budgetNow;
     let typical: Cents;
     if (window6.length === 0) typical = budgetNow;
     // The middle month, not the mean: one big trip or repair does not set the usual amount.
@@ -195,8 +199,8 @@ export function analyseSpending(input: BudgetInput, opts: AnalyseOptions): Spend
       if (group === 'provisions' || group === 'events') return due(c, m);
       // Usual spending, moved by any budget change planned ahead (a loan that ends, a raise).
       const b = assigned(c.id, m);
-      if (b === 0 && budgetNow > 0) return 0;
-      return Math.max(0, typical + (b - budgetNow));
+      if (b === 0 && usualNow > 0) return 0;
+      return Math.max(0, typical + (b - usualNow));
     };
     const spentNow = spentIn(c.id, current);
     const currentEstimate = group === 'provisions' || group === 'events' ? Math.max(spentNow, due(c, current)) : Math.max(spentNow, typical);
@@ -223,6 +227,7 @@ export function analyseSpending(input: BudgetInput, opts: AnalyseOptions): Spend
       maxSpent: window6.length ? Math.max(...window6.map((x) => x.s)) : 0,
       typical,
       assignedNow: budgetNow,
+      usualNow,
       spentNow,
       available: byMonth.get(current)?.categories.get(c.id)?.available ?? 0,
       currentEstimate,
@@ -267,7 +272,8 @@ export function analyseSpending(input: BudgetInput, opts: AnalyseOptions): Spend
       estimate = 0;
       for (const c of categories) {
         const b = assigned(c.category.id, m);
-        estimate += c.group === 'provisions' || c.group === 'events' ? due(c.category, m) : b === 0 && c.assignedNow > 0 ? 0 : Math.max(0, c.typical + (b - c.assignedNow));
+        const usual = byMonth.get(current)?.categories.get(c.category.id)?.defaultAmount ?? c.assignedNow;
+        estimate += c.group === 'provisions' || c.group === 'events' ? due(c.category, m) : b === 0 && usual > 0 ? 0 : Math.max(0, c.typical + (b - usual));
       }
     }
     bud += budget;
@@ -321,18 +327,18 @@ export function findInsights(a: SpendingAnalysis): Insight[] {
       if (lumpy) {
         const suggested = roundUp10(Math.max(0, c.medianSpent));
         main = { kind: 'lumpy', severity: 'tip', categoryId: id, impact: Math.max(0, spent - budget) * 12, values: { name, median: Math.max(0, c.medianSpent), max: c.maxSpent, n, spent, budget, suggested } };
-        if (suggested > c.assignedNow) main.action = { type: 'default', categoryId: id, amount: suggested, from: next };
+        if (suggested > c.usualNow) main.action = { type: 'default', categoryId: id, amount: suggested, from: next };
       } else if (budget === 0 && spent >= 20 * EUR) {
         main = { kind: 'unbudgeted', severity: 'warn', categoryId: id, impact: spent * 12, values: { name, spent, n, suggested: roundUp10(usual) }, action: { type: 'default', categoryId: id, amount: roundUp10(usual), from: next } };
       } else if (budget > 0 && over >= Math.ceil(n / 2) && spent > budget * 1.1 && spent - budget >= 20 * EUR) {
         const suggested = roundUp10(Math.max(usual, budget));
         main = { kind: 'over', severity: 'warn', categoryId: id, impact: (spent - budget) * 12, values: { name, over, n, spent, budget, gap: spent - budget, suggested } };
-        if (suggested > c.assignedNow) main.action = { type: 'default', categoryId: id, amount: suggested, from: next };
+        if (suggested > c.usualNow) main.action = { type: 'default', categoryId: id, amount: suggested, from: next };
       } else if (budget > 0 && last.every((p) => p.spent === 0) && c.spentNow === 0) {
         main = { kind: 'unused', severity: 'tip', categoryId: id, impact: budget * 12, values: { name, n, budget }, action: { type: 'default', categoryId: id, amount: 0, from: next } };
       } else if (budget > 0 && spent > 0 && spent < budget * 0.7 && budget - spent >= 20 * EUR && last.filter((p) => p.spent < p.budgeted * 0.7).length >= Math.ceil((n * 2) / 3)) {
-        const suggested = Math.min(c.assignedNow, roundUp10(Math.max(spent, c.recent)));
-        if (suggested < c.assignedNow) main = { kind: 'under', severity: 'tip', categoryId: id, impact: (c.assignedNow - suggested) * 12, values: { name, n, spent, budget, suggested, frees: c.assignedNow - suggested }, action: { type: 'default', categoryId: id, amount: suggested, from: next } };
+        const suggested = Math.min(c.usualNow, roundUp10(Math.max(spent, c.recent)));
+        if (suggested < c.usualNow) main = { kind: 'under', severity: 'tip', categoryId: id, impact: (c.usualNow - suggested) * 12, values: { name, n, spent, budget, suggested, frees: c.usualNow - suggested }, action: { type: 'default', categoryId: id, amount: suggested, from: next } };
       }
       if (main) out.push(main);
       if (!main && c.group === 'variable' && c.fullMonths >= 6 && c.earlier >= 50 * EUR) {
@@ -374,4 +380,12 @@ export function findInsights(a: SpendingAnalysis): Insight[] {
   if (a.unfiled.count > 0) out.push({ kind: 'unfiled', severity: a.unfiled.out >= 500 * EUR ? 'warn' : 'tip', impact: a.unfiled.out, values: { count: a.unfiled.count, out: a.unfiled.out }, action: { type: 'inbox' } });
 
   return out.sort((x, y) => SEVERITY[x.severity] - SEVERITY[y.severity] || y.impact - x.impact);
+}
+
+/** Insights that belong to a month come back the next month once dismissed. */
+const MONTHLY: readonly InsightKind[] = ['pace', 'carried', 'yearEnd', 'onTrack', 'unfiled'];
+
+/** The key an insight is dismissed by (D-88). */
+export function insightKey(i: Pick<Insight, 'kind' | 'categoryId'>, current: MonthKey): string {
+  return `${i.kind}:${i.categoryId ?? ''}${MONTHLY.includes(i.kind) ? `:${current}` : ''}`;
 }

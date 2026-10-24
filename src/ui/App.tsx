@@ -36,8 +36,8 @@ const NAV = [
   ['settings', 'nav.settings', 'settings'],
 ] as const satisfies readonly (readonly [string, MessageKey, IconName])[];
 
-/** On phones the first four sit in the bottom bar; the rest live under "More". */
-const PRIMARY = new Set(['', 'budget', 'inbox', 'plan']);
+/** On phones the first five sit in the bottom bar; the rest live under "More". */
+const PRIMARY = new Set(['', 'budget', 'inbox', 'plan', 'insights']);
 
 export function App() {
   const vault = useVault();

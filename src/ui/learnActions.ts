@@ -13,7 +13,7 @@ import {
   type RuleProposal,
   type Target,
 } from '../domain/learn';
-import { inbox, type Changes } from '../domain/reconcile';
+import { applyToView, classify, inbox, mergeChanges, unclassify, type Changes, type LedgerView } from '../domain/reconcile';
 import type { BudgetInput } from '../domain/budget';
 import { currentMonth } from '../domain/dates';
 import { provisionsMoveByMonth } from '../domain/plan';
@@ -22,7 +22,7 @@ import { askClaude, MAX_BATCH } from '../infra/claude';
 import type { Vault, WriteOp } from '../storage/vault';
 import { getSettings, saveSettings } from './actions';
 import { buildBudgetInput } from './budgetInput';
-import { applyChanges, cleanUpLedger } from './importActions';
+import { applyChanges, cleanUpLedger, ledgerView } from './importActions';
 
 /** Writes for the learning layer (M4); the logic lives in /src/domain/learn.ts. */
 
@@ -61,6 +61,25 @@ export async function applyUserChanges(vault: Vault, ch: Changes): Promise<void>
   await applyChanges(vault, ch);
   const examples = examplesFromChanges(ch, systemClock);
   if (examples.length) await vault.write(examples.map((record): WriteOp => ({ type: 'put', store: 'trainingExamples', record })));
+}
+
+/**
+ * Link a transfer with the row where its money arrived (D-88): the receiving
+ * row loses whatever it was filed as, and the two become one transfer.
+ */
+export async function linkTransfer(vault: Vault, sendId: Id, receiveId: Id): Promise<void> {
+  let view: LedgerView = ledgerView(vault);
+  const parts: Changes[] = [];
+  const receive = view.transactions.find((x) => x.id === receiveId);
+  if (receive && view.allocations.some((a) => a.transactionId === receiveId)) {
+    const ch = unclassify(receive, view, systemClock);
+    parts.push(ch);
+    view = applyToView(view, ch);
+  }
+  const send = view.transactions.find((x) => x.id === sendId);
+  if (!send || !receive) return;
+  parts.push(classify(send, { kind: 'transfer', accountId: receive.accountId }, view, systemClock));
+  await applyUserChanges(vault, mergeChanges(...parts));
 }
 
 export async function writeLearn(vault: Vault, r: LearnResult): Promise<void> {

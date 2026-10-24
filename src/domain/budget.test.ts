@@ -386,7 +386,7 @@ describe('explaining Ready to assign (D-85)', () => {
     w.entry('bank', '2026-02-12', eur(-100), { kind: 'transfer', toAccountId: 'loan' });
     w.entry('bank', '2026-02-14', eur(-25), { kind: 'none' });
     const x = explainReady(w.input(), '2026-02')!;
-    const parts = x.opening + x.income + x.assigned + x.returned + x.unfiled + x.transit + x.offBudget;
+    const parts = x.opening + x.income + x.assigned + x.returned + x.unfiled + x.transit + x.offBudget + x.adjustments;
     expect(parts).toBe(x.readyToAssign);
     expect(x.cash - x.inCategories - x.held).toBe(x.readyToAssign);
     expect([x.opening, x.income, x.offBudget, x.unfiled, x.transit]).toEqual([eur(2500), eur(3000), eur(-100), eur(-25), 0]);
@@ -407,5 +407,17 @@ describe('explaining Ready to assign (D-85)', () => {
     expect(jan.map((r) => [r.kind, r.amount])).toEqual([['transit', eur(-50)], ['offBudget', eur(-100)]]);
     expect(jan.filter((r) => r.kind === 'transit').reduce((s, r) => s + r.amount, 0)).toBe(explainReady(w.input(), '2026-01')!.transit);
     expect(looseTransfers(w.input(), '2026-02').map((r) => r.kind)).toEqual(['offBudget']);
+  });
+
+  it('a balance correction kept out of the budget lines shows on its own (D-88)', () => {
+    const w = new World('2026-01');
+    w.account('bank', 'current', eur(1000));
+    w.entry('bank', '2026-01-20', eur(-35), { kind: 'none' });
+    const adj = w.transactions.at(-1)!;
+    adj.adjustment = true;
+    adj.status = 'reconciled';
+    const x = explainReady(w.input(), '2026-01')!;
+    expect([x.adjustments, x.unfiled, x.readyToAssign]).toEqual([eur(-35), 0, eur(965)]);
+    expect(x.cash - x.inCategories - x.held).toBe(x.readyToAssign);
   });
 });

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { looseTransfers } from '../../domain/budget';
 import { provisionWindow, tripWindow, type BucketWindow } from '../../domain/buckets';
 import { addMonths, formatDate, monthRange, todayIso } from '../../domain/dates';
-import { accountFlows, provisionHistory, provisionsAhead, transferPairs, transferRows, type TransferPair } from '../../domain/flows';
+import { accountFlows, needsLook, provisionHistory, provisionsAhead, transferPairs, transferRows, type TransferPair, type TransferRow } from '../../domain/flows';
 import { formatWholeEuros } from '../../domain/money';
 import { amountFor, nextDue, parseRecurrence } from '../../domain/plan';
 import type { MonthKey, Transaction } from '../../domain/types';
@@ -15,6 +15,7 @@ import { useBuckets, useBudgetInput, useSettings, useStore } from '../hooks';
 import { href } from '../router';
 import { BucketDialog } from './BucketDialog';
 import { TransactionDialog } from './TransactionsPage';
+import { CheckLine, FromTo } from '../components/TransferRoute';
 
 const euros = formatWholeEuros;
 const monthAbbr = (m: MonthKey) => t(`month.${Number(m.slice(5))}` as MessageKey).slice(0, 3);
@@ -37,38 +38,58 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: strin
   );
 }
 
+/** Transfers, each with where it left, where it arrived and whether it arrived (D-88). */
+function TransferList({ rows, name, onOpen }: { rows: TransferRow[]; name: (id: string) => string; onOpen: (tx: Transaction) => void }) {
+  return (
+    <ul className="plain-list transfer-list">
+      {rows.map((r) => (
+        <li key={`${r.tx.id}-${r.amount}`} className={`transfer-item ${needsLook(r) ? 'transfer-look' : ''}`}>
+          <div className="split-row">
+            <button type="button" className="link-button tx-desc transfer-desc" onClick={() => onOpen(r.tx)}>{r.tx.descriptionRaw || t('tx.noDescription')}</button>
+            <Money cents={r.amount} className="tx-amount" />
+          </div>
+          <FromTo from={name(r.from)} to={name(r.to)} />
+          <span className="row-sub">{formatDate(r.tx.date)} · {t('flows.seenIn', { name: name(r.tx.accountId) })}</span>
+          <CheckLine row={r} name={name} onOpen={onOpen} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** One route (from → to): month by month and every transfer. */
 function PairDialog({ pair, months, name, onClose }: { pair: TransferPair; months: MonthKey[]; name: (id: string) => string; onClose: () => void }) {
   const [open, setOpen] = useState<Transaction | null>(null);
   if (open) return <TransactionDialog tx={open} onClose={() => setOpen(null)} />;
   const current = todayIso().slice(0, 7);
+  const look = pair.rows.filter(needsLook).length;
   return (
     <Dialog open title={`${name(pair.from)} → ${name(pair.to)}`} onClose={onClose} wide>
-      <p className="muted">{t('flows.pairSub', { total: euros(pair.total), n: pair.count })}</p>
+      <FromTo from={name(pair.from)} to={name(pair.to)} />
+      <p className="muted">{t('flows.pairSub', { total: euros(pair.total), n: pair.count })} · {look ? t('flows.toLook', { n: look }) : t('flows.allArrived')}</p>
       <BarChart
         bars={months.map((m) => ({ label: monthName(m), axis: monthAbbr(m), value: pair.byMonth.get(m) ?? 0, kind: m === current ? 'current' : 'past' }))}
         title={`${name(pair.from)} → ${name(pair.to)}`}
         valueLabel={t('flows.moved')}
       />
       <h3 className="plan-h">{t('flows.transfers', { n: pair.rows.length })}</h3>
-      <ul className="rows">
-        {pair.rows.map((r) => (
-          <li key={`${r.tx.id}-${r.amount}`}>
-            <button type="button" className="row-button tx-row" onClick={() => setOpen(r.tx)}>
-              <span className="row-main">
-                <span className="row-title tx-desc">{r.tx.descriptionRaw || t('tx.noDescription')}</span>
-                <span className="row-sub">{formatDate(r.tx.date)} · {t('flows.seenIn', { name: name(r.tx.accountId) })}</span>
-              </span>
-              <span className="row-end"><Money cents={r.amount} className="row-amount tx-amount" /></span>
-            </button>
-          </li>
-        ))}
-      </ul>
+      <TransferList rows={[...pair.rows].sort((x, y) => Number(needsLook(y)) - Number(needsLook(x)) || y.tx.date.localeCompare(x.tx.date))} name={name} onOpen={setOpen} />
       <div className="row">
         <button type="button" className="button button-quiet" onClick={onClose}>{t('common.close')}</button>
       </div>
     </Dialog>
   );
+}
+
+/** "✓ 20 arrived · ⚠ 1 to check" for a route. */
+function routeCheck(p: TransferPair): string {
+  const look = p.rows.filter(needsLook).length;
+  const ok = p.rows.filter((r) => r.check === 'matched' || r.check === 'mirror' || r.check === 'grouped').length;
+  const parts = [t('flows.arrivedN', { n: ok })];
+  if (look) parts.push(t('flows.toLookN', { n: look }));
+  const rest = p.rows.length - ok - look;
+  if (rest) parts.push(t('flows.uncheckedN', { n: rest }));
+  return parts.join(' · ');
 }
 
 /** Money moved between own accounts (D-87). */
@@ -77,15 +98,21 @@ export function TransfersTab({ months }: { months: MonthKey[] }) {
   const settings = useSettings();
   const accounts = useStore('accounts');
   const [accountId, setAccountId] = useState('');
-  const [pair, setPair] = useState<TransferPair | null>(null);
+  const [pairKey, setPairKey] = useState<string | null>(null);
+  const [onlyLook, setOnlyLook] = useState(false);
+  const [open, setOpen] = useState<Transaction | null>(null);
   const first = months[0];
   const last = months.at(-1);
   const rows = useMemo(() => (first && last ? transferRows(input, first, last) : []), [input, first, last]);
   const loose = useMemo(() => (last ? looseTransfers(input, last).filter((r) => r.kind === 'transit' && months.includes(r.tx.date.slice(0, 7))) : []), [input, last, months]);
   const name = (id: string) => accounts.find((a) => a.id === id)?.name ?? '?';
   const typeOf = (id: string) => accounts.find((a) => a.id === id)?.type;
-  const shown = accountId ? rows.filter((r) => r.from === accountId || r.to === accountId) : rows;
+  const byAccount = accountId ? rows.filter((r) => r.from === accountId || r.to === accountId) : rows;
+  const toLook = byAccount.filter(needsLook);
+  const arrived = byAccount.filter((r) => r.check === 'matched' || r.check === 'mirror' || r.check === 'grouped').length;
+  const shown = onlyLook ? toLook : byAccount;
   const pairs = transferPairs(shown);
+  const pair = pairs.find((p) => `${p.from}>${p.to}` === pairKey);
   const total = shown.reduce((s, r) => s + r.amount, 0);
   const toLoans = shown.filter((r) => typeOf(r.to) === 'loan').reduce((s, r) => s + r.amount, 0);
   const toCards = shown.filter((r) => typeOf(r.to) === 'card').reduce((s, r) => s + r.amount, 0);
@@ -105,9 +132,17 @@ export function TransfersTab({ months }: { months: MonthKey[] }) {
             {accounts.filter((a) => !a.closedAt).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </label>
+        <label>
+          <span className="visually-hidden">{t('flows.checkFilter')}</span>
+          <select value={onlyLook ? 'look' : ''} onChange={(e) => setOnlyLook(e.target.value === 'look')} aria-label={t('flows.checkFilter')}>
+            <option value="">{t('flows.allTransfers')}</option>
+            <option value="look">{t('flows.onlyLook', { n: toLook.length })}</option>
+          </select>
+        </label>
       </div>
       <div className="tiles">
         <Tile label={t('flows.total')} value={euros(total)} sub={t('flows.count', { n: shown.length })} />
+        <Tile label={t('flows.checked')} value={`${arrived} / ${byAccount.length}`} sub={toLook.length ? t('flows.toLook', { n: toLook.length }) : t('flows.allArrived')} />
         {focus ? (
           <>
             <Tile label={t('flows.into', { name: name(focus) })} value={euros(into)} sub={t('flows.perMonth', { amount: euros(into / Math.max(1, months.length)) })} />
@@ -116,6 +151,14 @@ export function TransfersTab({ months }: { months: MonthKey[] }) {
         ) : null}
         <Tile label={t('flows.loansCards')} value={euros(toLoans + toCards)} sub={t('flows.loansCardsSub', { loans: euros(toLoans), cards: euros(toCards) })} />
       </div>
+
+      {toLook.length > 0 && (
+        <section className="card" aria-labelledby="look-h">
+          <h2 id="look-h" className="card-title">{t('flows.lookTitle', { n: toLook.length })}</h2>
+          <p className="hint">{t('flows.lookHint')}</p>
+          <TransferList rows={toLook} name={name} onOpen={setOpen} />
+        </section>
+      )}
 
       {focus && (
         <section className="card" aria-labelledby="fl-h">
@@ -164,10 +207,11 @@ export function TransfersTab({ months }: { months: MonthKey[] }) {
           <ul className="rows">
             {pairs.map((p) => (
               <li key={`${p.from}>${p.to}`}>
-                <button type="button" className="row-button" onClick={() => setPair(p)}>
+                <button type="button" className="row-button" onClick={() => setPairKey(`${p.from}>${p.to}`)}>
                   <span className="row-main">
-                    <span className="row-title">{name(p.from)} → {name(p.to)}</span>
+                    <FromTo from={name(p.from)} to={name(p.to)} />
                     <span className="row-sub">{t('flows.routeSub', { n: p.count, avg: euros(p.total / Math.max(1, months.length)) })}</span>
+                    <span className="row-sub">{routeCheck(p)}</span>
                   </span>
                   <span className="row-end"><span className="row-amount">{euros(p.total)}</span></span>
                 </button>
@@ -179,7 +223,8 @@ export function TransfersTab({ months }: { months: MonthKey[] }) {
       {loose.length > 0 && (
         <p className="hint">{t('flows.loose', { n: loose.length, amount: euros(loose.reduce((s, r) => s + r.amount, 0)) })}</p>
       )}
-      {pair && <PairDialog pair={pair} months={months} name={name} onClose={() => setPair(null)} />}
+      {pair && <PairDialog pair={pair} months={months} name={name} onClose={() => setPairKey(null)} />}
+      {open && <TransactionDialog tx={open} onClose={() => setOpen(null)} />}
     </>
   );
 }

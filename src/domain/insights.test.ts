@@ -121,3 +121,14 @@ describe('the year projection', () => {
     expect(narrow.year.at(-1)).toEqual(wide.year.at(-1));
   });
 });
+
+describe('a one-month change', () => {
+  it('does not move the projection', () => {
+    const w = household();
+    w.override('food', '2026-07', eur(1100)); // overspending covered this month
+    const a = analyseSpending(w.input(), { today: '2026-07-20', from: '2026-01', ahead: 2 });
+    const food = a.categories.find((c) => c.category.id === 'food')!;
+    expect(food.assignedNow).toBe(eur(1100));
+    expect(food.points.filter((p) => p.kind === 'projected').map((p) => p.spent)).toEqual([eur(550), eur(550)]);
+  });
+});

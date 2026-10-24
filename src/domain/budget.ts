@@ -101,6 +101,8 @@ export interface BudgetMonth {
   transit: Cents;
   /** Transfers to or from off-budget accounts this month (a loan repayment without a budget line). */
   offBudget: Cents;
+  /** Balance corrections kept out of the budget lines this month (D-88). */
+  adjustments: Cents;
   /** Leftovers from last month's reset/sweep categories returned this month. */
   returnedFromLastMonth: Cents;
   readyToAssign: Cents;
@@ -176,6 +178,8 @@ interface MonthActivity {
   transit: Cents;
   /** Transfers to or from off-budget accounts (a loan without its own budget line). */
   offBudget: Cents;
+  /** Balance corrections kept out of the budget lines (D-88). */
+  adjustments: Cents;
   /** Income received in this month that counts in the next one. */
   held: Cents;
 }
@@ -206,7 +210,7 @@ function activityByMonth(input: BudgetInput): Map<MonthKey, MonthActivity> {
   const bucket = (month: MonthKey): MonthActivity => {
     let b = out.get(month);
     if (!b) {
-      b = { byCategory: new Map(), income: 0, incomeByCategory: new Map(), uncategorised: 0, transit: 0, offBudget: 0, held: 0 };
+      b = { byCategory: new Map(), income: 0, incomeByCategory: new Map(), uncategorised: 0, transit: 0, offBudget: 0, adjustments: 0, held: 0 };
       out.set(month, b);
     }
     return b;
@@ -250,7 +254,8 @@ function activityByMonth(input: BudgetInput): Map<MonthKey, MonthActivity> {
       // provision / event allocations are budgeted from M3; until then they
       // fall through to "uncategorised" so the invariant still holds.
     }
-    b.uncategorised += t.amount - covered;
+    if (t.adjustment && covered === 0) b.adjustments += t.amount;
+    else b.uncategorised += t.amount - covered;
   }
   return out;
 }
@@ -295,7 +300,7 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
   let returned = 0;
 
   for (const month of months) {
-    const act = activity.get(month) ?? { byCategory: new Map(), income: 0, incomeByCategory: new Map(), uncategorised: 0, transit: 0, offBudget: 0, held: 0 };
+    const act = activity.get(month) ?? { byCategory: new Map(), income: 0, incomeByCategory: new Map(), uncategorised: 0, transit: 0, offBudget: 0, adjustments: 0, held: 0 };
     const cats = new Map<Id, CategoryMonth>();
     const nextCarry = new Map<Id, Cents>();
     let nextReturned = 0;
@@ -358,7 +363,7 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       });
     }
 
-    ready += openingFunds(input.accounts, month, input.startMonth) + act.income + act.uncategorised + act.transit + act.offBudget + returned - assignedTotal;
+    ready += openingFunds(input.accounts, month, input.startMonth) + act.income + act.uncategorised + act.transit + act.offBudget + act.adjustments + returned - assignedTotal;
     assertCents(ready);
     result.push({
       month,
@@ -370,6 +375,7 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       uncategorised: act.uncategorised,
       transit: act.transit,
       offBudget: act.offBudget,
+      adjustments: act.adjustments,
       returnedFromLastMonth: returned,
       readyToAssign: ready,
       heldForNextMonth: act.held,
@@ -491,6 +497,8 @@ export interface ReadyExplained {
   transit: Cents;
   /** Loans repaid without their own budget line, and other off-budget transfers. */
   offBudget: Cents;
+  /** Balance corrections kept out of the budget lines (D-88). */
+  adjustments: Cents;
   readyToAssign: Cents;
   /** Cross-check: cash in the budget accounts at the month end, money held in categories, income held for next month. */
   cash: Cents;
@@ -514,6 +522,7 @@ export function explainReady(input: BudgetInput, month: MonthKey): ReadyExplaine
     unfiled: 0,
     transit: 0,
     offBudget: 0,
+    adjustments: 0,
     readyToAssign: last.readyToAssign,
     cash: 0,
     inCategories: 0,
@@ -527,6 +536,7 @@ export function explainReady(input: BudgetInput, month: MonthKey): ReadyExplaine
     out.unfiled += m.uncategorised;
     out.transit += m.transit;
     out.offBudget += m.offBudget;
+    out.adjustments += m.adjustments;
     for (const [id, cm] of m.categories) {
       out.assigned -= cm.assigned;
       const g = groupOf.get(id) ?? 'other';

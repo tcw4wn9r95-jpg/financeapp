@@ -11,7 +11,7 @@ import { useBuckets, useBudgetInput, useBudgetMonth, useDocumentTitle, useForeca
 import { href } from '../router';
 import { groupLabel } from '../labels';
 import { Icon } from '../components/Icon';
-import { InsightList, useSpendingAnalysis } from './InsightsPage';
+import { InsightList, useDismissed, useSpendingAnalysis } from './InsightsPage';
 
 const BACKUP_NAG_DAYS = 7;
 
@@ -30,7 +30,8 @@ export function DashboardPage() {
 
   const budgetInput = useBudgetInput();
   const analysis = useSpendingAnalysis('6');
-  const topInsights = analysis.insights.filter((i) => i.severity !== 'info' && i.kind !== 'unfiled').slice(0, 3);
+  const dismissed = useDismissed();
+  const topInsights = analysis.insights.filter((i) => i.severity !== 'info' && i.kind !== 'unfiled' && !dismissed.isDismissed(i)).slice(0, 3);
   const inv = useMemo(() => invested(budgetInput, month), [budgetInput, month]);
   const provisions = useStore('provisions');
   const events = useStore('events');

@@ -102,6 +102,12 @@ export interface Transaction extends BaseRecord {
   earmarkCategoryId?: Id;
   /** A proposed classification waiting in the inbox (status 'suggested'). */
   suggestion?: Suggestion;
+  /**
+   * A balance adjustment typed by hand (D-88). Without allocations it is a
+   * correction kept out of the budget lines: it changes the balance and Ready
+   * to assign, never spending or the inbox.
+   */
+  adjustment?: boolean;
 }
 
 export interface Suggestion {
@@ -410,11 +416,31 @@ export interface Settings {
   lateAmountsKept?: boolean;
   /** False: the Emergency fund is not filled automatically with free savings (D-75). Default on. */
   freeSavingsAuto?: boolean;
+  /** Insights dismissed on the Insights page (D-88), by key. */
+  dismissedInsights?: string[];
+  /** Overspending covered from an account, newest last (D-88). */
+  covers?: Cover[];
   /** Merchants whose rule proposal was dismissed. */
   dismissedRuleProposals?: string[];
   /** Optional Claude fallback for transactions nothing else recognises (opt-in, D-37). */
   ai?: { enabled: boolean; apiKey: string };
   updatedAt: string;
+}
+
+/**
+ * Overspending in a budget line covered this month, with the account the
+ * money comes from (D-88): the budget line gets the amount from Ready to
+ * assign, and the transfers out of that account from then on are shown with it.
+ */
+export interface Cover {
+  id: Id;
+  categoryId: Id;
+  month: MonthKey;
+  amount: Cents;
+  /** The account the money comes from; none when it simply comes from Ready to assign. */
+  fromAccountId?: Id;
+  note?: string;
+  at: string;
 }
 
 // ------------------------------------------------------------------ stores

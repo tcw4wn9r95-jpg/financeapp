@@ -3,7 +3,7 @@ import { accountBalances, isOnBudget } from '../../domain/budget';
 import { addMonths, currentMonth, formatDate, monthRange, parseDate, todayIso } from '../../domain/dates';
 import type { Account, AccountType } from '../../domain/types';
 import { monthName, t } from '../../i18n';
-import { accountInUse, deleteAccount, ownerName, saveAccount } from '../actions';
+import { accountInUse, adjustBalance, deleteAccount, ownerName, saveAccount } from '../actions';
 import { Dialog } from '../components/Dialog';
 import { DateField, MoneyField, SelectField, TextField, useDateInput, useMoneyInput } from '../components/fields';
 import { Money } from '../components/Money';
@@ -22,6 +22,7 @@ export function AccountsPage() {
   const accounts = useStore('accounts');
   const transactions = useStore('transactions');
   const [editing, setEditing] = useState<Account | 'new' | null>(null);
+  const [adjusting, setAdjusting] = useState<Account | null>(null);
   const balances = useMemo(() => accountBalances(accounts, transactions, todayIso()), [accounts, transactions]);
   const open = accounts.filter((a) => !a.closedAt);
   const closed = accounts.filter((a) => a.closedAt);
@@ -51,6 +52,7 @@ export function AccountsPage() {
             <button type="button" className="button" onClick={() => setEditing(a)} aria-label={t('accounts.editNamed', { name: a.name })}>
               {t('common.edit')}
             </button>
+            <button type="button" className="button" onClick={() => setAdjusting(a)} aria-label={t('adjust.named', { name: a.name })}>{t('adjust.button')}</button>
             <a className="button button-quiet" href={href('transactions', { account: a.id })}>{t('accounts.viewTransactions')}</a>
           </div>
         </li>
@@ -75,6 +77,7 @@ export function AccountsPage() {
         </details>
       )}
       {editing && <AccountDialog existing={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}
+      {adjusting && <AdjustBalanceDialog account={adjusting} onClose={() => setAdjusting(null)} />}
     </>
   );
 }
@@ -200,6 +203,101 @@ export function AccountDialog({ existing, initial, onClose }: {
           )}
         </div>
         {existing && inUse && <p className="hint">{t('accounts.cannotDelete')}</p>}
+      </form>
+    </Dialog>
+  );
+}
+
+/**
+ * Set an account to its real balance (D-88): the difference becomes one
+ * transaction with a note, counted in a budget line or kept out of them.
+ */
+function AdjustBalanceDialog({ account, onClose }: { account: Account; onClose: () => void }) {
+  const vault = useVault();
+  const notify = useToast();
+  const accounts = useStore('accounts');
+  const transactions = useStore('transactions');
+  const categories = useStore('categories');
+  const dateInput = useDateInput(todayIso());
+  const date = dateInput.iso ?? todayIso();
+  const balance = useMemo(() => accountBalances(accounts, transactions, date).get(account.id) ?? 0, [accounts, transactions, date, account.id]);
+  const real = useMoneyInput();
+  const [note, setNote] = useState('');
+  const [track, setTrack] = useState(false);
+  const [categoryId, setCategoryId] = useState('');
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const onBudget = isOnBudget(account);
+  const diff = real.cents === null || real.text.trim() === '' ? null : (account.type === 'loan' ? -Math.abs(real.cents) : real.cents) - balance;
+  const choices = categories.filter((c) => !c.archivedAt && (diff !== null && diff > 0 ? true : !c.isIncome)).sort((a, b) => Number(b.isIncome) - Number(a.isIncome) || a.sortOrder - b.sortOrder);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!dateInput.iso) return setError(t('field.dateInvalid'));
+    if (diff === null) return setError(t('field.moneyInvalid'));
+    if (diff === 0) return setError(t('adjust.nothing'));
+    if (!note.trim()) return setError(t('adjust.noteRequired'));
+    if (onBudget && track && !categoryId) return setError(t('adjust.pickLine'));
+    const cat = categories.find((c) => c.id === categoryId);
+    setBusy(true);
+    try {
+      const undo = await adjustBalance(vault, {
+        accountId: account.id,
+        date: dateInput.iso,
+        amount: diff,
+        note: note.trim(),
+        target: onBudget && track && cat ? { kind: cat.isIncome ? 'income' : 'category', categoryId: cat.id } : { kind: 'none' },
+      });
+      notify(t('adjust.done', { name: account.name, amount: formatMoney(diff, { plusSign: true }) }), 'ok', { label: t('inbox.undo'), run: () => void undo().then(() => notify(t('adjust.undone'))) });
+      onClose();
+    } catch {
+      setBusy(false);
+      setError(t('common.unexpectedError'));
+    }
+  }
+
+  return (
+    <Dialog open title={t('adjust.title', { name: account.name })} onClose={onClose}>
+      <form onSubmit={submit} noValidate>
+        <DateField label={t('adjust.date')} state={dateInput} />
+        <p className="split-row">
+          <span className="muted">{t('adjust.appBalance', { date: formatDate(date) })}</span>
+          <strong><Money cents={account.type === 'loan' ? -balance : balance} /></strong>
+        </p>
+        <MoneyField signed={account.type !== 'loan'} label={account.type === 'loan' ? t('adjust.realOwed') : t('adjust.real')} state={real} hint={t('adjust.realHint')} autoFocus />
+        {diff !== null && diff !== 0 && (
+          <p className="split-row adjust-diff">
+            <span>{t('adjust.difference')}</span>
+            <strong><Money cents={diff} plusSign /></strong>
+          </p>
+        )}
+        <TextField label={t('adjust.note')} value={note} onChange={(e) => setNote(e.target.value)} hint={t('adjust.noteHint')} />
+        {onBudget ? (
+          <fieldset className="radio-group">
+            <legend>{t('adjust.budgetQ')}</legend>
+            <label className="check">
+              <input type="radio" name="track" checked={!track} onChange={() => setTrack(false)} />
+              <span>{t('adjust.untracked')}<span className="hint block">{t('adjust.untrackedHint')}</span></span>
+            </label>
+            <label className="check">
+              <input type="radio" name="track" checked={track} onChange={() => setTrack(true)} />
+              <span>{t('adjust.tracked')}<span className="hint block">{t('adjust.trackedHint')}</span></span>
+            </label>
+            {track && (
+              <SelectField label={t('adjust.line')} value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+                <option value="">{t('adjust.pick')}</option>
+                {choices.map((c) => <option key={c.id} value={c.id}>{c.isIncome ? `${c.name} (${t('adjust.incomeTag')})` : c.name}</option>)}
+              </SelectField>
+            )}
+          </fieldset>
+        ) : (
+          <p className="hint">{t('adjust.offBudget')}</p>
+        )}
+        {error && <p className="error" role="alert">⚠ {error}</p>}
+        <div className="row">
+          <button className="button button-primary" disabled={busy}>{t('adjust.save')}</button>
+          <button type="button" className="button button-quiet" onClick={onClose}>{t('common.cancel')}</button>
+        </div>
       </form>
     </Dialog>
   );

@@ -1,10 +1,13 @@
-import { useMemo, useState } from 'react';
-import { addMonths, todayIso } from '../../domain/dates';
-import { analyseSpending, SPEND_GROUPS, sumPoints, type CategoryAnalysis, type Insight, type InsightAction, type MonthPoint, type SpendGroup, type SpendingAnalysis } from '../../domain/insights';
+import { useMemo, useState, type FormEvent } from 'react';
+import { isOnBudget } from '../../domain/budget';
+import { addMonths, currentMonth, formatDate, todayIso } from '../../domain/dates';
+import { transferRows } from '../../domain/flows';
+import { analyseSpending, insightKey, SPEND_GROUPS, sumPoints, type CategoryAnalysis, type Insight, type InsightAction, type MonthPoint, type SpendGroup, type SpendingAnalysis } from '../../domain/insights';
 import { formatWholeEuros } from '../../domain/money';
 import type { MonthKey, Transaction } from '../../domain/types';
 import { monthName, t, type MessageKey } from '../../i18n';
-import { changeBudgetLine } from '../actions';
+import { changeBudgetLine, coverOverspending, saveSettings } from '../actions';
+import { MoneyField, SelectField, TextField, useMoneyInput } from '../components/fields';
 import { BarChart, type Bar } from '../components/BarChart';
 import { CategoryTransactions } from '../components/CategoryTransactions';
 import { Dialog } from '../components/Dialog';
@@ -75,29 +78,102 @@ function actionLabel(a: InsightAction): string {
   return a.amount === 0 ? t('insight.stopFrom', { month: monthName(a.from) }) : t('insight.setFrom', { amount: euros(a.amount), month: monthName(a.from) });
 }
 
-/** Carry out an insight's action, with Undo. */
-function useRunAction() {
+/** Dismissed insights, kept in the settings (D-88). */
+export function useDismissed() {
+  const vault = useVault();
+  const settings = useSettings();
+  const keys = new Set(settings.dismissedInsights ?? []);
+  const current = currentMonth();
+  const set = (next: Set<string>) => void saveSettings(vault, { dismissedInsights: [...next] });
+  return {
+    current,
+    isDismissed: (i: Insight) => keys.has(insightKey(i, current)),
+    dismiss: (items: Insight[]) => set(new Set([...keys, ...items.map((i) => insightKey(i, current))])),
+    restore: (items: Insight[]) => {
+      const next = new Set(keys);
+      for (const i of items) next.delete(insightKey(i, current));
+      set(next);
+    },
+  };
+}
+
+interface Covering {
+  categoryId: string;
+  name: string;
+  short: number;
+  assignedNow: number;
+  month: MonthKey;
+}
+
+/** Carry out an insight's action, with Undo. A cover opens its dialog. */
+function useRunAction(onCover: (c: Covering) => void) {
   const vault = useVault();
   const notify = useToast();
-  return async (a: InsightAction, name: string) => {
+  return async (i: Insight) => {
+    const a = i.action!;
+    const name = String(i.values.name ?? '');
     if (a.type === 'inbox') {
       window.location.hash = href('inbox');
       return;
     }
-    const undo = a.type === 'cover'
-      ? await changeBudgetLine(vault, a.categoryId, a.amount, a.month, 'month', t('insight.coverNote'))
-      : await changeBudgetLine(vault, a.categoryId, a.amount, a.from, 'default');
-    notify(a.type === 'cover' ? t('insight.covered', { name }) : t('insight.changed', { name, amount: euros(a.amount), month: monthName(a.from) }), 'ok', {
+    if (a.type === 'cover') {
+      const short = Number(i.values.short);
+      onCover({ categoryId: a.categoryId, name, short, assignedNow: a.amount - short, month: a.month });
+      return;
+    }
+    const undo = await changeBudgetLine(vault, a.categoryId, a.amount, a.from, 'default');
+    notify(t('insight.changed', { name, amount: euros(a.amount), month: monthName(a.from) }), 'ok', {
       label: t('inbox.undo'),
       run: () => void undo().then(() => notify(t('insight.undone'))),
     });
   };
 }
 
+/** Cover overspending: how much, and from which account (D-88). */
+function CoverDialog({ c, onClose }: { c: Covering; onClose: () => void }) {
+  const vault = useVault();
+  const notify = useToast();
+  const accounts = useStore('accounts');
+  const settings = useSettings();
+  const amount = useMoneyInput(c.short);
+  const [from, setFrom] = useState(settings.provisionsAccountId ?? '');
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string>();
+  const onBudget = accounts.filter((a) => !a.closedAt && isOnBudget(a));
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!amount.cents || amount.cents <= 0) return setError(t('field.moneyInvalid'));
+    const undo = await coverOverspending(vault, { categoryId: c.categoryId, month: c.month, assignedNow: c.assignedNow, amount: amount.cents, ...(from ? { fromAccountId: from } : {}), note: note.trim() });
+    const account = accounts.find((a) => a.id === from);
+    notify(account ? t('cover.doneFrom', { name: c.name, amount: euros(amount.cents), account: account.name }) : t('insight.covered', { name: c.name }), 'ok', {
+      label: t('inbox.undo'),
+      run: () => void undo().then(() => notify(t('insight.undone'))),
+    });
+    onClose();
+  }
+  return (
+    <Dialog open title={t('cover.title', { name: c.name })} onClose={onClose}>
+      <form onSubmit={submit} noValidate>
+        <p className="split-row"><span className="muted">{t('cover.short')}</span><strong><Money cents={-c.short} /></strong></p>
+        <MoneyField label={t('cover.amount')} state={amount} hint={t('cover.amountHint')} />
+        <SelectField label={t('cover.from')} value={from} onChange={(e) => setFrom(e.target.value)} hint={t('cover.fromHint')}>
+          <option value="">{t('cover.fromReady')}</option>
+          {onBudget.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </SelectField>
+        <TextField label={t('adjust.note')} value={note} onChange={(e) => setNote(e.target.value)} hint={t('cover.noteHint')} />
+        {error && <p className="error" role="alert">⚠ {error}</p>}
+        <div className="row">
+          <button className="button button-primary">{t('insight.cover')}</button>
+          <button type="button" className="button button-quiet" onClick={onClose}>{t('common.cancel')}</button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
 const SEVERITY_ICON = { warn: '⚠', tip: '→', info: 'ℹ' } as const;
 
-function InsightCard({ insight, onDetail }: { insight: Insight; onDetail?: () => void }) {
-  const run = useRunAction();
+function InsightCard({ insight, run, onDismiss, onDetail }: { insight: Insight; run: (i: Insight) => Promise<void>; onDismiss: () => void; onDetail?: () => void }) {
   return (
     <li className={`insight insight-${insight.severity}`}>
       <p className="insight-kind">
@@ -105,23 +181,21 @@ function InsightCard({ insight, onDetail }: { insight: Insight; onDetail?: () =>
         {t(`insight.sev.${insight.severity}` as MessageKey)}
       </p>
       <p className="insight-text">{insightText(insight)}</p>
-      {(insight.action || onDetail) && (
-        <div className="insight-actions">
-          {insight.action && (
-            <button type="button" className="button button-small" onClick={() => void run(insight.action!, String(insight.values.name ?? ''))}>
-              {actionLabel(insight.action)}
-            </button>
-          )}
-          {onDetail && <button type="button" className="link-button" onClick={onDetail}>{t('insight.details')}</button>}
-        </div>
-      )}
+      <div className="insight-actions">
+        {insight.action && (
+          <button type="button" className="button button-small" onClick={() => void run(insight)}>
+            {actionLabel(insight.action)}
+          </button>
+        )}
+        {onDetail && <button type="button" className="link-button" onClick={onDetail}>{t('insight.details')}</button>}
+        <button type="button" className="link-button push-right" onClick={onDismiss}>{t('insight.dismiss')}</button>
+      </div>
     </li>
   );
 }
 
 /** Overspending carried in several categories, as one card. */
-function CarriedCard({ items, onDetail }: { items: Insight[]; onDetail: (id: string) => void }) {
-  const run = useRunAction();
+function CarriedCard({ items, run, onDismiss, onDetail }: { items: Insight[]; run: (i: Insight) => Promise<void>; onDismiss: () => void; onDetail: (id: string) => void }) {
   const total = items.reduce((s, i) => s + Number(i.values.short), 0);
   return (
     <li className="insight insight-warn">
@@ -133,43 +207,133 @@ function CarriedCard({ items, onDetail }: { items: Insight[]; onDetail: (id: str
             <button type="button" className="link-button" onClick={() => onDetail(i.categoryId!)}>{String(i.values.name)}</button>
             <span className="carried-end">
               <Money cents={-Number(i.values.short)} />
-              <button type="button" className="button button-small" onClick={() => void run(i.action!, String(i.values.name))}>{t('insight.cover')}</button>
+              <button type="button" className="button button-small" onClick={() => void run(i)}>{t('insight.cover')}</button>
             </span>
           </li>
         ))}
       </ul>
       <p className="hint">{t('insight.carriedHint')}</p>
+      <div className="insight-actions">
+        <button type="button" className="link-button push-right" onClick={onDismiss}>{t('insight.dismiss')}</button>
+      </div>
     </li>
   );
 }
 
 export function InsightList({ insights, limit, onDetail }: { insights: Insight[]; limit?: number; onDetail?: (id: string) => void }) {
   const [all, setAll] = useState(false);
-  const carried = insights.filter((i) => i.kind === 'carried');
+  const [showDismissed, setShowDismissed] = useState(false);
+  const [covering, setCovering] = useState<Covering | null>(null);
+  const run = useRunAction(setCovering);
+  const notify = useToast();
+  const d = useDismissed();
+  const hidden = insights.filter(d.isDismissed);
+  const live = insights.filter((i) => !d.isDismissed(i));
+  const dismiss = (items: Insight[]) => {
+    d.dismiss(items);
+    notify(t('insight.dismissed'), 'ok', { label: t('inbox.undo'), run: () => d.restore(items) });
+  };
+  const carried = live.filter((i) => i.kind === 'carried');
   // The carried ones sit together where the first of them ranks.
   const items: (Insight | 'carried')[] = [];
-  for (const i of insights) {
+  for (const i of live) {
     if (i.kind !== 'carried') items.push(i);
     else if (carried.length === 1) items.push(i);
     else if (!items.includes('carried')) items.push('carried');
   }
   const shown = limit && !all ? items.slice(0, limit) : items;
-  if (items.length === 0) return <p className="muted">{t('insight.none')}</p>;
   return (
     <>
-      <ul className="plain-list insight-list">
-        {shown.map((i, k) =>
-          i === 'carried' ? (
-            <CarriedCard key="carried" items={carried} onDetail={(id) => onDetail?.(id)} />
-          ) : (
-            <InsightCard key={`${i.kind}-${i.categoryId ?? k}`} insight={i} {...(onDetail && i.categoryId ? { onDetail: () => onDetail(i.categoryId!) } : {})} />
-          ),
-        )}
-      </ul>
-      {limit && items.length > limit && (
-        <button type="button" className="link-button" onClick={() => setAll(!all)}>{all ? t('insight.fewer') : t('insight.all', { n: items.length })}</button>
+      {items.length === 0 ? (
+        <p className="muted">{t('insight.none')}</p>
+      ) : (
+        <ul className="plain-list insight-list">
+          {shown.map((i, k) =>
+            i === 'carried' ? (
+              <CarriedCard key="carried" items={carried} run={run} onDismiss={() => dismiss(carried)} onDetail={(id) => onDetail?.(id)} />
+            ) : (
+              <InsightCard key={`${i.kind}-${i.categoryId ?? k}`} insight={i} run={run} onDismiss={() => dismiss([i])} {...(onDetail && i.categoryId ? { onDetail: () => onDetail(i.categoryId!) } : {})} />
+            ),
+          )}
+        </ul>
       )}
+      <div className="insight-more">
+        {limit && items.length > limit && (
+          <button type="button" className="link-button" onClick={() => setAll(!all)}>{all ? t('insight.fewer') : t('insight.all', { n: items.length })}</button>
+        )}
+        {hidden.length > 0 && (
+          <button type="button" className="link-button" onClick={() => setShowDismissed(!showDismissed)}>{t('insight.showDismissed', { n: hidden.length })}</button>
+        )}
+      </div>
+      {showDismissed && hidden.length > 0 && (
+        <ul className="plain-list dismissed-list">
+          {hidden.map((i, k) => (
+            <li key={`${i.kind}-${i.categoryId ?? k}`} className="split-row">
+              <span className="muted">{insightText(i)}</span>
+              <button type="button" className="link-button" onClick={() => d.restore([i])}>{t('insight.restore')}</button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {covering && <CoverDialog c={covering} onClose={() => setCovering(null)} />}
     </>
+  );
+}
+
+/** Covers made from an account, with the transfers out of that account since (D-88). */
+export function CoverLog({ categoryId }: { categoryId?: string }) {
+  const settings = useSettings();
+  const accounts = useStore('accounts');
+  const categories = useStore('categories');
+  const transactions = useStore('transactions');
+  const allocations = useStore('allocations');
+  const [open, setOpen] = useState<Transaction | null>(null);
+  const covers = (settings.covers ?? []).filter((c) => !categoryId || c.categoryId === categoryId).sort((a, b) => b.at.localeCompare(a.at));
+  const rows = useMemo(() => {
+    const first = covers.map((c) => c.at.slice(0, 7)).sort()[0];
+    return first ? transferRows({ accounts, transactions, allocations }, first, addMonths(currentMonth(), 1)) : [];
+  }, [accounts, transactions, allocations, covers]);
+  if (open) return <TransactionDialog tx={open} onClose={() => setOpen(null)} />;
+  if (covers.length === 0) return null;
+  const name = (id: string) => accounts.find((a) => a.id === id)?.name ?? '?';
+  return (
+    <section className="card" aria-labelledby="covers-h">
+      <h2 id="covers-h" className="card-title">{t('cover.logTitle')}</h2>
+      <p className="hint">{t('cover.logHint')}</p>
+      <ul className="plain-list cover-list">
+        {covers.map((c) => {
+          const since = c.fromAccountId ? rows.filter((r) => r.from === c.fromAccountId && r.tx.date >= c.at.slice(0, 10)) : [];
+          const moved = since.reduce((s, r) => s + r.amount, 0);
+          return (
+            <li key={c.id}>
+              <div className="split-row">
+                <strong>{categories.find((x) => x.id === c.categoryId)?.name ?? '?'}</strong>
+                <Money cents={c.amount} />
+              </div>
+              <span className="row-sub">
+                {formatDate(c.at.slice(0, 10))} · {c.fromAccountId ? t('cover.fromAccount', { name: name(c.fromAccountId) }) : t('cover.fromReady')}
+                {c.note ? ` · ${c.note}` : ''}
+              </span>
+              {c.fromAccountId && (
+                <details className="cover-since">
+                  <summary>{since.length ? t('cover.since', { n: since.length, amount: euros(moved), name: name(c.fromAccountId) }) : t('cover.noneSince', { name: name(c.fromAccountId) })}</summary>
+                  <ul className="plain-list">
+                    {since.map((r) => (
+                      <li key={`${r.tx.id}-${r.amount}`} className="split-row">
+                        <button type="button" className="link-button tx-desc transfer-desc" onClick={() => setOpen(r.tx)}>
+                          {formatDate(r.tx.date)} · {name(r.from)} → {name(r.to)}
+                        </button>
+                        <Money cents={r.amount} />
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
@@ -218,10 +382,12 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: strin
 /** One category: month by month, its insights, and the transactions of a month. */
 function CategoryDialog({ c, a, onClose }: { c: CategoryAnalysis; a: SpendingAnalysis; onClose: () => void }) {
   const history = c.points.filter((p) => p.kind !== 'projected');
-  const [sel, setSel] = useState(history.length - 1);
+  // All months by default, to spot mistakes; a tapped bar narrows to its month.
+  const [sel, setSel] = useState<number | undefined>(undefined);
   const [open, setOpen] = useState<Transaction | null>(null);
+  const allMonths = useMemo(() => history.map((p) => p.month), [history]);
   if (open) return <TransactionDialog tx={open} onClose={() => setOpen(null)} />;
-  const point = c.points[sel];
+  const point = sel === undefined ? undefined : c.points[sel];
   const insights = a.insights.filter((i) => i.categoryId === c.category.id);
   return (
     <Dialog open title={c.category.name} onClose={onClose} wide>
@@ -232,8 +398,11 @@ function CategoryDialog({ c, a, onClose }: { c: CategoryAnalysis; a: SpendingAna
         <Tile label={t('insights.usual')} value={euros(c.typical)} sub={t(`insights.usualHow.${c.group}` as MessageKey)} />
         <Tile label={t('insights.overMonths')} value={`${c.overMonths} / ${c.fullMonths}`} sub={t('insights.underMonths', { n: c.underMonths })} />
       </div>
-      <BarChart bars={toBars(c.points)} title={t('insights.catChart', { name: c.category.name })} selected={sel} onSelect={(i) => setSel(i)} />
-      <p className="hint">{t('insights.tapBar')}</p>
+      <BarChart bars={toBars(c.points)} title={t('insights.catChart', { name: c.category.name })} {...(sel !== undefined ? { selected: sel } : {})} onSelect={(i) => setSel(i === sel ? undefined : i)} />
+      <p className="hint">
+        {t('insights.tapBar')}{' '}
+        {sel !== undefined && <button type="button" className="link-button" onClick={() => setSel(undefined)}>{t('catTx.allMonths')}</button>}
+      </p>
       <PointsTable points={c.points} caption={t('plan.table')} />
       {insights.length > 0 && (
         <>
@@ -241,13 +410,16 @@ function CategoryDialog({ c, a, onClose }: { c: CategoryAnalysis; a: SpendingAna
           <InsightList insights={insights} />
         </>
       )}
-      {point && point.kind !== 'projected' ? (
+      <CoverLog categoryId={c.category.id} />
+      {!point ? (
+        <CategoryTransactions categoryId={c.category.id} month={allMonths} onOpen={setOpen} />
+      ) : point.kind !== 'projected' ? (
         <CategoryTransactions categoryId={c.category.id} month={point.month} onOpen={setOpen} />
-      ) : point ? (
+      ) : (
         <p className="hint">{t('insights.projectedHow', { month: monthName(point.month) })}</p>
-      ) : null}
+      )}
       <div className="row">
-        <a className="button" href={href(`budget/${point?.kind === 'projected' ? a.current : point?.month ?? a.current}`)} onClick={onClose}>{t('insights.toBudget')}</a>
+        <a className="button" href={href(`budget/${!point || point.kind === 'projected' ? a.current : point.month}`)} onClick={onClose}>{t('insights.toBudget')}</a>
         <button type="button" className="button button-quiet" onClick={onClose}>{t('common.close')}</button>
       </div>
     </Dialog>
@@ -381,6 +553,8 @@ export function InsightsPage() {
             <h2 id="ins-h" className="card-title">{t('insights.title')}</h2>
             <InsightList insights={a.insights} limit={6} onDetail={setDetail} />
           </section>
+
+          <CoverLog />
 
           <section className="card" aria-labelledby="bars-h">
             <h2 id="bars-h" className="card-title">{t('insights.monthly')}</h2>

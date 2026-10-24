@@ -8,6 +8,7 @@ import type {
   BudgetDefault,
   BudgetOverride,
   Category,
+  Cover,
   CategoryGroup,
   Cents,
   Id,
@@ -411,6 +412,32 @@ export async function changeBudgetLine(vault: Vault, categoryId: Id, amount: Cen
   };
 }
 
+/**
+ * Cover overspending in a budget line this month (D-88): the line gets the
+ * amount from Ready to assign, and the cover is logged with the account the
+ * money comes from. Returns the undo.
+ */
+export async function coverOverspending(
+  vault: Vault,
+  c: { categoryId: Id; month: MonthKey; assignedNow: Cents; amount: Cents; fromAccountId?: Id; note?: string },
+): Promise<() => Promise<void>> {
+  const undoLine = await changeBudgetLine(vault, c.categoryId, c.assignedNow + c.amount, c.month, 'month', c.note || t('insight.coverNote'));
+  const cover: Cover = {
+    id: crypto.randomUUID(),
+    categoryId: c.categoryId,
+    month: c.month,
+    amount: c.amount,
+    ...(c.fromAccountId ? { fromAccountId: c.fromAccountId } : {}),
+    ...(c.note ? { note: c.note } : {}),
+    at: new Date().toISOString(),
+  };
+  await saveSettings(vault, { covers: [...(getSettings(vault).covers ?? []), cover] });
+  return async () => {
+    await undoLine();
+    await saveSettings(vault, { covers: (getSettings(vault).covers ?? []).filter((x) => x.id !== cover.id) });
+  };
+}
+
 export async function removeDefault(vault: Vault, id: Id): Promise<void> {
   await vault.write([{ type: 'delete', store: 'budgetDefaults', id }]);
 }
@@ -437,6 +464,23 @@ function relatedDeletes(vault: Vault, transactionId: Id): WriteOp[] {
   return ops;
 }
 
+/**
+ * Adjust an account's balance by hand (D-88): one transaction for the
+ * difference, with a note. Counted in a budget line (category or income), or
+ * kept out of them as a correction. Returns the undo.
+ */
+export async function adjustBalance(
+  vault: Vault,
+  a: { accountId: Id; date: IsoDate; amount: Cents; note: string; target: { kind: 'none' } | { kind: 'category' | 'income'; categoryId: Id } },
+): Promise<() => Promise<void>> {
+  const write = buildManualEntry({ accountId: a.accountId, date: a.date, amount: a.amount, description: t('adjust.description'), note: a.note, target: a.target }, systemClock);
+  const tx = { ...write.transactions[0]!, adjustment: true, status: 'reconciled' as const };
+  await vault.write([{ type: 'put', store: 'transactions', record: tx }, ...write.allocations.map((record): WriteOp => ({ type: 'put', store: 'allocations', record }))]);
+  return async () => {
+    await vault.write([{ type: 'delete', store: 'transactions', id: tx.id }, ...write.allocations.map((x): WriteOp => ({ type: 'delete', store: 'allocations', id: x.id }))]);
+  };
+}
+
 export async function saveEntry(vault: Vault, entry: ManualEntry, existingId?: Id): Promise<void> {
   const write = buildManualEntry(entry, systemClock);
   const ops: WriteOp[] = [];
@@ -449,6 +493,11 @@ export async function saveEntry(vault: Vault, entry: ManualEntry, existingId?: I
     const oldId = first.id;
     first.id = existingId;
     if (old) first.createdAt = old.createdAt;
+    // A balance adjustment stays one (D-88), kept out of the inbox when it has no budget line.
+    if (old?.adjustment) {
+      first.adjustment = true;
+      if (first.status === 'new') first.status = 'reconciled';
+    }
     for (const a of write.allocations) {
       if (a.transactionId === oldId) a.transactionId = existingId;
       if (a.targetType === 'transfer' && a.targetId === oldId) a.targetId = existingId;

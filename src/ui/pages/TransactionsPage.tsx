@@ -8,6 +8,7 @@ import { applyChanges, ledgerView } from '../importActions';
 import { CATEGORY_GROUPS, type Id, type Transaction } from '../../domain/types';
 import { t } from '../../i18n';
 import { deleteEntry, saveEntry } from '../actions';
+import { TransferRoute } from '../components/TransferRoute';
 import { Dialog } from '../components/Dialog';
 import { Icon } from '../components/Icon';
 import { DateField, MoneyField, SelectField, TextField, useDateInput, useMoneyInput } from '../components/fields';
@@ -354,6 +355,7 @@ function ImportedDialog({ tx, label, accountName, onClose }: { tx: Transaction; 
         <TxSummary tx={tx} accountName={accountName} />
         <Money cents={tx.amount} plusSign className="tx-amount" />
       </div>
+      <TransferRoute tx={tx} />
       <ul className="plain-list detail-list">
         {tx.valueDate && <li>{t('tx.valueDate')}: {formatDate(tx.valueDate)}</li>}
         {tx.originalCurrency && tx.originalAmount !== undefined && <li>{t('tx.originalAmount')}: {formatMoney(Math.abs(tx.originalAmount), { symbol: false })} {tx.originalCurrency}</li>}

@@ -71,3 +71,58 @@ describe('the provisions account month by month (D-87)', () => {
     ]);
   });
 });
+
+describe('checking the receiving side (D-88)', () => {
+  /** A transfer filed against the other account, with no partner row (D-68). */
+  function loose(w: World, account: string, date: string, amount: number, to: string) {
+    w.entry(account, date, amount, { kind: 'none' });
+    const tx = w.transactions.at(-1)!;
+    tx.status = 'reconciled';
+    w.allocations.push({ ...w.allocations[0]!, id: `l-${w.allocations.length}`, transactionId: tx.id, targetType: 'transfer', targetId: to, amount });
+    return tx;
+  }
+  function arrival(w: World, account: string, date: string, amount: number, imported = true) {
+    w.entry(account, date, amount, { kind: 'none' });
+    const tx = w.transactions.at(-1)!;
+    if (imported) tx.importBatchId = 'b1';
+    return tx;
+  }
+  const check = (w: World) => transferRows(w.input(), '2026-04', '2026-04').map((r) => [r.check, r.amount, r.receiving?.amount]);
+
+  it('paired rows are matched; rows the app wrote are mirrors', () => {
+    const w = household();
+    w.entry('bank', '2026-04-02', eur(-100), { kind: 'transfer', toAccountId: 'flex' });
+    expect(check(w)).toEqual([['matched', eur(100), eur(100)]]);
+    w.transactions.at(-1)!.isMirror = true;
+    expect(check(w)[0]![0]).toBe('mirror');
+  });
+
+  it('finds the money waiting, received as one, slightly different, or missing', () => {
+    const w = household();
+    w.allocations.push({ id: 'seed', createdAt: '', updatedAt: '', source: 'manual', transactionId: 'x', targetType: 'category', targetId: 'tax', amount: 0, confidence: 1, decidedBy: 'user', reason: '' });
+    arrival(w, 'flex', '2026-04-01', eur(1), true);
+    arrival(w, 'flex', '2026-04-28', eur(1), true);
+    loose(w, 'bank', '2026-04-05', eur(-200), 'flex');
+    arrival(w, 'flex', '2026-04-06', eur(200));
+    loose(w, 'bank', '2026-04-10', eur(-300), 'flex');
+    loose(w, 'bank', '2026-04-11', eur(-400), 'flex');
+    arrival(w, 'flex', '2026-04-12', eur(700));
+    loose(w, 'bank', '2026-04-18', eur(-500), 'flex');
+    arrival(w, 'flex', '2026-04-19', eur(498));
+    loose(w, 'bank', '2026-04-24', eur(-50), 'flex');
+    expect(check(w)).toEqual([
+      ['missing', eur(50), undefined],
+      ['different', eur(500), eur(498)],
+      ['grouped', eur(400), eur(700)],
+      ['grouped', eur(300), eur(700)],
+      ['candidate', eur(200), eur(200)],
+    ]);
+  });
+
+  it('cannot check an account without its own statement that day', () => {
+    const w = household();
+    w.allocations.push({ id: 'seed', createdAt: '', updatedAt: '', source: 'manual', transactionId: 'x', targetType: 'category', targetId: 'tax', amount: 0, confidence: 1, decidedBy: 'user', reason: '' });
+    loose(w, 'bank', '2026-04-24', eur(-50), 'flex');
+    expect(check(w)).toEqual([['unchecked', eur(50), undefined]]);
+  });
+});

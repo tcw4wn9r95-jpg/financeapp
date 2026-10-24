@@ -111,6 +111,7 @@ export function ReadyExplainDialog({ month, onClose }: { month: MonthKey; onClos
                 {rows(loose.filter((r) => r.kind === 'offBudget'))}
               </Part>
             )}
+            {x.adjustments !== 0 && <Part label={t('explain.adjustments')} cents={x.adjustments} hint={t('explain.adjustmentsHint')} />}
             <li className="split-row explain-total"><strong>{t('rta.label')}</strong><strong><Money cents={x.readyToAssign} /></strong></li>
           </ul>
 
