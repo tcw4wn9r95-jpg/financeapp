@@ -7,7 +7,6 @@ import { monthName, t } from '../../i18n';
 import { closeMonth } from '../actions';
 import { useBudgetInput, useSettings, useStore, useVault } from '../hooks';
 import { Dialog } from './Dialog';
-import { SelectField } from './fields';
 import { Money } from './Money';
 import { useToast } from './Toast';
 
@@ -21,7 +20,9 @@ export function useMonthsToClose(): MonthToClose[] {
     const current = currentMonth();
     const last = addMonths(current, -1);
     if (last < input.startMonth) return [];
-    return monthsToClose(computeBudget(input, last), categories, closed ?? [], current);
+    // A line following an account balance gives back by itself (D-75): it does not lend.
+    const notLending = new Set(input.availableTargets?.keys() ?? []);
+    return monthsToClose(computeBudget(input, last), categories, closed ?? [], current, notLending);
   }, [input, categories, closed]);
 }
 
@@ -52,8 +53,23 @@ export function CloseMonthBanner() {
   );
 }
 
-const sourceValue = (s: CloseSourceChoice) => (s.kind === 'line' ? `line:${s.categoryId}` : s.kind);
-const parseSource = (v: string): CloseSourceChoice => (v.startsWith('line:') ? { kind: 'line', categoryId: v.slice(5) } : v === 'next' ? { kind: 'next' } : { kind: 'ready' });
+/**
+ * Choices: "ready", "acct:<id>" (money from that account), "line:<id>" (another line), "next".
+ * Money from an account is money nobody gave a line: Ready to assign. For the
+ * provisions account that is true while free savings follow its balance (the
+ * money came back to Ready to assign when it left); otherwise it is the line
+ * holding free savings.
+ */
+function toDecision(v: string, categoryId: string, short: number, savingsLine: string | undefined, provisionsAccount: string | undefined): CloseDecision {
+  if (v.startsWith('line:')) return { categoryId, short, source: { kind: 'line', categoryId: v.slice(5) } };
+  if (v === 'next') return { categoryId, short, source: { kind: 'next' } };
+  if (v.startsWith('acct:')) {
+    const fromAccountId = v.slice(5);
+    const source: CloseSourceChoice = fromAccountId === provisionsAccount && savingsLine ? { kind: 'line', categoryId: savingsLine } : { kind: 'ready' };
+    return { categoryId, short, source, fromAccountId };
+  }
+  return { categoryId, short, source: { kind: 'ready' } };
+}
 
 /** Close the oldest open month, then the next one, until none is left (D-89). */
 export function CloseMonthDialog({ onClose }: { onClose: () => void }) {
@@ -62,10 +78,11 @@ export function CloseMonthDialog({ onClose }: { onClose: () => void }) {
   const notify = useToast();
   const categories = useStore('categories');
   const accounts = useStore('accounts');
+  const settings = useSettings();
+  const input = useBudgetInput();
   const [total] = useState(open.length);
   const m = open[0];
   const [choices, setChoices] = useState<Record<string, string>>({});
-  const [account, setAccount] = useState('');
   const [busy, setBusy] = useState(false);
   const name = (id: string) => categories.find((c) => c.id === id)?.name ?? '?';
 
@@ -81,22 +98,22 @@ export function CloseMonthDialog({ onClose }: { onClose: () => void }) {
   const choice = (id: string) => choices[key(id)] ?? 'ready';
   const next = monthName(addMonths(m.month, 1));
   // What each lending line has left once the choices above are taken from it.
+  // The line holding free savings lends for the provisions account only when it does not follow its balance.
+  const savingsLine = settings.sweepTargetCategoryId && !input.availableTargets?.has(settings.sweepTargetCategoryId) ? settings.sweepTargetCategoryId : undefined;
+  const savingsLeft = savingsLine ? (m.sources.find((x) => x.categoryId === savingsLine)?.available ?? 0) : 0;
+  const decisions: CloseDecision[] = m.lines.map((l) => toDecision(choice(l.categoryId), l.categoryId, l.short, savingsLine, settings.provisionsAccountId));
   const lent = new Map<string, number>();
-  for (const l of m.lines) {
-    const c = choice(l.categoryId);
-    if (c.startsWith('line:')) lent.set(c.slice(5), (lent.get(c.slice(5)) ?? 0) + l.short);
-  }
-  const fromReady = m.lines.filter((l) => choice(l.categoryId) === 'ready').reduce((s, l) => s + l.short, 0);
-  const decisions: CloseDecision[] = m.lines.map((l) => ({ categoryId: l.categoryId, short: l.short, source: parseSource(choice(l.categoryId)) }));
+  for (const d of decisions) if (d.source.kind === 'line') lent.set(d.source.categoryId, (lent.get(d.source.categoryId) ?? 0) + d.short);
+  const fromReady = decisions.filter((d) => d.source.kind === 'ready').reduce((s, d) => s + d.short, 0);
+  const onBudget = accounts.filter((a) => !a.closedAt && isOnBudget(a));
   const overLent = m.sources.some((s) => (lent.get(s.categoryId) ?? 0) > s.available);
   const setAll = (v: string) => setChoices((c) => ({ ...c, ...Object.fromEntries(m.lines.map((l) => [key(l.categoryId), v])) }));
 
   async function apply() {
     setBusy(true);
     try {
-      const undo = await closeMonth(vault, m!, decisions, account || undefined);
+      const undo = await closeMonth(vault, m!, decisions);
       notify(t('close.done', { month: monthName(m!.month) }), 'ok', { label: t('inbox.undo'), run: () => void undo().then(() => notify(t('close.undone'))) });
-      setAccount('');
     } finally {
       setBusy(false);
     }
@@ -121,26 +138,35 @@ export function CloseMonthDialog({ onClose }: { onClose: () => void }) {
               </div>
               <select id={id} value={choice(l.categoryId)} onChange={(e) => setChoices((c) => ({ ...c, [key(l.categoryId)]: e.target.value }))}>
                 <option value="ready">{t('close.fromReady', { amount: formatWholeEuros(m.readyToAssign) })}</option>
+                <optgroup label={t('close.fromAccounts')}>
+                  {onBudget.map((a) => {
+                    const viaSavings = a.id === settings.provisionsAccountId && savingsLine;
+                    const left = viaSavings ? savingsLeft - (lent.get(savingsLine) ?? 0) + (choice(l.categoryId) === `acct:${a.id}` ? l.short : 0) : 0;
+                    return (
+                      <option key={a.id} value={`acct:${a.id}`} disabled={!!viaSavings && left < l.short}>
+                        {viaSavings ? t('close.fromSavings', { name: a.name, amount: formatWholeEuros(left) }) : t('close.fromAccount', { name: a.name })}
+                      </option>
+                    );
+                  })}
+                </optgroup>
+                <optgroup label={t('close.fromLines')}>
                 {m.sources
-                  .filter((s) => s.categoryId !== l.categoryId)
+                  .filter((s) => s.categoryId !== l.categoryId && s.categoryId !== savingsLine)
                   .map((s) => {
                     const left = s.available - (lent.get(s.categoryId) ?? 0) + (choice(l.categoryId) === `line:${s.categoryId}` ? l.short : 0);
                     return (
-                      <option key={s.categoryId} value={sourceValue({ kind: 'line', categoryId: s.categoryId })} disabled={left < l.short}>
+                      <option key={s.categoryId} value={`line:${s.categoryId}`} disabled={left < l.short}>
                         {t('close.fromLine', { name: name(s.categoryId), amount: formatWholeEuros(left) })}
                       </option>
                     );
                   })}
+                </optgroup>
                 <option value="next">{t('close.leave', { next })}</option>
               </select>
             </li>
           );
         })}
       </ul>
-      <SelectField label={t('close.account')} value={account} onChange={(e) => setAccount(e.target.value)} hint={t('close.accountHint')}>
-        <option value="">{t('close.noAccount')}</option>
-        {accounts.filter((a) => !a.closedAt && isOnBudget(a)).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-      </SelectField>
       <p className="split-row close-summary">
         <span>{t('close.readyAfter', { month: monthName(m.month) })}</span>
         <strong><Money cents={m.readyToAssign - fromReady} /></strong>

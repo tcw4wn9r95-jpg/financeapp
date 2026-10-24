@@ -40,7 +40,18 @@ export interface MonthToClose {
 const canLend = (c: Category | undefined) => !!c && !c.isIncome && c.groupId !== 'provisions' && c.groupId !== 'events';
 
 /** Past months with lines below zero nobody decided about yet, oldest first. */
-export function monthsToClose(months: readonly BudgetMonth[], categories: readonly Category[], closed: readonly ClosedMonth[], current: MonthKey): MonthToClose[] {
+export function monthsToClose(
+  months: readonly BudgetMonth[],
+  categories: readonly Category[],
+  closed: readonly ClosedMonth[],
+  current: MonthKey,
+  /**
+   * Lines that cannot lend: one whose amount follows an account balance (the
+   * Emergency fund holding free savings, D-75) gives back to Ready to assign
+   * by itself when money leaves that account; lending from it would count twice.
+   */
+  notLending: ReadonlySet<Id> = new Set(),
+): MonthToClose[] {
   const byId = new Map(categories.map((c) => [c.id, c]));
   const out: MonthToClose[] = [];
   for (const m of months) {
@@ -50,7 +61,7 @@ export function monthsToClose(months: readonly BudgetMonth[], categories: readon
     const sources: CloseSource[] = [];
     for (const [id, cm] of m.categories) {
       if (cm.uncovered < 0 && !left.has(id)) lines.push({ categoryId: id, short: -cm.uncovered, assigned: cm.assigned });
-      if (cm.available > 0 && canLend(byId.get(id))) sources.push({ categoryId: id, available: cm.available, assigned: cm.assigned });
+      if (cm.available > 0 && canLend(byId.get(id)) && !notLending.has(id)) sources.push({ categoryId: id, available: cm.available, assigned: cm.assigned });
     }
     if (lines.length) out.push({ month: m.month, lines: lines.sort((a, b) => b.short - a.short), sources: sources.sort((a, b) => b.available - a.available), readyToAssign: m.readyToAssign });
   }
@@ -63,6 +74,8 @@ export interface CloseDecision {
   categoryId: Id;
   short: Cents;
   source: CloseSourceChoice;
+  /** The account the money physically came from, when known. */
+  fromAccountId?: Id;
 }
 
 /**

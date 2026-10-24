@@ -290,7 +290,7 @@ export function CoverLog({ categoryId }: { categoryId?: string }) {
   const [open, setOpen] = useState<Transaction | null>(null);
   const covers = (settings.covers ?? []).filter((c) => !categoryId || c.categoryId === categoryId).sort((a, b) => b.at.localeCompare(a.at));
   const rows = useMemo(() => {
-    const first = covers.map((c) => c.at.slice(0, 7)).sort()[0];
+    const first = covers.map((c) => c.month).sort()[0];
     return first ? transferRows({ accounts, transactions, allocations }, first, addMonths(currentMonth(), 1)) : [];
   }, [accounts, transactions, allocations, covers]);
   if (open) return <TransactionDialog tx={open} onClose={() => setOpen(null)} />;
@@ -302,7 +302,8 @@ export function CoverLog({ categoryId }: { categoryId?: string }) {
       <p className="hint">{t('cover.logHint')}</p>
       <ul className="plain-list cover-list">
         {covers.map((c) => {
-          const since = c.fromAccountId ? rows.filter((r) => r.from === c.fromAccountId && r.tx.date >= c.at.slice(0, 10)) : [];
+          // From the start of the month covered: that is when the money moved.
+          const since = c.fromAccountId ? rows.filter((r) => r.from === c.fromAccountId && r.tx.date >= `${c.month}-01`) : [];
           const moved = since.reduce((s, r) => s + r.amount, 0);
           return (
             <li key={c.id}>
@@ -311,13 +312,12 @@ export function CoverLog({ categoryId }: { categoryId?: string }) {
                 <Money cents={c.amount} />
               </div>
               <span className="row-sub">
-                {t('cover.forMonth', { month: monthName(c.month) })} · {formatDate(c.at.slice(0, 10))} · {c.fromCategoryId ? t('cover.fromLine', { name: categories.find((x) => x.id === c.fromCategoryId)?.name ?? '?' }) : t('cover.fromReady')}
-                {c.fromAccountId ? ` · ${t('cover.fromAccount', { name: name(c.fromAccountId) })}` : ''}
+                {t('cover.forMonth', { month: monthName(c.month) })} · {formatDate(c.at.slice(0, 10))} · {c.fromAccountId ? t('cover.fromAccount', { name: name(c.fromAccountId) }) : c.fromCategoryId ? t('cover.fromLine', { name: categories.find((x) => x.id === c.fromCategoryId)?.name ?? '?' }) : t('cover.fromReady')}
                 {c.note ? ` · ${c.note}` : ''}
               </span>
               {c.fromAccountId && (
                 <details className="cover-since">
-                  <summary>{since.length ? t('cover.since', { n: since.length, amount: euros(moved), name: name(c.fromAccountId) }) : t('cover.noneSince', { name: name(c.fromAccountId) })}</summary>
+                  <summary>{since.length ? t('cover.since', { n: since.length, amount: euros(moved), name: name(c.fromAccountId), month: monthName(c.month) }) : t('cover.noneSince', { name: name(c.fromAccountId), month: monthName(c.month) })}</summary>
                   <ul className="plain-list">
                     {since.map((r) => (
                       <li key={`${r.tx.id}-${r.amount}`} className="split-row">

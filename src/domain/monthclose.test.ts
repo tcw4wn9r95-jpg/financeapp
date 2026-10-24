@@ -53,3 +53,12 @@ describe('closing a month (D-89)', () => {
     expect([...closeAmounts(m!, [{ categoryId: 'food', short: eur(80), source: { kind: 'next' } }])]).toEqual([]);
   });
 });
+
+describe('a line following an account balance', () => {
+  it('does not lend: it already gives back when money leaves the account', () => {
+    const w = household();
+    const months = computeBudget(w.input(), '2026-02');
+    const [m] = monthsToClose(months, w.input().categories, [], '2026-03', new Set(['fun']));
+    expect(m!.sources).toEqual([]);
+  });
+});

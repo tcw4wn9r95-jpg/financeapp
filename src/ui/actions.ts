@@ -444,7 +444,7 @@ export async function coverOverspending(
  * from another line with money left, or leave the gap for the next month's
  * Ready to assign. Returns the undo.
  */
-export async function closeMonth(vault: Vault, m: MonthToClose, decisions: readonly CloseDecision[], fromAccountId?: Id): Promise<() => Promise<void>> {
+export async function closeMonth(vault: Vault, m: MonthToClose, decisions: readonly CloseDecision[]): Promise<() => Promise<void>> {
   const undos: (() => Promise<void>)[] = [];
   for (const [categoryId, amount] of closeAmounts(m, decisions)) {
     undos.push(await changeBudgetLine(vault, categoryId, amount, m.month, 'month', t('close.note')));
@@ -459,7 +459,7 @@ export async function closeMonth(vault: Vault, m: MonthToClose, decisions: reado
       month: m.month,
       amount: d.short,
       ...(d.source.kind === 'line' ? { fromCategoryId: d.source.categoryId } : {}),
-      ...(fromAccountId ? { fromAccountId } : {}),
+      ...(d.fromAccountId ? { fromAccountId: d.fromAccountId } : {}),
       at,
     }));
   const left = decisions.filter((d) => d.source.kind === 'next').map((d) => d.categoryId);
