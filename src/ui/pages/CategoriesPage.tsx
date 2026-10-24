@@ -114,6 +114,8 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
   const [mode, setMode] = useState<RolloverMode>(existing?.rolloverMode ?? 'roll');
   // Income paid at the end of a month for the next one (D-74).
   const [forNext, setForNext] = useState(!!existing?.nextMonthFromDay);
+  // From which month's payment it counts in the next month (D-92): the month you got a month ahead.
+  const [nextStart, setNextStart] = useState(existing?.nextMonthStart ?? '');
   const amount = useMoneyInput(current ?? (existing ? undefined : 0));
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -128,7 +130,7 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
     try {
       await saveCategory(vault, {
         name: name.trim(), groupId, rolloverMode: isIncome ? 'reset' : mode, isIncome,
-        ...(isIncome && forNext ? { nextMonthFromDay: NEXT_MONTH_FROM_DAY } : {}),
+        ...(isIncome && forNext ? { nextMonthFromDay: NEXT_MONTH_FROM_DAY, ...(nextStart ? { nextMonthStart: nextStart } : {}) } : {}),
         ...(changedDefault || until ? { monthlyDefault: amount.cents ?? current ?? 0, fromMonth } : {}),
         ...(until ? { untilMonth: until } : {}),
       }, existing);
@@ -177,6 +179,14 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
               <strong>{t('categories.forNextMonth')}</strong> — {t('categories.forNextMonthHint', { day: NEXT_MONTH_FROM_DAY })}
             </span>
           </label>
+        )}
+        {isIncome && forNext && (
+          <SelectField label={t('categories.nextStart')} value={nextStart} onChange={(e) => setNextStart(e.target.value)} hint={t('categories.nextStartHint')}>
+            <option value="">{t('categories.nextStartAlways', { month: monthName(settings.budgetStartMonth) })}</option>
+            {monthRange(addMonths(settings.budgetStartMonth, 1), addMonths(thisMonth, 1)).map((m) => (
+              <option key={m} value={m}>{t('categories.nextStartFrom', { month: monthName(m), next: monthName(addMonths(m, 1)) })}</option>
+            ))}
+          </SelectField>
         )}
         <MoneyField label={isIncome ? t('categories.expectedIncome') : t('categories.defaultAmount')} state={amount} hint={isIncome ? t('categories.expectedIncomeHint') : t('categories.defaultHint')} />
         <SelectField label={t('categories.appliesFrom')} value={fromMonth} onChange={(e) => setFromMonth(e.target.value)} hint={t('categories.appliesFromHint')}>

@@ -196,6 +196,7 @@ function activityByMonth(input: BudgetInput): Map<MonthKey, MonthActivity> {
   const onBudget = new Set(input.accounts.filter(isOnBudget).map((a) => a.id));
   const incomeIds = new Set(input.categories.filter((c) => c.isIncome).map((c) => c.id));
   const nextFrom = new Map(input.categories.filter((c) => c.isIncome && c.nextMonthFromDay).map((c) => [c.id, c.nextMonthFromDay!]));
+  const nextStart = new Map(input.categories.filter((c) => c.isIncome && c.nextMonthStart).map((c) => [c.id, c.nextMonthStart!]));
   const expenseIds = new Set(input.categories.filter((c) => !c.isIncome).map((c) => c.id));
 
   const allocsByTxn = new Map<Id, Allocation[]>();
@@ -232,7 +233,8 @@ function activityByMonth(input: BudgetInput): Map<MonthKey, MonthActivity> {
         covered += a.amount;
       } else if (a.targetType === 'income' && incomeIds.has(a.targetId)) {
         const from = nextFrom.get(a.targetId);
-        if (from && Number(t.date.slice(8, 10)) >= from) {
+        const since = nextStart.get(a.targetId);
+        if (from && Number(t.date.slice(8, 10)) >= from && (!since || compareMonths(raw, since) >= 0)) {
           // Paid for next month (D-74): counted then; held until then.
           const next = addMonths(raw, 1);
           const nb = bucket(compareMonths(next, input.startMonth) < 0 ? input.startMonth : next);

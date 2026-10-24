@@ -441,4 +441,17 @@ describe('explaining Ready to assign (D-85)', () => {
     expect([x.adjustments, x.unfiled, x.readyToAssign]).toEqual([eur(-35), 0, eur(965)]);
     expect(x.cash - x.inCategories - x.held).toBe(x.readyToAssign);
   });
+
+  it('salary paid for the next month only from the month the household got ahead (D-92)', () => {
+    const w = new World('2026-01');
+    w.account('bank', 'current', eur(500));
+    w.income('salary');
+    w.categories.find((c) => c.id === 'salary')!.nextMonthFromDay = 20;
+    w.categories.find((c) => c.id === 'salary')!.nextMonthStart = '2026-03';
+    for (const m of ['01', '02', '03', '04']) w.earn('bank', `2026-${m}-25`, eur(3000), 'salary');
+    const months = computeBudget(w.input(), '2026-04');
+    // January and February live on their own salary; March's pays April; April's is held for May.
+    expect(months.map((m) => m.income)).toEqual([eur(3000), eur(3000), 0, eur(3000)]);
+    expect(months.at(-1)!.heldForNextMonth).toBe(eur(3000));
+  });
 });

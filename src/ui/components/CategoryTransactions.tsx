@@ -24,8 +24,10 @@ export function CategoryTransactions({ categoryId, month, onOpen, title }: { cat
   const allocations = useStore('allocations');
   const categories = useStore('categories');
   // Income received from a set day on counts in the next month (D-74): list it where it counts.
-  const from = categories.find((c) => c.id === categoryId && c.isIncome)?.nextMonthFromDay;
-  const countsIn = (date: string) => (from && Number(date.slice(8, 10)) >= from ? addMonths(monthOf(date), 1) : monthOf(date));
+  const line = categories.find((c) => c.id === categoryId && c.isIncome);
+  const from = line?.nextMonthFromDay;
+  const since = line?.nextMonthStart;
+  const countsIn = (date: string) => (from && Number(date.slice(8, 10)) >= from && (!since || monthOf(date) >= since) ? addMonths(monthOf(date), 1) : monthOf(date));
   const transactions = useStore('transactions');
   const accounts = useStore('accounts');
   const rows = useMemo(() => {
@@ -35,7 +37,7 @@ export function CategoryTransactions({ categoryId, month, onOpen, title }: { cat
       .map((a) => ({ a, tx: byId.get(a.transactionId) }))
       .filter((r): r is { a: Allocation; tx: Transaction } => !!r.tx && months.has(countsIn(r.tx.date)))
       .sort((x, y) => y.tx.date.localeCompare(x.tx.date));
-  }, [allocations, transactions, categoryId, months, from]);
+  }, [allocations, transactions, categoryId, months, from, since]);
   const auto = rows.filter((r) => r.a.decidedBy !== 'user' && !r.a.reason.startsWith('Accepted:')).length;
   const accountName = (id: string) => accounts.find((x) => x.id === id)?.name ?? '?';
   return (

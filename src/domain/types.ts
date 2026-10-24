@@ -173,6 +173,12 @@ export interface Category extends BaseRecord {
    * on or after this day of the month, it counts in the next month (D-74).
    */
   nextMonthFromDay?: number;
+  /**
+   * The first month whose late payment counts in the next month (D-92): the
+   * month the household got a month ahead. Earlier payments count in the
+   * month they arrive. Unset: from the budget start.
+   */
+  nextMonthStart?: MonthKey;
   /** Hidden from the budget once its event is closed and nothing is left in it. */
   archivedAt?: string;
 }

@@ -2674,3 +2674,51 @@ input[type='date']::-webkit-date-and-time-value {
   color: var(--text);
   margin-top: 0.25rem;
 }
+.money-split {
+  margin-top: 1rem;
+}
+.money-bar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--surface-2);
+  margin-bottom: 0.6rem;
+}
+.money-seg {
+  display: block;
+  height: 100%;
+  flex: none;
+}
+.money-lines {
+  background: var(--series-1);
+}
+.money-held {
+  background: var(--series-2);
+}
+.money-free {
+  background: var(--text);
+  opacity: 0.75;
+}
+.money-legend li {
+  padding: 0.3rem 0;
+  font-size: 0.9rem;
+  border-bottom: 0;
+}
+.money-legend li:first-child {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.45rem;
+  margin-bottom: 0.15rem;
+}
+.money-key {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  margin-right: 0.45rem;
+  vertical-align: -1px;
+}
+.rta .money-legend .money {
+  color: var(--text);
+}
