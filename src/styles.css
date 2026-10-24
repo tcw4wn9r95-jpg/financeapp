@@ -2520,3 +2520,6 @@ input[type='date']::-webkit-date-and-time-value {
 .chat-answer {
   margin-top: 0.5rem;
 }
+.table-scroll {
+  overflow-x: auto;
+}

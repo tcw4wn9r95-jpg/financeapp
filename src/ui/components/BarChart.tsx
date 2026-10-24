@@ -52,7 +52,7 @@ function column(x: number, w: number, base: number, top: number): string {
   return `M${x},${base}V${top - r}Q${x},${top} ${x + r},${top}H${x + w - r}Q${x + w},${top} ${x + w},${top - r}V${base}Z`;
 }
 
-export function BarChart({ bars, title, height = 220, selected, onSelect }: { bars: Bar[]; title: string; height?: number; selected?: number; onSelect?: (i: number) => void }) {
+export function BarChart({ bars, title, height = 220, selected, onSelect, valueLabel = t('chart.spent') }: { bars: Bar[]; title: string; height?: number; selected?: number; onSelect?: (i: number) => void; valueLabel?: string }) {
   const wrap = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(340);
   const [active, setActive] = useState<number | null>(null);
@@ -106,7 +106,7 @@ export function BarChart({ bars, title, height = 220, selected, onSelect }: { ba
     <figure className="chart" aria-labelledby={titleId}>
       <figcaption id={titleId} className="visually-hidden">{title}</figcaption>
       <ul className="chart-legend">
-        <li><span className="bar-key" aria-hidden="true" />{t('chart.spent')}</li>
+        <li><span className="bar-key" aria-hidden="true" />{valueLabel}</li>
         {firstAhead >= 0 && <li><span className="bar-key bar-key-ahead" aria-hidden="true" />{t('chart.projected')}</li>}
         {bars.some((b) => b.budget !== undefined) && <li><span className="line-key budget-key" aria-hidden="true" />{t('chart.budget')}</li>}
       </ul>
@@ -161,7 +161,7 @@ export function BarChart({ bars, title, height = 220, selected, onSelect }: { ba
             <div className="chart-tip-row">
               <span className={`bar-key ${tip.kind === 'projected' ? 'bar-key-ahead' : ''}`} aria-hidden="true" />
               <strong>{formatMoney(tip.value)}</strong>
-              <span className="muted">{t(tip.kind === 'projected' ? 'chart.projected' : tip.kind === 'current' ? 'chart.soFar' : 'chart.spent')}</span>
+              <span className="muted">{tip.kind === 'projected' ? t('chart.projected') : tip.kind === 'current' ? t('chart.soFar') : valueLabel}</span>
             </div>
             {tip.budget !== undefined && (
               <>

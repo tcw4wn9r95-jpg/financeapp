@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { addMonths, todayIso } from '../../domain/dates';
 import { analyseSpending, SPEND_GROUPS, sumPoints, type CategoryAnalysis, type Insight, type InsightAction, type MonthPoint, type SpendGroup, type SpendingAnalysis } from '../../domain/insights';
-import { formatMoney } from '../../domain/money';
+import { formatWholeEuros } from '../../domain/money';
 import type { MonthKey, Transaction } from '../../domain/types';
 import { monthName, t, type MessageKey } from '../../i18n';
 import { changeBudgetLine } from '../actions';
@@ -11,16 +11,17 @@ import { Dialog } from '../components/Dialog';
 import { LineChart } from '../components/LineChart';
 import { Money } from '../components/Money';
 import { useToast } from '../components/Toast';
-import { useBudgetInput, useDocumentTitle, useStore, useVault } from '../hooks';
+import { useBudgetInput, useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { groupLabel } from '../labels';
-import { href } from '../router';
+import { href, useRoute } from '../router';
+import { periodMonths, ProvisionsTab, TransfersTab } from './InsightsFlows';
 import { TransactionDialog } from './TransactionsPage';
 
 type Period = '6' | '12' | 'year';
 const AHEAD = 6;
 
 /** "1.234 €": insights speak in whole euros. */
-export const euros = (cents: number) => formatMoney(Math.round(cents / 100) * 100).replace(/,00(\s€)$/, '$1');
+export const euros = formatWholeEuros;
 const monthAbbr = (m: MonthKey) => t(`month.${Number(m.slice(5))}` as MessageKey).slice(0, 3);
 
 export function useSpendingAnalysis(period: Period = '12'): SpendingAnalysis {
@@ -291,6 +292,9 @@ function CategoryList({ cats, onOpen }: { cats: CategoryAnalysis[]; onOpen: (c: 
  */
 export function InsightsPage() {
   useDocumentTitle(t('nav.insights'));
+  const route = useRoute();
+  const tab = (['spending', 'transfers', 'provisions'] as const).find((x) => x === route.query.get('tab')) ?? 'spending';
+  const settings = useSettings();
   const [period, setPeriod] = useState<Period>('12');
   const [group, setGroup] = useState<SpendGroup | 'all'>('all');
   const [detail, setDetail] = useState<string | null>(null);
@@ -327,6 +331,14 @@ export function InsightsPage() {
       </div>
       <p className="hint">{t('insights.intro')}</p>
 
+      <nav className="chips" aria-label={t('insights.tabs')}>
+        {(['spending', 'transfers', 'provisions'] as const).map((x) => (
+          <a key={x} className="chip" href={href('insights', { tab: x === 'spending' ? undefined : x })} aria-current={tab === x ? 'page' : undefined}>
+            {t(`insights.tab.${x}`)}
+          </a>
+        ))}
+      </nav>
+
       <div className="toolbar filter-row">
         <label>
           <span className="visually-hidden">{t('insights.period')}</span>
@@ -336,6 +348,7 @@ export function InsightsPage() {
             <option value="year">{t('insights.thisYear')}</option>
           </select>
         </label>
+        {tab === 'spending' && (
         <label>
           <span className="visually-hidden">{t('insights.show')}</span>
           <select value={group} onChange={(e) => setGroup(e.target.value as SpendGroup | 'all')} aria-label={t('insights.show')}>
@@ -343,9 +356,16 @@ export function InsightsPage() {
             {SPEND_GROUPS.map((g) => <option key={g} value={g}>{groupLabel(g)}</option>)}
           </select>
         </label>
+        )}
       </div>
 
-      {a.months.length === 0 ? (
+      {tab === 'transfers' ? (
+        <TransfersTab months={periodMonths(period, settings.budgetStartMonth)} />
+      ) : tab === 'provisions' ? (
+        <ProvisionsTab months={periodMonths(period, settings.budgetStartMonth)} />
+      ) : null}
+
+      {tab !== 'spending' ? null : a.months.length === 0 ? (
         <p className="muted">{t('insights.noData')}</p>
       ) : (
         <>

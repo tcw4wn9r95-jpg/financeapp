@@ -116,6 +116,11 @@ export function formatMoney(cents: Cents, opts: FormatOptions = {}): string {
   return `${sign}${whole},${frac}${symbol ? ' €' : ''}`;
 }
 
+/** Rounded to whole euros, for summaries: "1.234 €". */
+export function formatWholeEuros(cents: Cents): string {
+  return formatMoney(Math.round(cents / 100) * 100).replace(/,00(\s€)$/, '$1');
+}
+
 /** Plain editable form of an amount: "1234,56" (no grouping, no symbol). */
 export function formatMoneyInput(cents: Cents): string {
   assertCents(cents);
