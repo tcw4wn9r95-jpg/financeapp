@@ -14,7 +14,7 @@ import { MoneyField, TextField, useMoneyInput } from '../components/fields';
 import { Money } from '../components/Money';
 import { MonthNav } from '../components/MonthNav';
 import { ReadyToAssign } from '../components/ReadyToAssign';
-import { CloseMonthBanner } from '../components/CloseMonth';
+import { CloseMonthBanner, MonthStatus } from '../components/CloseMonth';
 import { useToast } from '../components/Toast';
 import { useBudgetInput, useBudgetMonth, useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { groupLabel, rolloverLabel } from '../labels';
@@ -97,6 +97,7 @@ export function BudgetPage() {
     <>
       <h1>{t('nav.budget')}</h1>
       <MonthNav month={month} onChange={setMonth} />
+      <MonthStatus key={month} month={month} />
       {!budget ? (
         <p className="notice">
           {t('budget.beforeStart', { month: monthName(settings.budgetStartMonth) })}{' '}
@@ -278,6 +279,7 @@ const BUDGET_ORDER: readonly CategoryGroup[] = ['fixed', 'variable', 'provisions
 /** Income on top: what each income line is expected to bring this month and what came in (D-76). */
 function IncomeSection({ month, budget, onPlan }: { month: MonthKey; budget: BudgetMonth; onPlan: (c: Category) => void }) {
   const categories = useStore('categories');
+  const [showIncome, setShowIncome] = useState(false);
   const defaults = useStore('budgetDefaults');
   const overrides = useStore('budgetOverrides');
   const income = categories.filter((c) => c.isIncome && !c.archivedAt).sort((a, b) => a.sortOrder - b.sortOrder);
@@ -286,7 +288,9 @@ function IncomeSection({ month, budget, onPlan }: { month: MonthKey; budget: Bud
     <section className="group" aria-labelledby="income-h">
       <div className="group-head">
         <h2 id="income-h">{t('budget.incomeTitle')}</h2>
-        <span className="muted">{t('budget.received')} <Money cents={budget.income} /></span>
+        <button type="button" className="link-button muted" onClick={() => setShowIncome(true)}>
+          {t('budget.received')} <Money cents={budget.income} /> ›
+        </button>
       </div>
       {income.length > 0 && (
         <ul className="rows">
@@ -333,6 +337,7 @@ function IncomeSection({ month, budget, onPlan }: { month: MonthKey; budget: Bud
           </li>
         )}
       </ul>
+      {showIncome && <IncomeMonthDialog month={month} total={budget.income} onClose={() => setShowIncome(false)} />}
     </section>
   );
 }
@@ -497,5 +502,21 @@ function ChangesAhead({ category }: { category: Category }) {
         <button type="button" className="button button-small" disabled={!valid} onClick={() => void add()}>{t('budget.addChange')}</button>
       </div>
     </section>
+  );
+}
+
+/** Every income transaction counted in a month, line by line (D-91). */
+function IncomeMonthDialog({ month, total, onClose }: { month: MonthKey; total: number; onClose: () => void }) {
+  const categories = useStore('categories');
+  const [open, setOpen] = useState<Transaction | null>(null);
+  if (open) return <TransactionDialog tx={open} onClose={() => setOpen(null)} />;
+  const lines = categories.filter((c) => c.isIncome).sort((a, b) => a.sortOrder - b.sortOrder);
+  return (
+    <Dialog open title={t('budget.incomeIn', { month: monthName(month) })} onClose={onClose} wide>
+      <p className="split-row"><span className="muted">{t('budget.received')}</span><strong><Money cents={total} /></strong></p>
+      {lines.map((c) => <CategoryTransactions key={c.id} categoryId={c.id} month={month} onOpen={setOpen} title={c.name} />)}
+      <p className="hint">{t('budget.incomeHow')}</p>
+      <div className="row"><button type="button" className="button button-quiet" onClick={onClose}>{t('common.close')}</button></div>
+    </Dialog>
   );
 }

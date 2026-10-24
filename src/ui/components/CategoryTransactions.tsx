@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { formatDate, monthOf } from '../../domain/dates';
+import { addMonths, formatDate, monthOf } from '../../domain/dates';
 import type { Allocation, MonthKey, Transaction } from '../../domain/types';
 import { formatMoney } from '../../domain/money';
 import { monthName, t, type MessageKey } from '../../i18n';
@@ -18,10 +18,14 @@ export function filedByLabel(a: Allocation): string {
  * one, so the budget line can be checked (D-85). A tap opens the transaction
  * to correct it.
  */
-export function CategoryTransactions({ categoryId, month, onOpen }: { categoryId: string; month: MonthKey | readonly MonthKey[]; onOpen: (tx: Transaction) => void }) {
+export function CategoryTransactions({ categoryId, month, onOpen, title }: { categoryId: string; month: MonthKey | readonly MonthKey[]; onOpen: (tx: Transaction) => void; title?: string }) {
   const months = useMemo(() => new Set(typeof month === 'string' ? [month] : month), [month]);
   const many = typeof month !== 'string';
   const allocations = useStore('allocations');
+  const categories = useStore('categories');
+  // Income received from a set day on counts in the next month (D-74): list it where it counts.
+  const from = categories.find((c) => c.id === categoryId && c.isIncome)?.nextMonthFromDay;
+  const countsIn = (date: string) => (from && Number(date.slice(8, 10)) >= from ? addMonths(monthOf(date), 1) : monthOf(date));
   const transactions = useStore('transactions');
   const accounts = useStore('accounts');
   const rows = useMemo(() => {
@@ -29,14 +33,14 @@ export function CategoryTransactions({ categoryId, month, onOpen }: { categoryId
     return allocations
       .filter((a) => a.targetId === categoryId && a.targetType !== 'transfer')
       .map((a) => ({ a, tx: byId.get(a.transactionId) }))
-      .filter((r): r is { a: Allocation; tx: Transaction } => !!r.tx && months.has(monthOf(r.tx.date)))
+      .filter((r): r is { a: Allocation; tx: Transaction } => !!r.tx && months.has(countsIn(r.tx.date)))
       .sort((x, y) => y.tx.date.localeCompare(x.tx.date));
-  }, [allocations, transactions, categoryId, months]);
+  }, [allocations, transactions, categoryId, months, from]);
   const auto = rows.filter((r) => r.a.decidedBy !== 'user' && !r.a.reason.startsWith('Accepted:')).length;
   const accountName = (id: string) => accounts.find((x) => x.id === id)?.name ?? '?';
   return (
     <section className="cat-tx" aria-labelledby={`ct-${categoryId}`}>
-      <h3 id={`ct-${categoryId}`} className="plan-h">{many ? t('catTx.titleAll', { n: rows.length }) : t('catTx.title', { n: rows.length })}</h3>
+      <h3 id={`ct-${categoryId}`} className="plan-h">{title ? `${title} (${rows.length})` : many ? t('catTx.titleAll', { n: rows.length }) : t('catTx.title', { n: rows.length })}</h3>
       {rows.length === 0 ? (
         <p className="muted">{t('catTx.none')}</p>
       ) : (
@@ -60,6 +64,7 @@ export function CategoryTransactions({ categoryId, month, onOpen }: { categoryId
                     <span className="row-sub">
                       {formatDate(tx.date)} · {accountName(tx.accountId)} · <span className={`filed-by filed-${a.decidedBy}`}>{filedByLabel(a)}</span>
                       {a.amount !== tx.amount && <> · {t('catTx.part')}</>}
+                      {countsIn(tx.date) !== monthOf(tx.date) && <> · {t('catTx.countsIn', { month: monthName(countsIn(tx.date)) })}</>}
                     </span>
                   </span>
                   <span className="row-end"><Money cents={a.amount} plusSign className="row-amount tx-amount" /></span>

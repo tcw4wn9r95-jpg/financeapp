@@ -72,8 +72,8 @@ function toDecision(v: string, categoryId: string, short: number, savingsLine: s
 }
 
 /** Close the oldest open month, then the next one, until none is left (D-89). */
-export function CloseMonthDialog({ onClose }: { onClose: () => void }) {
-  const open = useMonthsToClose();
+export function CloseMonthDialog({ onClose, only }: { onClose: () => void; only?: string }) {
+  const open = useMonthsToClose().filter((x) => !only || x.month === only);
   const vault = useVault();
   const notify = useToast();
   const categories = useStore('categories');
@@ -89,7 +89,7 @@ export function CloseMonthDialog({ onClose }: { onClose: () => void }) {
   if (!m) {
     return (
       <Dialog open title={t('close.title')} onClose={onClose}>
-        <p>✓ {t('close.allDone')}</p>
+        <p>✓ {only ? t('close.done', { month: monthName(only) }) : t('close.allDone')}</p>
         <div className="row"><button type="button" className="button button-primary" onClick={onClose}>{t('common.close')}</button></div>
       </Dialog>
     );
@@ -177,5 +177,63 @@ export function CloseMonthDialog({ onClose }: { onClose: () => void }) {
         <button type="button" className="button button-quiet" onClick={onClose}>{t('close.later')}</button>
       </div>
     </Dialog>
+  );
+}
+
+/**
+ * Whether a month is closed (D-91): the running month is open by nature; a
+ * past month is closed once every line that ended below zero was covered or
+ * left for the next month.
+ */
+export function MonthStatus({ month }: { month: string }) {
+  const open = useMonthsToClose();
+  const settings = useSettings();
+  const categories = useStore('categories');
+  const accounts = useStore('accounts');
+  const [closing, setClosing] = useState(false);
+  const current = currentMonth();
+  if (month < settings.budgetStartMonth) return null;
+  if (month >= current) {
+    return <p className="month-status"><span aria-hidden="true">● </span>{month === current ? t('close.running') : t('close.future')}</p>;
+  }
+  const o = open.find((x) => x.month === month);
+  if (o) {
+    const total = o.lines.reduce((s, l) => s + l.short, 0);
+    return (
+      <div className="month-status month-status-open">
+        <span><span aria-hidden="true">⚠ </span>{t('close.statusOpen', { n: o.lines.length, total: formatWholeEuros(total) })}</span>
+        <button type="button" className="button button-small button-primary" onClick={() => setClosing(true)}>{t('close.closeOne', { month: monthName(month) })}</button>
+        {closing && <CloseMonthDialog only={month} onClose={() => setClosing(false)} />}
+      </div>
+    );
+  }
+  const covers = (settings.covers ?? []).filter((c) => c.month === month);
+  const left = settings.closedMonths?.find((x) => x.month === month)?.left ?? [];
+  const name = (id: string) => categories.find((c) => c.id === id)?.name ?? '?';
+  if (covers.length === 0 && left.length === 0) {
+    return <p className="month-status month-status-closed"><span aria-hidden="true">✓ </span>{t('close.statusClean')}</p>;
+  }
+  return (
+    <details className="month-status month-status-closed">
+      <summary><span aria-hidden="true">✓ </span>{t('close.statusClosed', { covered: covers.length, left: left.length })}</summary>
+      <ul className="plain-list">
+        {covers.map((c) => (
+          <li key={c.id} className="split-row">
+            <span>
+              {name(c.categoryId)}{' '}
+              <span className="muted">
+                {c.fromAccountId ? t('cover.fromAccount', { name: accounts.find((a) => a.id === c.fromAccountId)?.name ?? '?' }) : c.fromCategoryId ? t('cover.fromLine', { name: name(c.fromCategoryId) }) : t('cover.fromReady')}
+              </span>
+            </span>
+            <Money cents={c.amount} />
+          </li>
+        ))}
+        {left.map((id) => (
+          <li key={id} className="split-row">
+            <span>{name(id)} <span className="muted">{t('close.leftNext')}</span></span>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

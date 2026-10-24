@@ -2650,3 +2650,27 @@ input[type='date']::-webkit-date-and-time-value {
   padding: 0.75rem 0;
   border-top: 1px solid var(--border);
 }
+.month-status {
+  margin: -0.5rem 0 1rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.month-status-open {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  color: var(--warn);
+}
+.month-status-closed {
+  color: var(--pos);
+}
+.month-status-closed summary {
+  min-height: 0;
+  color: var(--pos);
+  font-weight: 500;
+}
+.month-status-closed ul {
+  color: var(--text);
+  margin-top: 0.25rem;
+}
