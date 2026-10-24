@@ -150,11 +150,32 @@ describe('F2 rollover', () => {
     expect(feb!.categories.get('food')!.available).toBe(eur(350));
   });
 
-  it('roll carries overspending too', () => {
+  it('overspending is not carried: it comes out of next month\'s Ready to assign (D-89)', () => {
     const w = setup('roll');
     w.spend('bank', '2026-01-20', eur(100), 'food');
+    const [jan, feb] = computeBudget(w.input(), '2026-02');
+    expect(jan!.categories.get('food')!.uncovered).toBe(eur(-50));
+    expect(feb!.categories.get('food')!.carryIn).toBe(0);
+    expect(feb!.overspentLastMonth).toBe(eur(-50));
+    expect(feb!.readyToAssign).toBe(jan!.readyToAssign - eur(50) - eur(300));
+  });
+
+  it('covered in its month, overspending leaves nothing behind', () => {
+    const w = setup('roll');
+    w.spend('bank', '2026-01-20', eur(100), 'food');
+    w.override('food', '2026-01', eur(350)); // the 50 € gap covered from Ready to assign
+    const [jan, feb] = computeBudget(w.input(), '2026-02');
+    expect(jan!.categories.get('food')!.available).toBe(0);
+    expect([feb!.overspentLastMonth, feb!.categories.get('food')!.carryIn]).toEqual([0, 0]);
+  });
+
+  it('provisions may stay below zero between the bill and the money set aside', () => {
+    const w = setup('roll');
+    w.category('tax', 'provisions', 'roll');
+    w.spend('bank', '2026-01-20', eur(80), 'tax');
     const [, feb] = computeBudget(w.input(), '2026-02');
-    expect(feb!.categories.get('food')!.carryIn).toBe(eur(-50));
+    expect(feb!.categories.get('tax')!.carryIn).toBe(eur(-80));
+    expect(feb!.overspentLastMonth).toBe(0);
   });
 
   it('reset returns the leftover to Ready to assign next month', () => {
@@ -181,7 +202,7 @@ describe('F2 rollover', () => {
     w.spend('bank', '2026-01-20', eur(100), 'food');
     const [, feb] = computeBudget(w.input('savings'), '2026-02');
     expect(feb!.categories.get('savings')!.carryIn).toBe(0);
-    expect(feb!.returnedFromLastMonth).toBe(eur(-50));
+    expect(feb!.overspentLastMonth).toBe(eur(-50));
   });
 
   it('sweep without a target behaves like roll', () => {

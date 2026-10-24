@@ -2,6 +2,7 @@ import { backdateDefaults, defaultFor } from '../domain/budget';
 import { buildManualEntry, stamp, systemClock, type ManualEntry } from '../domain/ledger';
 import { addMonths, compareMonths, currentMonth, monthDiff, monthOf } from '../domain/dates';
 import { provisionSchedule, type CloseEventPlan } from '../domain/plan';
+import { closeAmounts, type CloseDecision, type MonthToClose } from '../domain/monthclose';
 import { DEMO_ANCHOR_MONTH, shiftSnapshotMonths } from '../domain/demo';
 import type {
   Account,
@@ -435,6 +436,40 @@ export async function coverOverspending(
   return async () => {
     await undoLine();
     await saveSettings(vault, { covers: (getSettings(vault).covers ?? []).filter((x) => x.id !== cover.id) });
+  };
+}
+
+/**
+ * Close a month (D-89): cover each line below zero from Ready to assign or
+ * from another line with money left, or leave the gap for the next month's
+ * Ready to assign. Returns the undo.
+ */
+export async function closeMonth(vault: Vault, m: MonthToClose, decisions: readonly CloseDecision[], fromAccountId?: Id): Promise<() => Promise<void>> {
+  const undos: (() => Promise<void>)[] = [];
+  for (const [categoryId, amount] of closeAmounts(m, decisions)) {
+    undos.push(await changeBudgetLine(vault, categoryId, amount, m.month, 'month', t('close.note')));
+  }
+  const before = getSettings(vault);
+  const at = new Date().toISOString();
+  const covers: Cover[] = decisions
+    .filter((d) => d.source.kind !== 'next')
+    .map((d) => ({
+      id: crypto.randomUUID(),
+      categoryId: d.categoryId,
+      month: m.month,
+      amount: d.short,
+      ...(d.source.kind === 'line' ? { fromCategoryId: d.source.categoryId } : {}),
+      ...(fromAccountId ? { fromAccountId } : {}),
+      at,
+    }));
+  const left = decisions.filter((d) => d.source.kind === 'next').map((d) => d.categoryId);
+  const closed = [...(before.closedMonths ?? []).filter((x) => x.month !== m.month), { month: m.month, left: [...new Set([...(before.closedMonths?.find((x) => x.month === m.month)?.left ?? []), ...left])] }];
+  await saveSettings(vault, { covers: [...(before.covers ?? []), ...covers], closedMonths: closed });
+  return async () => {
+    for (const u of undos.reverse()) await u();
+    const now = getSettings(vault);
+    const ids = new Set(covers.map((c) => c.id));
+    await saveSettings(vault, { covers: (now.covers ?? []).filter((c) => !ids.has(c.id)), closedMonths: before.closedMonths ?? [] });
   };
 }
 

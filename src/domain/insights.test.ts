@@ -83,8 +83,10 @@ describe('spending analysis (D-86)', () => {
     expect(byKind('unused', 'gym')).toMatchObject({ action: { type: 'default', amount: 0 } });
     expect(byKind('unbudgeted', 'pets')).toMatchObject({ values: { suggested: eur(60) } });
     expect(byKind('pace', 'fun')).toMatchObject({ values: { already: 1, spent: eur(150), budget: eur(100) } });
-    // Food is 6 × 150 € short, carried from month to month (July: +400 assigned, −200 spent): cover it now.
-    expect(byKind('carried', 'food')).toMatchObject({ values: { short: eur(700) }, action: { type: 'cover', month: '2026-07' } });
+    // Overspending is no longer carried (D-89): only this month's gap is there to cover.
+    expect(byKind('carried', 'food')).toBeUndefined();
+    // Fun money has six months of leftovers rolled forward: it is not below zero.
+    expect(byKind('carried', 'fun')).toBeUndefined();
     // Warnings come first.
     expect(a.insights[0]!.severity).toBe('warn');
     expect(a.insights.map((i) => i.severity).join()).toMatch(/^(warn,)*(tip,)*(info,?)*$/);
@@ -130,5 +132,14 @@ describe('a one-month change', () => {
     const food = a.categories.find((c) => c.category.id === 'food')!;
     expect(food.assignedNow).toBe(eur(1100));
     expect(food.points.filter((p) => p.kind === 'projected').map((p) => p.spent)).toEqual([eur(550), eur(550)]);
+  });
+});
+
+describe('this month below zero (D-89)', () => {
+  it('asks to cover the gap before the month closes', () => {
+    const w = household();
+    w.spend('bank', '2026-07-08', eur(130), 'phone'); // budget 100, reset every month
+    const a = analyseSpending(w.input(), { today: '2026-07-20', from: '2026-01', ahead: 0 });
+    expect(a.insights.find((i) => i.kind === 'carried' && i.categoryId === 'phone')).toMatchObject({ values: { short: eur(30) }, action: { type: 'cover', month: '2026-07', amount: eur(130) } });
   });
 });

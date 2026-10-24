@@ -14,6 +14,7 @@ import { MoneyField, TextField, useMoneyInput } from '../components/fields';
 import { Money } from '../components/Money';
 import { MonthNav } from '../components/MonthNav';
 import { ReadyToAssign } from '../components/ReadyToAssign';
+import { CloseMonthBanner } from '../components/CloseMonth';
 import { useToast } from '../components/Toast';
 import { useBudgetInput, useBudgetMonth, useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { groupLabel, rolloverLabel } from '../labels';
@@ -107,6 +108,7 @@ export function BudgetPage() {
         <>
           <LateAmounts month={month} />
           <ReadyToAssign month={budget} />
+          <CloseMonthBanner />
           {expense.length === 0 && (
             <p className="notice">
               {t('budget.noCategories')} <a href={href('categories')}>{t('budget.addCategories')}</a>
@@ -320,6 +322,9 @@ function IncomeSection({ month, budget, onPlan }: { month: MonthKey; budget: Bud
         <li className="split-row"><span>{t('budget.assignedThisMonth')}</span><Money cents={-budget.assignedTotal} /></li>
         {budget.returnedFromLastMonth !== 0 && (
           <li className="split-row"><span>{t('budget.returned')}</span><Money cents={budget.returnedFromLastMonth} plusSign /></li>
+        )}
+        {budget.overspentLastMonth !== 0 && (
+          <li className="split-row"><span>{t('budget.overspentLast')}</span><Money cents={budget.overspentLastMonth} /></li>
         )}
         {budget.uncategorised !== 0 && (
           <li className="split-row">

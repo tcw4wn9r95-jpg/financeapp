@@ -353,8 +353,8 @@ export function findInsights(a: SpendingAnalysis): Insight[] {
       if (c.spentNow > c.assignedNow) out.push({ kind: 'pace', severity: 'warn', categoryId: id, impact: (c.spentNow - c.assignedNow) * 12, values: { name, spent: c.spentNow, budget: c.assignedNow, already: 1, pace } });
       else if (pace > c.assignedNow * 1.2 && pace - c.assignedNow >= 30 * EUR) out.push({ kind: 'pace', severity: 'warn', categoryId: id, impact: (pace - c.assignedNow) * 12, values: { name, spent: c.spentNow, budget: c.assignedNow, already: 0, pace } });
     }
-    // Overspending carried from month to month: cover it now.
-    if (c.category.rolloverMode === 'roll' && c.available < -10 * EUR) {
+    // Over budget this month: cover it before the month closes (D-89).
+    if (steady && c.available < -10 * EUR) {
       out.push({ kind: 'carried', severity: 'warn', categoryId: id, impact: -c.available, values: { name, short: -c.available }, action: { type: 'cover', categoryId: id, month: a.current, amount: c.assignedNow - c.available } });
     }
   }

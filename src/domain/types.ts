@@ -420,6 +420,8 @@ export interface Settings {
   dismissedInsights?: string[];
   /** Overspending covered from an account, newest last (D-88). */
   covers?: Cover[];
+  /** Months closed, with the lines whose gap was left for the next month (D-89). */
+  closedMonths?: { month: MonthKey; left: Id[] }[];
   /** Merchants whose rule proposal was dismissed. */
   dismissedRuleProposals?: string[];
   /** Optional Claude fallback for transactions nothing else recognises (opt-in, D-37). */
@@ -439,6 +441,8 @@ export interface Cover {
   amount: Cents;
   /** The account the money comes from; none when it simply comes from Ready to assign. */
   fromAccountId?: Id;
+  /** Another budget line that gave the money (D-89); none: Ready to assign. */
+  fromCategoryId?: Id;
   note?: string;
   at: string;
 }

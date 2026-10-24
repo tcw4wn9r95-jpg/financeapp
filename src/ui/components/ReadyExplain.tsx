@@ -94,6 +94,7 @@ export function ReadyExplainDialog({ month, onClose }: { month: MonthKey; onClos
               </ul>
             </Part>
             {x.returned !== 0 && <Part label={t('explain.returned')} cents={x.returned} hint={t('explain.returnedHint')} />}
+            {x.overspent !== 0 && <Part label={t('explain.overspent')} cents={x.overspent} hint={t('explain.overspentHint')} />}
             {x.unfiled !== 0 && (
               <Part
                 label={t('explain.unfiled')}

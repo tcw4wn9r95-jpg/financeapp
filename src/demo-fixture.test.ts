@@ -39,7 +39,10 @@ describe('demo household fixture', () => {
 
   it('M1 gate: categorising the one open October item brings Ready to assign to exactly 0.00', async () => {
     const s = await load();
-    expect(budgetForMonth(input(s), DEMO_ANCHOR_MONTH)!.readyToAssign).toBe(-2499);
+    // Overspending nobody covered comes out of Ready to assign (D-89): the gate holds apart from it.
+    const uncovered = computeBudget(input(s), DEMO_ANCHOR_MONTH).reduce((x, m) => x + m.overspentLastMonth, 0);
+    expect(uncovered).toBe(-17160);
+    expect(budgetForMonth(input(s), DEMO_ANCHOR_MONTH)!.readyToAssign).toBe(-2499 + uncovered);
     const open = s.transactions.filter((t) => t.status === 'new');
     expect(open).toHaveLength(1);
     const fun = s.categories.find((c) => c.name === 'Fun money')!;
@@ -47,7 +50,7 @@ describe('demo household fixture', () => {
       ...open[0]!, id: 'x', transactionId: open[0]!.id, targetType: 'category', targetId: fun.id,
       amount: open[0]!.amount, confidence: 1, decidedBy: 'user', reason: 'test',
     } as never);
-    expect(budgetForMonth(input(s), DEMO_ANCHOR_MONTH)!.readyToAssign).toBe(0);
+    expect(budgetForMonth(input(s), DEMO_ANCHOR_MONTH)!.readyToAssign).toBe(uncovered);
   });
 
   it('card spending is counted once; settlements are transfers', async () => {
@@ -64,7 +67,7 @@ describe('demo household fixture', () => {
     expect(s.settings[0]!.budgetStartMonth).toBe('2026-07');
     expect(s.budgetOverrides.some((o) => o.month === '2027-03' && o.amount === 90000)).toBe(true);
     const months = computeBudget(input(s), '2027-01');
-    expect(months.at(-1)!.readyToAssign).toBe(-2499);
+    expect(months.at(-1)!.readyToAssign).toBe(-2499 - 17160);
     // 31 August shifted by 3 months clamps to 30 November.
     expect(shiftSnapshotMonths({ ...(await load()), transactions: [{ ...s.transactions[0]!, date: '2026-08-31' }] }, 3).transactions[0]!.date).toBe('2026-11-30');
   });

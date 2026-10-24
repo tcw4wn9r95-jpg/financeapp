@@ -85,6 +85,8 @@ export interface CategoryMonth {
   rolledOver: Cents;
   returnedToReady: Cents;
   sweptOut: Cents;
+  /** Overspending left at month end (negative): it comes out of the next month's Ready to assign (D-89). */
+  uncovered: Cents;
 }
 
 export interface BudgetMonth {
@@ -105,6 +107,8 @@ export interface BudgetMonth {
   adjustments: Cents;
   /** Leftovers from last month's reset/sweep categories returned this month. */
   returnedFromLastMonth: Cents;
+  /** Last month's overspending nobody covered, taken from Ready to assign this month (negative, D-89). */
+  overspentLastMonth: Cents;
   readyToAssign: Cents;
   /** Income already received this month that counts next month (D-74). */
   heldForNextMonth: Cents;
@@ -298,12 +302,14 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
   let ready = 0;
   let carry = new Map<Id, Cents>();
   let returned = 0;
+  let overspent = 0;
 
   for (const month of months) {
     const act = activity.get(month) ?? { byCategory: new Map(), income: 0, incomeByCategory: new Map(), uncategorised: 0, transit: 0, offBudget: 0, adjustments: 0, held: 0 };
     const cats = new Map<Id, CategoryMonth>();
     const nextCarry = new Map<Id, Cents>();
     let nextReturned = 0;
+    let nextOverspent = 0;
     let assignedTotal = 0;
     let activityTotal = 0;
 
@@ -332,8 +338,14 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       let rolledOver = 0;
       let returnedToReady = 0;
       let sweptOut = 0;
+      let uncovered = 0;
       const mode = c.rolloverMode === 'sweep' && (!sweepTarget || sweepTarget === c.id) ? 'roll' : c.rolloverMode;
-      if (mode === 'roll') {
+      if (available < 0 && c.groupId !== 'provisions' && c.groupId !== 'events') {
+        // Overspending is never carried into the line's next month (D-89): what was not
+        // covered when the month closed comes out of the next month's Ready to assign.
+        // Provisions and trips go below zero only between the bill and the money set aside.
+        uncovered = available;
+      } else if (mode === 'roll') {
         rolledOver = available;
       } else if (mode === 'reset') {
         returnedToReady = available;
@@ -348,6 +360,7 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
         nextCarry.set(sweepTarget, (nextCarry.get(sweepTarget) ?? 0) + sweptOut);
       }
       nextReturned += returnedToReady;
+      nextOverspent += uncovered;
 
       cats.set(c.id, {
         categoryId: c.id,
@@ -360,10 +373,11 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
         rolledOver,
         returnedToReady,
         sweptOut,
+        uncovered,
       });
     }
 
-    ready += openingFunds(input.accounts, month, input.startMonth) + act.income + act.uncategorised + act.transit + act.offBudget + act.adjustments + returned - assignedTotal;
+    ready += openingFunds(input.accounts, month, input.startMonth) + act.income + act.uncategorised + act.transit + act.offBudget + act.adjustments + returned + overspent - assignedTotal;
     assertCents(ready);
     result.push({
       month,
@@ -377,11 +391,13 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       offBudget: act.offBudget,
       adjustments: act.adjustments,
       returnedFromLastMonth: returned,
+      overspentLastMonth: overspent,
       readyToAssign: ready,
       heldForNextMonth: act.held,
     });
     carry = nextCarry;
     returned = nextReturned;
+    overspent = nextOverspent;
   }
   return result;
 }
@@ -491,6 +507,8 @@ export interface ReadyExplained {
   assignedByGroup: Map<string, Cents>;
   /** Leftovers of reset categories handed back. */
   returned: Cents;
+  /** Overspending not covered when its month closed (negative, D-89). */
+  overspent: Cents;
   /** Not filed yet: money in and money out still in the inbox. */
   unfiled: Cents;
   /** Transfers between own budget accounts whose two sides do not cancel out (yet). */
@@ -519,6 +537,7 @@ export function explainReady(input: BudgetInput, month: MonthKey): ReadyExplaine
     assigned: 0,
     assignedByGroup: new Map(),
     returned: 0,
+    overspent: 0,
     unfiled: 0,
     transit: 0,
     offBudget: 0,
@@ -533,6 +552,7 @@ export function explainReady(input: BudgetInput, month: MonthKey): ReadyExplaine
     out.income += m.income;
     for (const [id, v] of m.incomeByCategory) out.incomeByCategory.set(id, (out.incomeByCategory.get(id) ?? 0) + v);
     out.returned += m.returnedFromLastMonth;
+    out.overspent += m.overspentLastMonth;
     out.unfiled += m.uncategorised;
     out.transit += m.transit;
     out.offBudget += m.offBudget;

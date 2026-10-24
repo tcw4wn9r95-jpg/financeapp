@@ -311,7 +311,8 @@ export function CoverLog({ categoryId }: { categoryId?: string }) {
                 <Money cents={c.amount} />
               </div>
               <span className="row-sub">
-                {formatDate(c.at.slice(0, 10))} · {c.fromAccountId ? t('cover.fromAccount', { name: name(c.fromAccountId) }) : t('cover.fromReady')}
+                {t('cover.forMonth', { month: monthName(c.month) })} · {formatDate(c.at.slice(0, 10))} · {c.fromCategoryId ? t('cover.fromLine', { name: categories.find((x) => x.id === c.fromCategoryId)?.name ?? '?' }) : t('cover.fromReady')}
+                {c.fromAccountId ? ` · ${t('cover.fromAccount', { name: name(c.fromAccountId) })}` : ''}
                 {c.note ? ` · ${c.note}` : ''}
               </span>
               {c.fromAccountId && (

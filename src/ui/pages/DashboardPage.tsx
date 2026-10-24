@@ -11,6 +11,7 @@ import { useBuckets, useBudgetInput, useBudgetMonth, useDocumentTitle, useForeca
 import { href } from '../router';
 import { groupLabel } from '../labels';
 import { Icon } from '../components/Icon';
+import { CloseMonthBanner } from '../components/CloseMonth';
 import { InsightList, useDismissed, useSpendingAnalysis } from './InsightsPage';
 
 const BACKUP_NAG_DAYS = 7;
@@ -96,6 +97,7 @@ export function DashboardPage() {
         </a>
       )}
 
+      <CloseMonthBanner />
       {inbox > 0 && (
         <a className="action-row" href={href('inbox')}>
           <span className="nav-count">{inbox}</span>
