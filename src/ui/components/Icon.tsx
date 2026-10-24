@@ -11,6 +11,7 @@ const PATHS = {
   more: 'M5 12h.01 M12 12h.01 M19 12h.01',
   rules: 'M4 6h10 M4 12h7 M4 18h10 M17 9l4 3-4 3',
   chart: 'M3 3v18h18 M7 15l4-5 3 3 6-7',
+  insights: 'M4 20V10 M10 20V4 M16 20v-7 M21 20H3',
   lock: 'M6 11h12v10H6z M8.5 11V7.5a3.5 3.5 0 0 1 7 0V11',
   chevronLeft: 'M15 18l-6-6 6-6',
   chevronRight: 'M9 18l6-6-6-6',

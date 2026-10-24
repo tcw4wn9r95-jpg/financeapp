@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { BudgetMonth } from '../../domain/budget';
 import { monthName, t } from '../../i18n';
 import { Money } from './Money';
@@ -30,10 +31,16 @@ export function ReadyToAssign({ month, compact = false }: { month: BudgetMonth; 
           </p>
         )}
         <p className="rta-why">
-          <button type="button" className="link-button" onClick={() => setExplain(true)}>{t('explain.open')}</button>
+          <button type="button" className="link-button" onClick={(e) => {
+            // On the dashboard the card is a link to the budget.
+            e.preventDefault();
+            e.stopPropagation();
+            setExplain(true);
+          }}>{t('explain.open')}</button>
         </p>
       </section>
-      {explain && <ReadyExplainDialog month={month.month} onClose={() => setExplain(false)} />}
+      {/* Outside the card: on the dashboard the card sits inside a link. */}
+      {explain && createPortal(<ReadyExplainDialog month={month.month} onClose={() => setExplain(false)} />, document.body)}
     </>
   );
 }

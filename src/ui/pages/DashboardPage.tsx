@@ -11,6 +11,7 @@ import { useBuckets, useBudgetInput, useBudgetMonth, useDocumentTitle, useForeca
 import { href } from '../router';
 import { groupLabel } from '../labels';
 import { Icon } from '../components/Icon';
+import { InsightList, useSpendingAnalysis } from './InsightsPage';
 
 const BACKUP_NAG_DAYS = 7;
 
@@ -28,6 +29,8 @@ export function DashboardPage() {
   const cash = open.filter(isOnBudget).reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
 
   const budgetInput = useBudgetInput();
+  const analysis = useSpendingAnalysis('6');
+  const topInsights = analysis.insights.filter((i) => i.severity !== 'info' && i.kind !== 'unfiled').slice(0, 3);
   const inv = useMemo(() => invested(budgetInput, month), [budgetInput, month]);
   const provisions = useStore('provisions');
   const events = useStore('events');
@@ -122,6 +125,16 @@ export function DashboardPage() {
           <span>{lastBackup ? t('dashboard.backupOld', { days: BACKUP_NAG_DAYS }) : t('dashboard.backupNever')}</span>
           <Icon name="chevronRight" size={18} />
         </a>
+      )}
+
+      {topInsights.length > 0 && (
+        <section className="group dash-insights" aria-labelledby="dins-h">
+          <div className="group-head">
+            <h2 id="dins-h">{t('dash.insights')}</h2>
+            <a className="muted" href={href('insights')}>{t('dash.insightsAll')}</a>
+          </div>
+          <InsightList insights={topInsights} />
+        </section>
       )}
 
       {open.length > 0 && budget && (

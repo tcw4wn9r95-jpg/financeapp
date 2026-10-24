@@ -13,6 +13,7 @@ import { CategoriesPage } from './pages/CategoriesPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ImportPage } from './pages/ImportPage';
 import { InboxPage } from './pages/InboxPage';
+import { InsightsPage } from './pages/InsightsPage';
 import { PlanPage } from './pages/PlanPage';
 import { RulesPage } from './pages/RulesPage';
 import { ScenariosTab } from './pages/ScenariosTab';
@@ -26,6 +27,7 @@ const NAV = [
   ['budget', 'nav.budget', 'budget'],
   ['inbox', 'nav.inbox', 'inbox'],
   ['plan', 'nav.plan', 'chart'],
+  ['insights', 'nav.insights', 'insights'],
   ['transactions', 'nav.transactions', 'list'],
   ['import', 'nav.import', 'upload'],
   ['accounts', 'nav.accounts', 'bank'],
@@ -151,6 +153,8 @@ function Page({ section }: { section: string }) {
       return <TransactionsPage />;
     case 'inbox':
       return <InboxPage />;
+    case 'insights':
+      return <InsightsPage />;
     case 'plan':
       return <PlanPage extraTabs={{ scenarios: <ScenariosTab />, tax: <TaxTab /> }} />;
     case 'rules':

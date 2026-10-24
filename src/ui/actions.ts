@@ -388,6 +388,29 @@ export async function saveMonthPlan(vault: Vault, categoryId: Id, plan: Readonly
 }
 
 /** Remove one planned change of a usual monthly amount (D-78). */
+/**
+ * Change a budget line from an insight (D-86): a new monthly amount from a
+ * month on ('default'), or this month only ('month'). Returns the undo, which
+ * puts back exactly what was there.
+ */
+export async function changeBudgetLine(vault: Vault, categoryId: Id, amount: Cents, month: MonthKey, mode: 'default' | 'month', note = ''): Promise<() => Promise<void>> {
+  const findDefault = () => vault.list('budgetDefaults').find((d) => d.categoryId === categoryId && d.effectiveFrom === month);
+  const findOverride = () => vault.list('budgetOverrides').find((o) => o.categoryId === categoryId && o.month === month);
+  const before = { d: findDefault(), o: findOverride() };
+  if (mode === 'default') await setDefaultFrom(vault, categoryId, amount, month);
+  else await setOverride(vault, categoryId, month, amount, note);
+  return async () => {
+    const ops: WriteOp[] = [];
+    const d = findDefault();
+    const o = findOverride();
+    if (before.d) ops.push({ type: 'put', store: 'budgetDefaults', record: before.d });
+    else if (d) ops.push({ type: 'delete', store: 'budgetDefaults', id: d.id });
+    if (before.o) ops.push({ type: 'put', store: 'budgetOverrides', record: before.o });
+    else if (o) ops.push({ type: 'delete', store: 'budgetOverrides', id: o.id });
+    await vault.write(ops);
+  };
+}
+
 export async function removeDefault(vault: Vault, id: Id): Promise<void> {
   await vault.write([{ type: 'delete', store: 'budgetDefaults', id }]);
 }

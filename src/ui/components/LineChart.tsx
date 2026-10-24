@@ -15,6 +15,8 @@ export interface Series {
   /** CSS colour token, e.g. var(--series-1). */
   color: string;
   values: Cents[];
+  /** From this index on the line is a projection: drawn dashed. */
+  dashFrom?: number;
 }
 
 export interface LineChartProps {
@@ -79,6 +81,7 @@ export function LineChart({ labels, axisLabels, series, reference, mark, height 
   const x = (i: number) => PAD.left + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
   const y = (v: number) => PAD.top + plotH - ((v - yMin) / (yMax - yMin || 1)) * plotH;
   const path = (vals: Cents[]) => vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('');
+  const pathFrom = (vals: Cents[], from: number) => vals.map((v, i) => (i < from ? '' : `${i === from ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`)).join('');
   const first = series[0];
   const area = first ? `${path(first.values)}L${x(n - 1)},${y(Math.max(yMin, 0))}L${x(0)},${y(Math.max(yMin, 0))}Z` : '';
   const xi = [0, Math.floor((n - 1) / 2), n - 1].filter((v, i, a) => a.indexOf(v) === i);
@@ -130,9 +133,16 @@ export function LineChart({ labels, axisLabels, series, reference, mark, height 
             </g>
           )}
           {first && <path d={area} style={{ fill: first.color }} className="chart-area" />}
-          {series.map((s) => (
-            <path key={s.name} d={path(s.values)} style={{ stroke: s.color }} className="chart-line" />
-          ))}
+          {series.map((s) =>
+            s.dashFrom !== undefined && s.dashFrom < n - 1 ? (
+              <g key={s.name}>
+                <path d={path(s.values.slice(0, s.dashFrom + 1))} style={{ stroke: s.color }} className="chart-line" />
+                <path d={pathFrom(s.values, s.dashFrom)} style={{ stroke: s.color }} className="chart-line chart-line-ahead" />
+              </g>
+            ) : (
+              <path key={s.name} d={path(s.values)} style={{ stroke: s.color }} className="chart-line" />
+            ),
+          )}
           {mark && series[series.length - 1] && (
             <g>
               <circle cx={x(mark.index)} cy={y(series[series.length - 1]!.values[mark.index]!)} r={5} className="chart-mark" />
