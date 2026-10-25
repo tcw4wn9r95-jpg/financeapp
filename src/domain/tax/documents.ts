@@ -9,7 +9,7 @@ import type { Cents } from '../types';
  * reported as such, never guessed.
  */
 
-export type TaxDocKind = 'salary' | 'loan' | 'return' | 'assessment' | 'advances' | 'statement';
+export type TaxDocKind = 'salary' | 'payslip' | 'loan' | 'return' | 'assessment' | 'advances' | 'statement';
 
 export interface ParsedTaxDocument {
   kind: TaxDocKind;
@@ -17,6 +17,8 @@ export interface ParsedTaxDocument {
   year: number;
   /** Who or what it is about: the employee's name, the loan's IBAN end. */
   subject?: string;
+  /** Who issued it: the employer on a payslip. */
+  issuer?: string;
   /** Figures in cents (rates in hundredths of a percent). */
   values: Record<string, number>;
   /** Dated amounts: advances due, by month (YYYY-MM). */
@@ -84,6 +86,50 @@ function salaryCertificate(lines: readonly string[]): ParsedTaxDocument | null {
     year,
     ...(name ? { subject: name } : {}),
     values: { gross, ...(social !== undefined ? { social } : {}), ...(withheld !== undefined ? { withheld } : {}), ...(lrcp !== null ? { lrcp } : {}), ...(dependence !== undefined ? { dependence } : {}) },
+  };
+}
+
+/**
+ * A payslip's year-to-date block ("Annual amount to 31/05/2026"): gross pay,
+ * contributions and tax withheld since January. The block's columns come out
+ * of the PDF in a scrambled order, so the contributions and the tax that are
+ * not next to their label are found as the two amounts that make the net add up.
+ */
+function payslip(lines: readonly string[]): ParsedTaxDocument | null {
+  const at = lines.findIndex((l) => /(?:Annual amount|Cumul annuel|Cumuls?) (?:to|au)\s+\d{2}\/\d{2}\/\d{4}/i.test(l));
+  if (at < 0 || !has(lines, /payslip|fiche de (?:salaire|paie)|décompte de salaire/i)) return null;
+  const [, month, year] = lines[at]!.match(/(\d{2})\/(\d{2})\/(\d{4})/)!.slice(1);
+  const block = lines.slice(at + 1);
+  const labelled = (re: RegExp) => {
+    for (const l of block) {
+      const m = l.match(new RegExp(`(?:${re.source})\\s*:\\s*(-?\\d{1,3}(?:[ .\u00a0\u202f]\\d{3})*,\\d{2})`, 'i'));
+      if (m) return luAmount(m[1]!);
+    }
+    return null;
+  };
+  const gross = labelled(/\bGross|\bBrut/);
+  const pension = labelled(/Pension contrib\.?|Cotis\.? pension/);
+  const dependence = labelled(/Dpdce contrib\.?|Dependence contrib\.?|Cotis\.? dépendance/);
+  const net = labelled(/^Net|\sNet/);
+  if (gross === null || pension === null || dependence === null || net === null) return null;
+  // Health contributions and tax: the pair of amounts in the block with gross − health − pension − dependence − tax = net.
+  const rest = gross - pension - dependence - net;
+  const amounts = [...new Set(block.flatMap((l) => [...l.matchAll(/-?\d{1,3}(?:[ .\u00a0\u202f]\d{3})*,\d{2}/g)].map((m) => luAmount(m[0])!)).filter((v) => v > 0))];
+  const pairs: [number, number][] = [];
+  for (const a of amounts) for (const b of amounts) if (a < b && a + b === rest) pairs.push([a, b]);
+  if (pairs.length !== 1) return null;
+  const [health, tax] = pairs[0]!;
+  // Complementary pension: the month's deduction times the months so far.
+  const lrcpMonth = lines.map((l) => l.match(/compl\.? pension.*?(-?\d{1,3}(?:[ .\u00a0\u202f]\d{3})*,\d{2})\s*$/i)).find(Boolean);
+  const lrcp = lrcpMonth ? Math.abs(luAmount(lrcpMonth[1]!) ?? 0) * Number(month) : 0;
+  const employer = lines.find((l) => /^\s*(?:Payslip|Fiche de (?:salaire|paie))/i.test(l))?.replace(/^\s*(?:Payslip|Fiche de (?:salaire|paie))\s*/i, '').trim();
+  const name = lines.map((l) => l.match(/\b(?:Mr|Mrs|Ms|Mme|Mlle|M\.)\s+([A-Za-zÀ-ÿ' -]+?)\s*$/)).find(Boolean)?.[1];
+  return {
+    kind: 'payslip',
+    year: Number(year),
+    ...(name ? { subject: name.replace(/\s+/g, ' ').trim() } : {}),
+    ...(employer ? { issuer: employer } : {}),
+    values: { month: Number(month), gross, social: health + pension, dependence, withheld: tax, lrcp },
   };
 }
 
@@ -212,7 +258,7 @@ function statementOfAccount(lines: readonly string[]): ParsedTaxDocument | null 
 
 /** Recognise a tax document from its text lines, or null. */
 export function parseTaxDocument(lines: readonly string[]): ParsedTaxDocument | null {
-  for (const parse of [salaryCertificate, loanCertificate, filedReturn, statementOfAccount, assessment, advancesBulletin]) {
+  for (const parse of [salaryCertificate, payslip, loanCertificate, filedReturn, statementOfAccount, assessment, advancesBulletin]) {
     const doc = parse(lines);
     if (doc) return doc;
   }

@@ -84,6 +84,24 @@ describe('parseTaxDocument', () => {
     ]);
     expect(d).toEqual({ kind: 'salary', year: 2025, subject: 'Example Alex', values: { gross: 10_100_050, social: 1_100_025, withheld: 1_550_040, lrcp: 120_000, dependence: 140_000 } });
   });
+  it('reads a payslip’s year-to-date figures, even with its columns out of order', () => {
+    const d = parseTaxDocument([
+      'Payslip   EXAMPLE WORKS SARL',
+      'MARCH 2026',
+      'Employee Nbr   :   1234   Mr Example Alex',
+      'Contrib. compl. pension ins.   -50,00',
+      'Annual amount to 31/03/2026 INCLUDED',
+      'Gross   :   15 000,00   FD   :   0,00 Taxable   :   12 500,00',
+      'Illness base   :   15 000,00   FO   :   0,00   :   1 800,00',
+      'Tax',
+      '457,50   DS   :   0,00   0,00',
+      'Illness contrib.   :   CIS   :',
+      'Pension contrib.   :   1 275,00   CIM   :',
+      'Net   :   11 260,00',
+      'Dpdce contrib.   :   207,50   NDF   :   0,00',
+    ]);
+    expect(d).toEqual({ kind: 'payslip', year: 2026, subject: 'Example Alex', issuer: 'EXAMPLE WORKS SARL', values: { month: 3, gross: 1_500_000, social: 45_750 + 127_500, dependence: 20_750, withheld: 180_000, lrcp: 15_000 } });
+  });
   it('reads a loan interest certificate', () => {
     const d = parseTaxDocument(['IBAN LU12 3456 7890 1234 5678', 'Outstanding balance on 31.12.2025   :   190.000,00 EUR', 'Outstanding balance on 01.01.2025   :   200.000,00 EUR', 'Interest due 2025 in our favour   :   7.750,10 EUR', 'Interest rate   :   3,90 % p.a.']);
     expect(d).toEqual({ kind: 'loan', year: 2025, subject: '••5678', values: { interest: 775_010, balanceEnd: 19_000_000, balanceStart: 20_000_000, rate: 390 } });
@@ -174,6 +192,20 @@ describe('estimateReturn', () => {
     const est = estimateReturn({ ...ctx, documents: [lastYear, cert], setup: { ...ctx.setup, overrides: { 'withheld:Alex': e(7_500) } } });
     expect(est.input.persons[0]!.gross).toMatchObject({ amount: e(50_000), source: 'document' });
     expect(est.input.persons[0]!.withheld.amount).toBe(e(7_500));
+  });
+  it('takes January to the payslip’s month from the payslip, and grosses up only what came after', () => {
+    const slip: TaxDocumentRecord = { id: 'p5', fileName: 'p.pdf', addedAt: '2026-06-01', kind: 'payslip', year: 2026, subject: 'Alex Example', issuer: 'ACME SARL', values: { month: 5, gross: e(20_000), social: e(2_300), dependence: e(250), withheld: e(2_450), lrcp: 0 } };
+    const est = estimateReturn({ ...ctx, documents: [lastYear, slip] });
+    const trace = est.salaries.Alex!;
+    expect(trace.payslip).toMatchObject({ month: 5, received: e(15_000) });
+    // Net 15,000 after May (5 received + 2 planned × 3,000 … less the 5 in the payslip) at the payslip's ratio.
+    const ratio = 20_000 / (20_000 - 2_300 - 250 - 2_450);
+    const rest = Math.round(e(21_000) * ratio);
+    const p = est.input.persons[0]!;
+    expect(p.gross.amount).toBe(e(20_000) + rest);
+    expect(p.withheld.amount).toBe(e(2_450) + Math.round((rest * 2_450) / 20_000));
+    expect(trace.withheldSoFar! + trace.withheldAhead!).toBe(p.withheld.amount);
+    expect(trace.withheldSoFar).toBe(e(2_450) + Math.round(e(15_000) * ratio * (2_450 / 20_000)));
   });
   it('asks for last year’s certificate when there is none', () => {
     expect(estimateReturn({ ...ctx, documents: [] }).missing).toContain('certificate:Alex');

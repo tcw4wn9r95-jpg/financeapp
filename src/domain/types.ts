@@ -377,9 +377,10 @@ export interface TaxDocumentRecord {
   id: Id;
   fileName: string;
   addedAt: string;
-  kind: 'salary' | 'loan' | 'return' | 'assessment' | 'advances' | 'statement';
+  kind: 'salary' | 'payslip' | 'loan' | 'return' | 'assessment' | 'advances' | 'statement';
   year: number;
   subject?: string;
+  issuer?: string;
   values: Record<string, number>;
   schedule?: Record<string, Cents>;
   persons?: { name: string; values: Record<string, number> }[];

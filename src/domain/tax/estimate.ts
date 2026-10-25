@@ -46,6 +46,10 @@ export interface PayerTrace {
   /** The last payment date. */
   last: IsoDate;
   treatment: 'taxable' | 'exempt';
+  /** Received up to the end of the latest payslip's period (already in its year-to-date figures). */
+  untilSlip: Cents;
+  /** Months after the payslip in which this payer paid. */
+  monthsAfterSlip: number;
 }
 
 export interface SalaryTrace {
@@ -54,8 +58,14 @@ export interface SalaryTrace {
   /** Received from payers marked not taxable. */
   exempt: Cents;
   payers: PayerTrace[];
-  /** Gross per euro of net pay, from last year's certificate. */
+  /** Gross per euro of net pay, from the payslip or last year's certificate. */
   grossPerNet?: number;
+  /** The latest payslip's year-to-date figures, when one was added. */
+  payslip?: { month: number; issuer?: string; gross: Cents; withheld: Cents; received: Cents };
+  /** Tax withheld from pay so far this year (payslip, then estimated on what was received since). */
+  withheldSoFar?: Cents;
+  /** Tax still to be withheld on the pay planned to December. */
+  withheldAhead?: Cents;
 }
 
 /** Who paid: the counterparty, or the bank text's first words. */
@@ -100,18 +110,24 @@ function expected(ctx: EstimateContext, id: Id, month: MonthKey): Cents {
  * Net pay received in the calendar year so far, by payer, and what the income
  * lines still expect (counted with the payer that paid last).
  */
-export function salaryForYear(ctx: EstimateContext, categoryIds: readonly Id[], treatments: Record<string, 'taxable' | 'exempt'> = {}): SalaryTrace {
+export function salaryForYear(ctx: EstimateContext, categoryIds: readonly Id[], treatments: Record<string, 'taxable' | 'exempt'> = {}, slipEnd?: IsoDate): SalaryTrace {
   const ids = new Set(categoryIds);
   const byId = new Map(ctx.transactions.map((t) => [t.id, t]));
   const paidMonths = new Set<string>();
   const payers = new Map<string, PayerTrace>();
+  const afterSlip = new Map<string, Set<MonthKey>>();
   for (const a of ctx.allocations) {
     if (a.targetType !== 'income' || !ids.has(a.targetId)) continue;
     const t = byId.get(a.transactionId);
     if (!t || !t.date.startsWith(String(ctx.year)) || t.date > ctx.today) continue;
     const key = payerOf(t);
-    const p = payers.get(key) ?? { key, received: 0, rows: 0, last: t.date, treatment: 'taxable' as const };
+    const p = payers.get(key) ?? { key, received: 0, rows: 0, last: t.date, treatment: 'taxable' as const, untilSlip: 0, monthsAfterSlip: 0 };
     p.received += a.amount;
+    if (slipEnd && t.date <= slipEnd) p.untilSlip += a.amount;
+    else if (slipEnd && !(afterSlip.get(key) ?? new Set()).has(monthOf(t.date))) {
+      afterSlip.set(key, (afterSlip.get(key) ?? new Set()).add(monthOf(t.date)));
+      p.monthsAfterSlip++;
+    }
     p.rows++;
     if (t.date > p.last) p.last = t.date;
     payers.set(key, p);
@@ -176,26 +192,46 @@ export function estimateReturn(ctx: EstimateContext): Estimate {
       withheld = fig(doc.withheld ?? 0, 'document');
       lrcp = fig(doc.lrcp ?? 0, 'document');
     } else {
-      const trace = salaryForYear(ctx, sp.salaryCategoryIds, sp.payers);
+      // The latest payslip of the year gives gross, contributions and tax to its month end.
+      const slip = docs.filter((d) => d.kind === 'payslip' && d.year === year && sameName(d.subject, sp.name)).sort((a, b) => (b.values.month ?? 0) - (a.values.month ?? 0))[0];
+      const slipEnd = slip ? `${year}-${String(slip.values.month).padStart(2, '0')}-31` : undefined;
+      const trace = salaryForYear(ctx, sp.salaryCategoryIds, sp.payers, slipEnd);
       salaries[sp.name] = trace;
+      // Pay from the payslip's employer up to its month end is in its figures already.
+      const employer = slip?.issuer ? words(slip.issuer).filter((w) => w.length >= 3 && !['sarl', 'sàrl', 'eu', 'sa', 'ltd', 'gmbh', 'luxembourg'].includes(w)) : [];
+      const taxable = trace.payers.filter((p) => p.treatment === 'taxable');
+      const fromEmployer = taxable.filter((p) => employer.some((w) => words(p.key).includes(w)));
+      const slipPayers = slip ? (fromEmployer.length ? fromEmployer : taxable) : [];
+      const inSlip = slipPayers.reduce((s, p) => s + p.untilSlip, 0);
+      const receivedAfter = trace.received - inSlip;
       // Exempt pay (the legal part of a severance) is not grossed up.
-      const net = Math.max(0, trace.received + trace.planned - (sp.exemptPay ?? 0));
-      if (last?.gross) {
+      const restNet = Math.max(0, receivedAfter + trace.planned - (sp.exemptPay ?? 0));
+      const ref = slip?.values ?? last;
+      if (ref?.gross) {
         // Net pay = gross − social − dependence − withholding − complementary pension.
-        const lastNet = last.gross - (last.social ?? 0) - (last.dependence ?? 0) - (last.withheld ?? 0) - (last.lrcp ?? 0);
-        const ratio = lastNet > 0 ? last.gross / lastNet : 1;
+        const refNet = ref.gross - (ref.social ?? 0) - (ref.dependence ?? 0) - (ref.withheld ?? 0) - (ref.lrcp ?? 0);
+        const ratio = refNet > 0 ? ref.gross / refNet : 1;
         trace.grossPerNet = ratio;
-        const g = Math.round(net * ratio) + (sp.extraGross ?? 0);
-        // Contribution rates may change from one year to the next.
+        const restGross = Math.round(restNet * ratio) + (sp.extraGross ?? 0);
+        // Contribution rates may change from one year to the next (a payslip is this year's already).
         const rates = (p?: TaxParams) => (p ? p.social.pension + p.social.health : 1);
-        const rateChange = ctx.paramsLastYear ? rates(ctx.params) / rates(ctx.paramsLastYear) : 1;
-        gross = fig(g, 'ledger', 'net received and planned, grossed up with last year’s certificate');
-        social = fig(Math.round((g * (last.social ?? 0) * rateChange) / last.gross), 'lastYear');
-        withheld = fig(Math.round((g * (last.withheld ?? 0)) / last.gross), 'lastYear');
-        lrcp = fig(last.lrcp ?? 0, 'lastYear');
+        const rateChange = !slip && ctx.paramsLastYear ? rates(ctx.params) / rates(ctx.paramsLastYear) : 1;
+        const share = (k: string) => (ref[k] ?? 0) / ref.gross!;
+        const withheldOn = (netPay: number) => Math.round(Math.max(0, netPay) * ratio * share('withheld'));
+        const s0 = slip?.values;
+        const g = (s0?.gross ?? 0) + restGross;
+        const srcRest: Figure['source'] = slip ? 'ledger' : 'lastYear';
+        gross = fig(g, 'ledger', slip ? `payslip to ${monthOf(slipEnd!)}, then net received and planned grossed up with its ratio` : 'net received and planned, grossed up with last year’s certificate');
+        social = fig((s0?.social ?? 0) + Math.round(restGross * share('social') * rateChange), srcRest);
+        withheld = fig((s0?.withheld ?? 0) + Math.round(restGross * share('withheld')), srcRest);
+        const lrcpMonth = slip ? (s0!.lrcp ?? 0) / (s0!.month ?? 12) : 0;
+        lrcp = slip ? fig(Math.round((s0!.lrcp ?? 0) + lrcpMonth * Math.max(0, ...slipPayers.map((p) => p.monthsAfterSlip))), 'document') : fig(last?.lrcp ?? 0, 'lastYear');
+        if (slip) trace.payslip = { month: s0!.month ?? 0, ...(slip.issuer ? { issuer: slip.issuer } : {}), gross: s0!.gross ?? 0, withheld: s0!.withheld ?? 0, received: inSlip };
+        trace.withheldSoFar = (s0?.withheld ?? 0) + withheldOn(receivedAfter - (sp.exemptPay ?? 0));
+        trace.withheldAhead = withheld.amount - trace.withheldSoFar;
       } else {
         missing.push(`certificate:${sp.name}`);
-        gross = fig(net + (sp.extraGross ?? 0), 'ledger', 'net pay only: add last year’s salary certificate');
+        gross = fig(restNet + (sp.extraGross ?? 0), 'ledger', 'net pay only: add last year’s salary certificate');
         social = fig(0, 'model');
         withheld = fig(0, 'model');
         lrcp = fig(0, 'model');

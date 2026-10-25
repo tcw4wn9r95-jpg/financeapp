@@ -210,13 +210,15 @@ function Missing({ m }: { m: Model }) {
 
 // ------------------------------------------------------------- documents
 
-const KINDS = ['salary', 'loan', 'return', 'assessment', 'advances', 'statement'] as const;
+const KINDS = ['salary', 'payslip', 'loan', 'return', 'assessment', 'advances', 'statement'] as const;
 
 function docSummary(d: TaxDocumentRecord): string {
   const e = (c: number | undefined) => (c === undefined ? '' : formatMoney(c));
   switch (d.kind) {
     case 'salary':
       return t('tax.doc.salaryLine', { gross: e(d.values.gross), withheld: e(d.values.withheld) });
+    case 'payslip':
+      return t('tax.doc.payslipLine', { month: monthName(`${d.year}-${String(d.values.month).padStart(2, '0')}`), gross: e(d.values.gross), withheld: e(d.values.withheld) });
     case 'loan':
       return t('tax.doc.loanLine', { interest: e(d.values.interest), rate: d.values.rate ? (d.values.rate / 100).toFixed(2).replace('.', ',') : '–' });
     case 'return':
@@ -363,6 +365,12 @@ function Breakdown({ m, setOverride, save }: { m: Model; setOverride: (k: string
             {row(`social:${p.name}`, p.social, -1)}
             {row(`lrcp:${p.name}`, p.lrcp, -1)}
             {row(`withheld:${p.name}`, p.withheld)}
+            {m.estimate.salaries[p.name]?.withheldSoFar !== undefined && ov[`withheld:${p.name}`] === undefined && (
+              <li className="hint">
+                {t('tax.withheldSplit', { soFar: formatMoney(m.estimate.salaries[p.name]!.withheldSoFar!), ahead: formatMoney(m.estimate.salaries[p.name]!.withheldAhead ?? 0) })}
+                {m.estimate.salaries[p.name]!.payslip && ` ${t('tax.withheldSlip', { month: monthName(`${m.ctx.year}-${String(m.estimate.salaries[p.name]!.payslip!.month).padStart(2, '0')}`), amount: formatMoney(m.estimate.salaries[p.name]!.payslip!.withheld) })}`}
+              </li>
+            )}
           </ul>
           {m.estimate.salaries[p.name] && <Payers trace={m.estimate.salaries[p.name]!} person={m.setup.persons[i]!} onChange={(person) => save({ ...m.setup, persons: m.setup.persons.map((x, j) => (j === i ? person : x)) })} />}
         </section>
@@ -415,7 +423,7 @@ function Payers({ trace, person, onChange }: { trace: SalaryTrace; person: TaxSe
             <span>
               {p.key}
               <br />
-              <span className="muted">{t('tax.payerMeta', { n: p.rows, date: formatDate(p.last) })}</span>
+              <span className="muted">{t('tax.payerMeta', { n: p.rows, date: formatDate(p.last) })}{trace.payslip && p.untilSlip > 0 && p.treatment === 'taxable' ? ` · ${t('tax.inPayslip', { amount: formatMoney(p.untilSlip) })}` : ''}</span>
             </span>
             <span className="row-end">
               <Money cents={p.received} />
