@@ -161,8 +161,11 @@ export function BudgetPage() {
 
 /** One category: tap to change what is assigned. The bar shows how much of the money has been used. */
 function BudgetRow({ category, m, onEdit }: { category: Category; m: CategoryMonth; onEdit: () => void }) {
-  const over = m.available < 0;
-  const funds = m.carryIn + m.assigned;
+  // A provision or trip below zero paid its bill before all was set aside: not overspending (D-94).
+  const saving = category.groupId === 'provisions' || category.groupId === 'events';
+  const over = m.available < 0 && !saving;
+  const ahead = m.available < 0 && saving;
+  const funds = m.carryIn + m.assigned + m.covered;
   const used = funds > 0 ? Math.min(100, Math.max(0, Math.round((-m.activity / funds) * 100))) : m.activity < 0 ? 100 : 0;
   return (
     <li>
@@ -173,7 +176,13 @@ function BudgetRow({ category, m, onEdit }: { category: Category; m: CategoryMon
             {m.overrideId && <span className="badge">{t('budget.overrideBadge')}</span>}
           </span>
           <span className="row-sub">
-            {t('budget.assigned')} <Money cents={m.assigned} />
+            {saving ? t('budget.setAside') : t('budget.assigned')} <Money cents={m.assigned} />
+            {m.covered !== 0 && (
+              <>
+                {' · '}
+                <Money cents={m.covered} plusSign /> {t('budget.coveredShort')}
+              </>
+            )}
             {m.activity !== 0 && (
               <>
                 {' · '}
@@ -188,6 +197,7 @@ function BudgetRow({ category, m, onEdit }: { category: Category; m: CategoryMon
         <span className="row-end">
           <Money cents={m.available} className="row-amount" />
           {over && <span className="badge badge-warn">⚠ {t('budget.overspent')}</span>}
+          {ahead && <span className="badge">{t('budget.paidAhead')}</span>}
         </span>
       </button>
     </li>

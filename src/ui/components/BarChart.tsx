@@ -18,6 +18,8 @@ export interface Bar {
   axis: string;
   value: Cents;
   budget?: Cents;
+  /** Overspending covered on top of the budget (D-94): a second tick, not part of the budget. */
+  covered?: Cents;
   kind: 'past' | 'current' | 'projected';
 }
 
@@ -69,7 +71,7 @@ export function BarChart({ bars, title, height = 220, selected, onSelect, valueL
   useEffect(() => setActive(null), [bars.length]);
 
   const n = bars.length;
-  const all = bars.flatMap((b) => [b.value, b.budget ?? 0]);
+  const all = bars.flatMap((b) => [b.value, (b.budget ?? 0) + (b.covered ?? 0)]);
   const lo = Math.min(...all, 0);
   const hi = Math.max(...all, 1);
   const ticks = niceTicks(lo, hi);
@@ -109,6 +111,7 @@ export function BarChart({ bars, title, height = 220, selected, onSelect, valueL
         <li><span className="bar-key" aria-hidden="true" />{valueLabel}</li>
         {firstAhead >= 0 && <li><span className="bar-key bar-key-ahead" aria-hidden="true" />{t('chart.projected')}</li>}
         {bars.some((b) => b.budget !== undefined) && <li><span className="line-key budget-key" aria-hidden="true" />{t('chart.budget')}</li>}
+        {bars.some((b) => b.covered) && <li><span className="line-key covered-key" aria-hidden="true" />{t('chart.covered')}</li>}
       </ul>
       <div ref={wrap} className="chart-box">
         <svg width={width} height={height} role="img" aria-label={title} tabIndex={0} onKeyDown={onKey} onBlur={() => setActive(null)}>
@@ -132,6 +135,9 @@ export function BarChart({ bars, title, height = 220, selected, onSelect, valueL
                 className={`chart-bar ${b.kind === 'projected' ? 'chart-bar-ahead' : ''}`}
               />
               {b.budget !== undefined && <line x1={cx(i) - Math.min(bw / 2 + 4, slot / 2 - 3)} x2={cx(i) + Math.min(bw / 2 + 4, slot / 2 - 3)} y1={y(b.budget)} y2={y(b.budget)} className="chart-budget" />}
+              {b.budget !== undefined && b.covered ? (
+                <line x1={cx(i) - Math.min(bw / 2 + 4, slot / 2 - 3)} x2={cx(i) + Math.min(bw / 2 + 4, slot / 2 - 3)} y1={y(b.budget + b.covered)} y2={y(b.budget + b.covered)} className="chart-covered" />
+              ) : null}
               {i % every === 0 && (
                 <text x={cx(i)} y={height - 8} className={`chart-tick ${selected === i ? 'chart-tick-on' : ''}`} textAnchor="middle">{b.axis}</text>
               )}
@@ -170,6 +176,13 @@ export function BarChart({ bars, title, height = 220, selected, onSelect, valueL
                   <strong>{formatMoney(tip.budget)}</strong>
                   <span className="muted">{t('chart.budget')}</span>
                 </div>
+                {tip.covered ? (
+                  <div className="chart-tip-row">
+                    <span className="line-key covered-key" aria-hidden="true" />
+                    <strong>{formatMoney(tip.covered, { plusSign: true })}</strong>
+                    <span className="muted">{t('chart.coveredShort')}</span>
+                  </div>
+                ) : null}
                 <div className="chart-tip-row muted">
                   {tip.value > tip.budget ? t('chart.over', { amount: formatMoney(tip.value - tip.budget) }) : t('chart.under', { amount: formatMoney(tip.budget - tip.value) })}
                 </div>

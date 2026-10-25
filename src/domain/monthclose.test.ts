@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeBudget } from './budget';
-import { closeAmounts, monthsToClose } from './monthclose';
+import { monthsToClose, uncoverOverrides } from './monthclose';
 import { World } from './testkit';
 
 const eur = (n: number) => Math.round(n * 100);
@@ -32,25 +32,40 @@ describe('closing a month (D-89)', () => {
     expect(monthsToClose(months, w.input().categories, [{ month: '2026-01', left: ['food'] }], '2026-03')).toEqual([]);
   });
 
-  it('covering from another line moves the money in that month; the next month starts clean', () => {
+  it('a cover from another line moves money in that month; budgets stay as planned (D-94)', () => {
     const w = household();
-    const [m] = monthsToClose(computeBudget(w.input(), '2026-02'), w.input().categories, [], '2026-03');
-    const amounts = closeAmounts(m!, [{ categoryId: 'food', short: eur(80), source: { kind: 'line', categoryId: 'fun' } }]);
-    expect([...amounts]).toEqual([['food', eur(380)], ['fun', eur(120)]]);
-    for (const [id, amount] of amounts) w.override(id, '2026-01', amount);
-    const [jan, feb] = computeBudget(w.input(), '2026-02');
-    expect(jan!.categories.get('food')!.available).toBe(0);
+    const covers = [{ categoryId: 'food', month: '2026-01', amount: eur(80), fromCategoryId: 'fun' }];
+    const [jan, feb] = computeBudget({ ...w.input(), covers }, '2026-02');
+    expect([jan!.categories.get('food')!.assigned, jan!.categories.get('food')!.covered, jan!.categories.get('food')!.available]).toEqual([eur(300), eur(80), 0]);
+    expect([jan!.categories.get('fun')!.assigned, jan!.categories.get('fun')!.covered]).toEqual([eur(200), eur(-80)]);
     expect(feb!.overspentLastMonth).toBe(0);
     expect(feb!.categories.get('food')!.carryIn).toBe(0);
     // Fun money keeps its leftover, less what it gave.
     expect(feb!.categories.get('fun')!.carryIn).toBe(eur(70));
   });
 
-  it('from Ready to assign, or left for next month', () => {
+  it('a cover from unplanned money comes out of it in that month', () => {
     const w = household();
-    const [m] = monthsToClose(computeBudget(w.input(), '2026-02'), w.input().categories, [], '2026-03');
-    expect([...closeAmounts(m!, [{ categoryId: 'food', short: eur(80), source: { kind: 'ready' } }])]).toEqual([['food', eur(380)]]);
-    expect([...closeAmounts(m!, [{ categoryId: 'food', short: eur(80), source: { kind: 'next' } }])]).toEqual([]);
+    const plain = computeBudget(w.input(), '2026-02');
+    const covered = computeBudget({ ...w.input(), covers: [{ categoryId: 'food', month: '2026-01', amount: eur(80) }] }, '2026-02');
+    expect(covered[0]!.readyToAssign).toBe(plain[0]!.readyToAssign - eur(80));
+    expect(covered[0]!.coveredTotal).toBe(eur(80));
+    // Same money in the end: uncovered, the gap comes out of February instead.
+    expect(covered[1]!.readyToAssign).toBe(plain[1]!.readyToAssign);
+  });
+});
+
+describe('covers written into the budget before D-94', () => {
+  it('are taken back out of the overrides', () => {
+    const base = { createdAt: '', updatedAt: '', source: 'manual' as const };
+    const overrides = [
+      { ...base, id: 'o1', categoryId: 'food', month: '2026-01', amount: eur(380), note: 'Month closed: overspending covered' },
+      { ...base, id: 'o2', categoryId: 'fun', month: '2026-01', amount: eur(120), note: 'Month closed: overspending covered' },
+      { ...base, id: 'o3', categoryId: 'food', month: '2026-02', amount: eur(500), note: 'Christmas' },
+    ];
+    const usual = (id: string) => (id === 'food' ? eur(300) : eur(200));
+    const r = uncoverOverrides(overrides, usual, [{ categoryId: 'food', month: '2026-01', amount: eur(80), fromCategoryId: 'fun' }], ['Month closed: overspending covered']);
+    expect(r).toEqual({ put: [], remove: ['o1', 'o2'] });
   });
 });
 

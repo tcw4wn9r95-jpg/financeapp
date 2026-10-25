@@ -432,6 +432,8 @@ export interface Settings {
   dismissedInsights?: string[];
   /** Overspending covered from an account, newest last (D-88). */
   covers?: Cover[];
+  /** Covers are kept as their own amounts, not in the budget (D-94): migration done. */
+  coversOwn?: boolean;
   /** Months closed, with the lines whose gap was left for the next month (D-89). */
   closedMonths?: { month: MonthKey; left: Id[] }[];
   /** Merchants whose rule proposal was dismissed. */

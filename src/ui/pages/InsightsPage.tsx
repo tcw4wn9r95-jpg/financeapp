@@ -143,7 +143,7 @@ function CoverDialog({ c, onClose }: { c: Covering; onClose: () => void }) {
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!amount.cents || amount.cents <= 0) return setError(t('field.moneyInvalid'));
-    const undo = await coverOverspending(vault, { categoryId: c.categoryId, month: c.month, assignedNow: c.assignedNow, amount: amount.cents, ...(from ? { fromAccountId: from } : {}), note: note.trim() });
+    const undo = await coverOverspending(vault, { categoryId: c.categoryId, month: c.month, amount: amount.cents, ...(from ? { fromAccountId: from } : {}), note: note.trim() });
     const account = accounts.find((a) => a.id === from);
     notify(account ? t('cover.doneFrom', { name: c.name, amount: euros(amount.cents), account: account.name }) : t('insight.covered', { name: c.name }), 'ok', {
       label: t('inbox.undo'),
@@ -297,8 +297,9 @@ export function CoverLog({ categoryId }: { categoryId?: string }) {
   if (covers.length === 0) return null;
   const name = (id: string) => accounts.find((a) => a.id === id)?.name ?? '?';
   return (
-    <section className="card" aria-labelledby="covers-h">
-      <h2 id="covers-h" className="card-title">{t('cover.logTitle')}</h2>
+    // At the bottom and folded (D-94): where the money came from is detail.
+    <details className="card cover-log" aria-labelledby="covers-h">
+      <summary id="covers-h">{t('cover.logTitle')} ({covers.length})</summary>
       <p className="hint">{t('cover.logHint')}</p>
       <ul className="plain-list cover-list">
         {covers.map((c) => {
@@ -334,38 +335,46 @@ export function CoverLog({ categoryId }: { categoryId?: string }) {
           );
         })}
       </ul>
-    </section>
+    </details>
   );
 }
 
 const toBars = (points: MonthPoint[]): Bar[] =>
-  points.map((p) => ({ label: monthName(p.month), axis: monthAbbr(p.month), value: p.spent, budget: p.budgeted, kind: p.kind }));
+  points.map((p) => ({ label: monthName(p.month), axis: monthAbbr(p.month), value: p.spent, budget: p.budgeted, kind: p.kind, ...(p.covered ? { covered: p.covered } : {}) }));
 
 function PointsTable({ points, caption }: { points: MonthPoint[]; caption: string }) {
+  const covers = points.some((p) => p.covered);
+  const saving = points.some((p) => p.setAside !== undefined);
   return (
     <details className="table-twin">
       <summary>{caption}</summary>
-      <table className="table">
-        <thead>
-          <tr>
-            <th scope="col">{t('plan.month')}</th>
-            <th scope="col" className="num">{t('chart.budget')}</th>
-            <th scope="col" className="num">{t('chart.spent')}</th>
-            <th scope="col" className="num">{t('insights.diff')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {points.map((p) => (
-            <tr key={p.month} className={p.kind === 'projected' ? 'row-ahead' : undefined}>
-              <th scope="row">{monthAbbr(p.month)} {p.month.slice(2, 4)}{p.kind === 'projected' ? ' *' : p.kind === 'current' ? ' …' : ''}</th>
-              <td className="num">{euros(p.budgeted)}</td>
-              <td className="num">{euros(p.spent)}</td>
-              <td className="num">{euros(p.budgeted - p.spent)}</td>
+      <div className="table-scroll">
+        <table className="table">
+          <thead>
+            <tr>
+              <th scope="col">{t('plan.month')}</th>
+              {saving && <th scope="col" className="num">{t('insights.setAsideCol')}</th>}
+              <th scope="col" className="num">{t('chart.budget')}</th>
+              {covers && <th scope="col" className="num">{t('insights.coveredCol')}</th>}
+              <th scope="col" className="num">{t('chart.spent')}</th>
+              <th scope="col" className="num">{t('insights.diff')}</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="hint">{t('insights.tableNote')}</p>
+          </thead>
+          <tbody>
+            {points.map((p) => (
+              <tr key={p.month} className={p.kind === 'projected' ? 'row-ahead' : undefined}>
+                <th scope="row">{monthAbbr(p.month)} {p.month.slice(2, 4)}{p.kind === 'projected' ? ' *' : p.kind === 'current' ? ' …' : ''}</th>
+                {saving && <td className="num">{euros(p.setAside ?? 0)}</td>}
+                <td className="num">{euros(p.budgeted)}</td>
+                {covers && <td className="num">{p.covered ? euros(p.covered) : '–'}</td>}
+                <td className="num">{euros(p.spent)}</td>
+                <td className="num">{euros(p.budgeted + (p.covered ?? 0) - p.spent)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="hint">{t('insights.tableNote')}{saving ? ` ${t('insights.provisionsHow')}` : ''}</p>
     </details>
   );
 }
@@ -411,7 +420,6 @@ function CategoryDialog({ c, a, onClose }: { c: CategoryAnalysis; a: SpendingAna
           <InsightList insights={insights} />
         </>
       )}
-      <CoverLog categoryId={c.category.id} />
       {!point ? (
         <CategoryTransactions categoryId={c.category.id} month={allMonths} onOpen={setOpen} />
       ) : point.kind !== 'projected' ? (
@@ -419,6 +427,7 @@ function CategoryDialog({ c, a, onClose }: { c: CategoryAnalysis; a: SpendingAna
       ) : (
         <p className="hint">{t('insights.projectedHow', { month: monthName(point.month) })}</p>
       )}
+      <CoverLog categoryId={c.category.id} />
       <div className="row">
         <a className="button" href={href(`budget/${!point || point.kind === 'projected' ? a.current : point.month}`)} onClick={onClose}>{t('insights.toBudget')}</a>
         <button type="button" className="button button-quiet" onClick={onClose}>{t('common.close')}</button>
@@ -555,8 +564,6 @@ export function InsightsPage() {
             <InsightList insights={a.insights} limit={6} onDetail={setDetail} />
           </section>
 
-          <CoverLog />
-
           <section className="card" aria-labelledby="bars-h">
             <h2 id="bars-h" className="card-title">{t('insights.monthly')}</h2>
             <p className="hint">{t('insights.monthlyHint')}</p>
@@ -637,6 +644,7 @@ export function InsightsPage() {
               {t('insights.unfiledNote', { count: a.unfiled.count, out: euros(a.unfiled.out) })} <a href={href('inbox')}>{t('explain.toInbox')}</a>
             </p>
           )}
+          <CoverLog />
         </>
       )}
       {detailCat && <CategoryDialog c={detailCat} a={a} onClose={() => setDetail(null)} />}

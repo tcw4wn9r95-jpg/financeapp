@@ -66,11 +66,11 @@ export function useBudgetInput(): BudgetInput {
   const events = useStore('events');
   const provisions = useStore('provisions');
   // Settings is a fresh object each render: depend on the fields used.
-  const { budgetStartMonth, sweepTargetCategoryId, provisionsAccountId, freeSavingsAuto } = settings;
+  const { budgetStartMonth, sweepTargetCategoryId, provisionsAccountId, freeSavingsAuto, covers } = settings;
   return useMemo(
     () => buildBudgetInput({ settings, categories, defaults, overrides, accounts, transactions, allocations, events, provisions }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [budgetStartMonth, sweepTargetCategoryId, provisionsAccountId, freeSavingsAuto, categories, defaults, overrides, accounts, transactions, allocations, events, provisions],
+    [budgetStartMonth, sweepTargetCategoryId, provisionsAccountId, freeSavingsAuto, covers, categories, defaults, overrides, accounts, transactions, allocations, events, provisions],
   );
 }
 

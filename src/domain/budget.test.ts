@@ -407,7 +407,7 @@ describe('explaining Ready to assign (D-85)', () => {
     w.entry('bank', '2026-02-12', eur(-100), { kind: 'transfer', toAccountId: 'loan' });
     w.entry('bank', '2026-02-14', eur(-25), { kind: 'none' });
     const x = explainReady(w.input(), '2026-02')!;
-    const parts = x.opening + x.income + x.assigned + x.returned + x.unfiled + x.transit + x.offBudget + x.adjustments;
+    const parts = x.opening + x.income + x.assigned + x.returned + x.unfiled + x.transit + x.offBudget + x.adjustments + x.covered + x.overspent;
     expect(parts).toBe(x.readyToAssign);
     expect(x.cash - x.inCategories - x.held).toBe(x.readyToAssign);
     expect([x.opening, x.income, x.offBudget, x.unfiled, x.transit]).toEqual([eur(2500), eur(3000), eur(-100), eur(-25), 0]);

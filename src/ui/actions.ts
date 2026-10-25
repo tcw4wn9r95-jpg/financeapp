@@ -2,7 +2,7 @@ import { backdateDefaults, defaultFor } from '../domain/budget';
 import { buildManualEntry, stamp, systemClock, type ManualEntry } from '../domain/ledger';
 import { addMonths, compareMonths, currentMonth, monthDiff, monthOf } from '../domain/dates';
 import { provisionSchedule, type CloseEventPlan } from '../domain/plan';
-import { closeAmounts, type CloseDecision, type MonthToClose } from '../domain/monthclose';
+import { uncoverOverrides, type CloseDecision, type MonthToClose } from '../domain/monthclose';
 import { DEMO_ANCHOR_MONTH, shiftSnapshotMonths } from '../domain/demo';
 import type {
   Account,
@@ -303,6 +303,43 @@ const SUGGESTED: [string, CategoryGroup, RolloverMode, boolean][] = [
  * Create the Investments category once (D-57), for vaults set up before it
  * existed. If it is deleted later it is not created again.
  */
+/**
+ * Covers become their own amounts (D-94), once per vault. Covers written into
+ * a month's budget are taken back out. Older covers of overspending carried
+ * from month to month (no cover record, before D-89) covered gaps that are no
+ * longer carried: on spending lines they are removed (closing the months
+ * covers those gaps); on provisions and trips, which still carry, they become
+ * cover records.
+ */
+export async function migrateCovers(vault: Vault): Promise<number> {
+  const settings = getSettings(vault);
+  if (settings.coversOwn) return 0;
+  const notes = [t('close.note'), t('insight.coverNote'), 'Month closed: overspending covered', 'Covering earlier overspending'];
+  const overrides = vault.list('budgetOverrides');
+  const defaults = vault.list('budgetDefaults');
+  const usual = (id: Id, m: MonthKey) => defaultFor(defaults, id, m)?.monthlyAmount ?? 0;
+  const covers = [...(settings.covers ?? [])];
+  const r = uncoverOverrides(overrides, usual, covers, notes);
+  const touched = new Set([...r.remove, ...r.put.map((o) => o.id)]);
+  const ops: WriteOp[] = [
+    ...r.remove.map((id): WriteOp => ({ type: 'delete', store: 'budgetOverrides', id })),
+    ...r.put.map((record): WriteOp => ({ type: 'put', store: 'budgetOverrides', record })),
+  ];
+  const categories = vault.list('categories');
+  for (const o of overrides) {
+    if (touched.has(o.id) || !notes.includes(o.note)) continue;
+    const group = categories.find((c) => c.id === o.categoryId)?.groupId;
+    const extra = o.amount - usual(o.categoryId, o.month);
+    if ((group === 'provisions' || group === 'events') && extra > 0) {
+      covers.push({ id: crypto.randomUUID(), categoryId: o.categoryId, month: o.month, amount: extra, at: o.updatedAt });
+    }
+    ops.push({ type: 'delete', store: 'budgetOverrides', id: o.id });
+  }
+  ops.push({ type: 'put', store: 'settings', record: { ...settings, covers, coversOwn: true, updatedAt: new Date().toISOString() } });
+  await vault.write(ops);
+  return ops.length - 1;
+}
+
 export async function ensureInvestments(vault: Vault): Promise<void> {
   const settings = getSettings(vault);
   // A vault still being set up gets it with the suggested categories instead.
@@ -426,9 +463,9 @@ export async function changeBudgetLine(vault: Vault, categoryId: Id, amount: Cen
  */
 export async function coverOverspending(
   vault: Vault,
-  c: { categoryId: Id; month: MonthKey; assignedNow: Cents; amount: Cents; fromAccountId?: Id; note?: string },
+  c: { categoryId: Id; month: MonthKey; amount: Cents; fromAccountId?: Id; note?: string },
 ): Promise<() => Promise<void>> {
-  const undoLine = await changeBudgetLine(vault, c.categoryId, c.assignedNow + c.amount, c.month, 'month', c.note || t('insight.coverNote'));
+  // A cover is its own amount (D-94): the line's budget stays what was planned.
   const cover: Cover = {
     id: crypto.randomUUID(),
     categoryId: c.categoryId,
@@ -440,7 +477,6 @@ export async function coverOverspending(
   };
   await saveSettings(vault, { covers: [...(getSettings(vault).covers ?? []), cover] });
   return async () => {
-    await undoLine();
     await saveSettings(vault, { covers: (getSettings(vault).covers ?? []).filter((x) => x.id !== cover.id) });
   };
 }
@@ -451,10 +487,7 @@ export async function coverOverspending(
  * Ready to assign. Returns the undo.
  */
 export async function closeMonth(vault: Vault, m: MonthToClose, decisions: readonly CloseDecision[]): Promise<() => Promise<void>> {
-  const undos: (() => Promise<void>)[] = [];
-  for (const [categoryId, amount] of closeAmounts(m, decisions)) {
-    undos.push(await changeBudgetLine(vault, categoryId, amount, m.month, 'month', t('close.note')));
-  }
+  // Covers are their own amounts (D-94): the budget keeps what was planned.
   const before = getSettings(vault);
   const at = new Date().toISOString();
   const covers: Cover[] = decisions
@@ -472,7 +505,6 @@ export async function closeMonth(vault: Vault, m: MonthToClose, decisions: reado
   const closed = [...(before.closedMonths ?? []).filter((x) => x.month !== m.month), { month: m.month, left: [...new Set([...(before.closedMonths?.find((x) => x.month === m.month)?.left ?? []), ...left])] }];
   await saveSettings(vault, { covers: [...(before.covers ?? []), ...covers], closedMonths: closed });
   return async () => {
-    for (const u of undos.reverse()) await u();
     const now = getSettings(vault);
     const ids = new Set(covers.map((c) => c.id));
     await saveSettings(vault, { covers: (now.covers ?? []).filter((c) => !ids.has(c.id)), closedMonths: before.closedMonths ?? [] });

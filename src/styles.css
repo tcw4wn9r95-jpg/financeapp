@@ -2722,3 +2722,14 @@ input[type='date']::-webkit-date-and-time-value {
 .rta .money-legend .money {
   color: var(--text);
 }
+.chart-covered {
+  stroke: var(--series-2);
+  stroke-width: 2;
+  stroke-dasharray: 3 2;
+}
+.covered-key {
+  background: var(--series-2);
+}
+.cover-log > summary {
+  font-weight: 600;
+}

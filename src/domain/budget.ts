@@ -55,6 +55,12 @@ export interface BudgetInput {
    * the difference. An override for that month still wins.
    */
   availableTargets?: ReadonlyMap<Id, ReadonlyMap<MonthKey, Cents>>;
+  /**
+   * Overspending covered (D-94): money given to a line in a month on top of
+   * its budget, from unplanned money or from another line. Kept apart from
+   * the budget so the plan still shows what was planned.
+   */
+  covers?: readonly { categoryId: Id; month: MonthKey; amount: Cents; fromCategoryId?: Id }[];
 }
 
 /**
@@ -77,6 +83,8 @@ export interface CategoryMonth {
   defaultAmount: Cents;
   /** Amount actually assigned: override if present, else default. */
   assigned: Cents;
+  /** Overspending covered this month (D-94): given (positive) or lent to another line (negative). Not part of the budget. */
+  covered: Cents;
   overrideId?: Id;
   carryIn: Cents;
   activity: Cents;
@@ -109,6 +117,8 @@ export interface BudgetMonth {
   returnedFromLastMonth: Cents;
   /** Last month's overspending nobody covered, taken from Ready to assign this month (negative, D-89). */
   overspentLastMonth: Cents;
+  /** Overspending covered from unplanned money this month (D-94). */
+  coveredTotal: Cents;
   readyToAssign: Cents;
   /** Income already received this month that counts next month (D-74). */
   heldForNextMonth: Cents;
@@ -306,6 +316,12 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
   let returned = 0;
   let overspent = 0;
 
+  const coveredIn = new Map<string, Cents>();
+  for (const c of input.covers ?? []) {
+    coveredIn.set(`${c.month}|${c.categoryId}`, (coveredIn.get(`${c.month}|${c.categoryId}`) ?? 0) + c.amount);
+    if (c.fromCategoryId) coveredIn.set(`${c.month}|${c.fromCategoryId}`, (coveredIn.get(`${c.month}|${c.fromCategoryId}`) ?? 0) - c.amount);
+  }
+
   for (const month of months) {
     const act = activity.get(month) ?? { byCategory: new Map(), income: 0, incomeByCategory: new Map(), uncategorised: 0, transit: 0, offBudget: 0, adjustments: 0, held: 0 };
     const cats = new Map<Id, CategoryMonth>();
@@ -313,6 +329,8 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
     let nextReturned = 0;
     let nextOverspent = 0;
     let assignedTotal = 0;
+    // Covers from unplanned money; lending between lines nets to zero.
+    let coveredTotal = 0;
     let activityTotal = 0;
 
     for (const c of expense) {
@@ -332,9 +350,11 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       const carryIn = carry.get(c.id) ?? 0;
       const catActivity = act.byCategory.get(c.id) ?? 0;
       const target = input.availableTargets?.get(c.id)?.get(month);
-      const assigned = ovr ? ovr.amount : target !== undefined ? target - carryIn - catActivity : defaultAmount;
-      const available = carryIn + assigned + catActivity;
+      const covered = coveredIn.get(`${month}|${c.id}`) ?? 0;
+      const assigned = ovr ? ovr.amount : target !== undefined ? target - carryIn - catActivity - covered : defaultAmount;
+      const available = carryIn + assigned + covered + catActivity;
       assignedTotal += assigned;
+      coveredTotal += covered;
       activityTotal += catActivity;
 
       let rolledOver = 0;
@@ -368,6 +388,7 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
         categoryId: c.id,
         defaultAmount,
         assigned,
+        covered,
         ...(ovr ? { overrideId: ovr.id } : {}),
         carryIn,
         activity: catActivity,
@@ -379,7 +400,7 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       });
     }
 
-    ready += openingFunds(input.accounts, month, input.startMonth) + act.income + act.uncategorised + act.transit + act.offBudget + act.adjustments + returned + overspent - assignedTotal;
+    ready += openingFunds(input.accounts, month, input.startMonth) + act.income + act.uncategorised + act.transit + act.offBudget + act.adjustments + returned + overspent - assignedTotal - coveredTotal;
     assertCents(ready);
     result.push({
       month,
@@ -394,6 +415,7 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       adjustments: act.adjustments,
       returnedFromLastMonth: returned,
       overspentLastMonth: overspent,
+      coveredTotal,
       readyToAssign: ready,
       heldForNextMonth: act.held,
     });
@@ -511,6 +533,8 @@ export interface ReadyExplained {
   returned: Cents;
   /** Overspending not covered when its month closed (negative, D-89). */
   overspent: Cents;
+  /** Overspending covered from unplanned money (negative, D-94). */
+  covered: Cents;
   /** Not filed yet: money in and money out still in the inbox. */
   unfiled: Cents;
   /** Transfers between own budget accounts whose two sides do not cancel out (yet). */
@@ -540,6 +564,7 @@ export function explainReady(input: BudgetInput, month: MonthKey): ReadyExplaine
     assignedByGroup: new Map(),
     returned: 0,
     overspent: 0,
+    covered: 0,
     unfiled: 0,
     transit: 0,
     offBudget: 0,
@@ -555,6 +580,7 @@ export function explainReady(input: BudgetInput, month: MonthKey): ReadyExplaine
     for (const [id, v] of m.incomeByCategory) out.incomeByCategory.set(id, (out.incomeByCategory.get(id) ?? 0) + v);
     out.returned += m.returnedFromLastMonth;
     out.overspent += m.overspentLastMonth;
+    out.covered -= m.coveredTotal;
     out.unfiled += m.uncategorised;
     out.transit += m.transit;
     out.offBudget += m.offBudget;

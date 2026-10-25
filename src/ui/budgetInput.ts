@@ -34,6 +34,8 @@ export function buildBudgetInput(s: BudgetSources): BudgetInput {
     transactions: s.transactions,
     allocations: s.allocations,
     ...(s.settings.sweepTargetCategoryId ? { sweepTargetCategoryId: s.settings.sweepTargetCategoryId } : {}),
+    // Overspending covered, kept apart from the budget (D-94).
+    ...(s.settings.covers?.length ? { covers: s.settings.covers } : {}),
   };
   const savingsId = s.settings.sweepTargetCategoryId;
   const accountId = s.settings.provisionsAccountId;

@@ -21,7 +21,12 @@ export type PointKind = 'past' | 'current' | 'projected';
 
 export interface MonthPoint {
   month: MonthKey;
+  /** What was planned to go out: the budget, or for provisions and trips the bill in the month it is paid (D-94). */
   budgeted: Cents;
+  /** Overspending covered on top of the budget (D-94). */
+  covered?: Cents;
+  /** Provisions and trips: what the budget set aside that month. */
+  setAside?: Cents;
   /** Spent (net of refunds); for the current month what is spent so far; projected for later months. */
   spent: Cents;
   kind: PointKind;
@@ -134,14 +139,16 @@ export function sumPoints(cats: readonly CategoryAnalysis[], months: readonly Mo
   return months.map((month, i) => {
     let budgeted = 0;
     let spent = 0;
+    let covered = 0;
     for (const c of cats) {
       const p = c.points[i];
       if (p) {
         budgeted += p.budgeted;
         spent += p.spent;
+        covered += p.covered ?? 0;
       }
     }
-    return { month, budgeted, spent, kind: kindOf(month) };
+    return { month, budgeted, spent, kind: kindOf(month), ...(covered ? { covered } : {}) };
   });
 }
 
@@ -177,11 +184,58 @@ export function analyseSpending(input: BudgetInput, opts: AnalyseOptions): Spend
     return sum;
   };
 
+  const coveredIn = (id: Id, m: MonthKey) => byMonth.get(m)?.categories.get(id)?.covered ?? 0;
+
+  /**
+   * Provisions and trips set money aside every month, but it goes out when the
+   * bill is paid (D-94): the plan for a month is the bill paid that month. A
+   * bill counts in the month it was paid (the month with most spending on the
+   * line from three months before its due date to one after), or in its due
+   * month while unpaid.
+   */
+  const outflows = new Map<Id, Map<MonthKey, Cents>>();
+  const plannedOut = (c: Category, m: MonthKey): Cents => {
+    let map = outflows.get(c.id);
+    if (!map) {
+      map = new Map();
+      outflows.set(c.id, map);
+      const bills: { due: MonthKey; amount: Cents }[] = [];
+      if (c.groupId === 'provisions') {
+        for (const p of opts.provisions ?? []) {
+          if (p.categoryId !== c.id) continue;
+          const start = p.startDate ?? `${input.startMonth}-01`;
+          for (const d of occurrences(p, start < `${input.startMonth}-01` ? `${input.startMonth}-01` : start, lastDayOfMonth(through))) bills.push({ due: monthOf(d), amount: amountFor(p, d) });
+        }
+      } else if (c.groupId === 'events') {
+        for (const part of input.plans?.get(c.id) ?? []) bills.push({ due: part.due, amount: part.amount });
+      }
+      const usedMonths = new Set<MonthKey>();
+      for (const b of bills) {
+        let paid = b.due;
+        let best = 0;
+        for (let k = -3; k <= 1; k++) {
+          const mm = addMonths(b.due, k);
+          if (compareMonths(mm, current) > 0 || usedMonths.has(mm)) continue;
+          const sp = spentIn(c.id, mm);
+          if (sp > best && sp >= b.amount / 2) {
+            best = sp;
+            paid = mm;
+          }
+        }
+        if (best > 0) usedMonths.add(paid);
+        map.set(paid, (map.get(paid) ?? 0) + b.amount);
+      }
+    }
+    return map.get(m) ?? 0;
+  };
+  /** What was planned to go out in a month. */
+  const planned = (c: Category, m: MonthKey): Cents => (c.groupId === 'provisions' || c.groupId === 'events' ? plannedOut(c, m) : assigned(c.id, m));
+
   const categories: CategoryAnalysis[] = [];
   for (const c of input.categories) {
     if (c.isIncome || !isSpendGroup(c.groupId)) continue;
     const group = c.groupId;
-    const full = fullMonths.map((m) => ({ m, b: assigned(c.id, m), s: spentIn(c.id, m) }));
+    const full = fullMonths.map((m) => ({ m, b: planned(c, m), s: spentIn(c.id, m) }));
     const window6 = full.slice(-6);
     const recent = avg(full.slice(-3).map((x) => x.s));
     const earlier = avg(full.slice(-6, -3).map((x) => x.s));
@@ -204,9 +258,14 @@ export function analyseSpending(input: BudgetInput, opts: AnalyseOptions): Spend
     };
     const spentNow = spentIn(c.id, current);
     const currentEstimate = group === 'provisions' || group === 'events' ? Math.max(spentNow, due(c, current)) : Math.max(spentNow, typical);
+    const saving = group === 'provisions' || group === 'events';
+    const extra = (m: MonthKey) => ({
+      ...(coveredIn(c.id, m) ? { covered: coveredIn(c.id, m) } : {}),
+      ...(saving ? { setAside: assigned(c.id, m) } : {}),
+    });
     const points: MonthPoint[] = [
-      ...months.map((m): MonthPoint => ({ month: m, budgeted: assigned(c.id, m), spent: spentIn(c.id, m), kind: m === current ? 'current' : 'past' })),
-      ...ahead.map((m): MonthPoint => ({ month: m, budgeted: assigned(c.id, m), spent: project(m), kind: 'projected' })),
+      ...months.map((m): MonthPoint => ({ month: m, budgeted: planned(c, m), spent: spentIn(c.id, m), kind: m === current ? 'current' : 'past', ...extra(m) })),
+      ...ahead.map((m): MonthPoint => ({ month: m, budgeted: planned(c, m), spent: project(m), kind: 'projected', ...extra(m) })),
     ];
     // Kept when used in the window or this year: the year's projection must not depend on the window.
     const yearStart = `${current.slice(0, 4)}-01` as MonthKey;
@@ -257,7 +316,7 @@ export function analyseSpending(input: BudgetInput, opts: AnalyseOptions): Spend
     let estimate = 0;
     let budget = 0;
     for (const c of categories) {
-      budget += assigned(c.category.id, m);
+      budget += planned(c.category, m);
       if (compareMonths(m, current) < 0) spent += spentIn(c.category.id, m);
       else if (m === current) {
         spent += c.spentNow;

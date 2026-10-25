@@ -1,6 +1,6 @@
 import type { BudgetMonth } from './budget';
 import { compareMonths } from './dates';
-import type { Category, Cents, Id, MonthKey } from './types';
+import type { BudgetOverride, Category, Cents, Cover, Id, MonthKey } from './types';
 
 /**
  * Closing a month (D-89). A spending line that ends a month below zero does
@@ -79,17 +79,33 @@ export interface CloseDecision {
 }
 
 /**
- * The budget amounts a month's decisions set: each covered line gets its gap
- * added; a line lending money gives it up. Amounts are the new assigned
- * amounts for that month, keyed by line.
+ * Covers used to be written into the month's budget (D-89, D-90); they are now
+ * their own amounts (D-94). This takes each cover back out of the override it
+ * was added to (and gives it back to a lending line); an override left equal
+ * to the line's usual amount is removed.
  */
-export function closeAmounts(m: MonthToClose, decisions: readonly CloseDecision[]): Map<Id, Cents> {
-  const out = new Map<Id, Cents>();
-  const assigned = (id: Id) => out.get(id) ?? m.lines.find((l) => l.categoryId === id)?.assigned ?? m.sources.find((s) => s.categoryId === id)?.assigned ?? 0;
-  for (const d of decisions) {
-    if (d.source.kind === 'next') continue;
-    out.set(d.categoryId, assigned(d.categoryId) + d.short);
-    if (d.source.kind === 'line') out.set(d.source.categoryId, assigned(d.source.categoryId) - d.short);
+export function uncoverOverrides(
+  overrides: readonly BudgetOverride[],
+  usual: (categoryId: Id, month: MonthKey) => Cents,
+  covers: readonly Pick<Cover, 'categoryId' | 'month' | 'amount' | 'fromCategoryId'>[],
+  coverNotes: readonly string[],
+): { put: BudgetOverride[]; remove: Id[] } {
+  const amounts = new Map<Id, Cents>();
+  const find = (categoryId: Id, month: MonthKey) => overrides.find((o) => o.categoryId === categoryId && o.month === month && coverNotes.includes(o.note));
+  for (const c of covers) {
+    const target = find(c.categoryId, c.month);
+    if (target) amounts.set(target.id, (amounts.get(target.id) ?? target.amount) - c.amount);
+    if (c.fromCategoryId) {
+      const lender = find(c.fromCategoryId, c.month);
+      if (lender) amounts.set(lender.id, (amounts.get(lender.id) ?? lender.amount) + c.amount);
+    }
   }
-  return out;
+  const put: BudgetOverride[] = [];
+  const remove: Id[] = [];
+  for (const [id, amount] of amounts) {
+    const o = overrides.find((x) => x.id === id)!;
+    if (amount === usual(o.categoryId, o.month)) remove.push(id);
+    else put.push({ ...o, amount, note: '' });
+  }
+  return { put, remove };
 }

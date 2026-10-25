@@ -143,3 +143,25 @@ describe('this month below zero (D-89)', () => {
     expect(a.insights.find((i) => i.kind === 'carried' && i.categoryId === 'phone')).toMatchObject({ values: { short: eur(30) }, action: { type: 'cover', month: '2026-07', amount: eur(130) } });
   });
 });
+
+describe('provisions plan the bill in the month it goes out (D-94)', () => {
+  it('a bill paid a month early is planned that month: not over budget', () => {
+    const w = household();
+    const bill: Provision = { ...tax, id: 'q2', name: 'Q2', amount: eur(600), dueDate: '2026-06-30', startDate: '2026-01-01' };
+    w.spend('bank', '2026-05-20', eur(600), 'tax'); // paid in May, due in June
+    const a = analyseSpending(w.input(), { today: '2026-07-20', from: '2026-01', ahead: 0, provisions: [bill] });
+    const line = a.categories.find((c) => c.category.id === 'tax')!;
+    const may = line.points.find((p) => p.month === '2026-05')!;
+    const june = line.points.find((p) => p.month === '2026-06')!;
+    expect([may.budgeted, may.spent, may.setAside]).toEqual([eur(600), eur(600), eur(100)]);
+    expect(june.budgeted).toBe(0);
+    expect(line.overMonths).toBe(0);
+  });
+
+  it('covers show apart from the budget', () => {
+    const w = household();
+    const a = analyseSpending({ ...w.input(), covers: [{ categoryId: 'food', month: '2026-03', amount: eur(150) }] }, { today: '2026-07-20', from: '2026-01', ahead: 0 });
+    const march = a.categories.find((c) => c.category.id === 'food')!.points.find((p) => p.month === '2026-03')!;
+    expect([march.budgeted, march.covered, march.spent]).toEqual([eur(400), eur(150), eur(550)]);
+  });
+});
