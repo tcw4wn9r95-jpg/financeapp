@@ -38,13 +38,14 @@ export async function saveTaxSetup(vault: Vault, year: number, setup: TaxSetup):
 }
 
 /**
- * Keep a document's figures with its tax year. A second document of the same
- * kind, year and subject replaces the first.
+ * Keep a document's figures with its tax year.
  */
 export async function addTaxDocument(vault: Vault, doc: ParsedTaxDocument, fileName: string): Promise<TaxDocumentRecord> {
   const p = profileFor(vault, doc.year);
   const record: TaxDocumentRecord = { id: systemClock.newId(), fileName, addedAt: new Date().toISOString(), ...doc };
-  const kept = (p.documents ?? []).filter((d) => !(d.kind === doc.kind && d.year === doc.year && (d.subject ?? '') === (doc.subject ?? '')));
+  // Payslips are kept month by month; other documents replace the one of the same kind, year and subject.
+  const same = (d: TaxDocumentRecord) => d.kind === doc.kind && d.year === doc.year && (d.subject ?? '') === (doc.subject ?? '') && (doc.kind !== 'payslip' || d.values.month === doc.values.month);
+  const kept = (p.documents ?? []).filter((d) => !same(d));
   await vault.put('taxProfiles', { ...p, documents: [...kept, record], updatedAt: new Date().toISOString() });
   return record;
 }

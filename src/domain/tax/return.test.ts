@@ -100,7 +100,7 @@ describe('parseTaxDocument', () => {
       'Net   :   11 260,00',
       'Dpdce contrib.   :   207,50   NDF   :   0,00',
     ]);
-    expect(d).toEqual({ kind: 'payslip', year: 2026, subject: 'Example Alex', issuer: 'EXAMPLE WORKS SARL', values: { month: 3, gross: 1_500_000, social: 45_750 + 127_500, dependence: 20_750, withheld: 180_000, lrcp: 15_000 } });
+    expect(d).toEqual({ kind: 'payslip', year: 2026, subject: 'Example Alex', issuer: 'EXAMPLE WORKS SARL', values: { month: 3, gross: 1_500_000, social: 45_750 + 127_500, dependence: 20_750, withheld: 180_000, lrcp: 15_000, lrcpMonth: 5_000, ae: 76_750 } });
   });
   it('reads a loan interest certificate', () => {
     const d = parseTaxDocument(['IBAN LU12 3456 7890 1234 5678', 'Outstanding balance on 31.12.2025   :   190.000,00 EUR', 'Outstanding balance on 01.01.2025   :   200.000,00 EUR', 'Interest due 2025 in our favour   :   7.750,10 EUR', 'Interest rate   :   3,90 % p.a.']);
@@ -206,6 +206,15 @@ describe('estimateReturn', () => {
     expect(p.withheld.amount).toBe(e(2_450) + Math.round((rest * 2_450) / 20_000));
     expect(trace.withheldSoFar! + trace.withheldAhead!).toBe(p.withheld.amount);
     expect(trace.withheldSoFar).toBe(e(2_450) + Math.round(e(15_000) * ratio * (2_450 / 20_000)));
+  });
+  it('takes tax-free pay on the payslip (AE less the complementary pension) out of gross', () => {
+    // Final pay: 10,000 € tax free; AE 10,300 € = 10,000 exempt + 6 × 50 € pension.
+    const may: TaxDocumentRecord = { id: 'p5', fileName: 'p5.pdf', addedAt: '2026-06-01', kind: 'payslip', year: 2026, subject: 'Alex', values: { month: 5, gross: e(20_000), social: e(2_300), dependence: e(250), withheld: e(2_450), lrcp: e(250), lrcpMonth: e(50), ae: e(250) } };
+    const june: TaxDocumentRecord = { id: 'p6', fileName: 'p6.pdf', addedAt: '2026-07-01', kind: 'payslip', year: 2026, subject: 'Alex', values: { month: 6, gross: e(34_000), social: e(2_760), dependence: e(300), withheld: e(2_900), lrcp: 0, ae: e(10_300) } };
+    const est = estimateReturn({ ...ctx, documents: [lastYear, may, june] });
+    expect(est.salaries.Alex!.payslip).toMatchObject({ month: 6, gross: e(24_000), exempt: e(10_000) });
+    // 300 € to June, then 50 € for each of the four months the employer paid after it.
+    expect(est.input.persons[0]!.lrcp.amount).toBe(e(500));
   });
   it('asks for last year’s certificate when there is none', () => {
     expect(estimateReturn({ ...ctx, documents: [] }).missing).toContain('certificate:Alex');

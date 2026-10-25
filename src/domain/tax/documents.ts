@@ -97,7 +97,7 @@ function salaryCertificate(lines: readonly string[]): ParsedTaxDocument | null {
  */
 function payslip(lines: readonly string[]): ParsedTaxDocument | null {
   const at = lines.findIndex((l) => /(?:Annual amount|Cumul annuel|Cumuls?) (?:to|au)\s+\d{2}\/\d{2}\/\d{4}/i.test(l));
-  if (at < 0 || !has(lines, /payslip|fiche de (?:salaire|paie)|décompte de salaire/i)) return null;
+  if (at < 0 || !has(lines, /payslip|extra card|fiche de (?:salaire|paie)|décompte de salaire|total gross|taxable salary/i)) return null;
   const [, month, year] = lines[at]!.match(/(\d{2})\/(\d{2})\/(\d{4})/)!.slice(1);
   const block = lines.slice(at + 1);
   const labelled = (re: RegExp) => {
@@ -120,16 +120,23 @@ function payslip(lines: readonly string[]): ParsedTaxDocument | null {
   if (pairs.length !== 1) return null;
   const [health, tax] = pairs[0]!;
   // Complementary pension: the month's deduction times the months so far.
-  const lrcpMonth = lines.map((l) => l.match(/compl\.? pension.*?(-?\d{1,3}(?:[ .\u00a0\u202f]\d{3})*,\d{2})\s*$/i)).find(Boolean);
-  const lrcp = lrcpMonth ? Math.abs(luAmount(lrcpMonth[1]!) ?? 0) * Number(month) : 0;
-  const employer = lines.find((l) => /^\s*(?:Payslip|Fiche de (?:salaire|paie))/i.test(l))?.replace(/^\s*(?:Payslip|Fiche de (?:salaire|paie))\s*/i, '').trim();
+  const lrcpLine = lines.map((l) => l.match(/compl\.? pension.*?(-?\d{1,3}(?:[ .\u00a0\u202f]\d{3})*,\d{2})\s*$/i)).find(Boolean);
+  const lrcpMonth = lrcpLine ? Math.abs(luAmount(lrcpLine[1]!) ?? 0) : undefined;
+  const lrcp = (lrcpMonth ?? 0) * Number(month);
+  // What the tax card takes out before tax besides contributions: AC (an allowance on the card) and
+  // AE (exempt pay, such as the tax-free part of a severance, plus the complementary pension).
+  const taxable = labelled(/\bTaxable/);
+  const ac = labelled(/\bAC/) ?? 0;
+  const ae = taxable !== null ? gross - health - pension - taxable - ac : null;
+  const header = /^\s*(?:Payslip|Extra card|Fiche de (?:salaire|paie))\s*/i;
+  const employer = lines.find((l) => header.test(l))?.replace(header, '').trim();
   const name = lines.map((l) => l.match(/\b(?:Mr|Mrs|Ms|Mme|Mlle|M\.)\s+([A-Za-zÀ-ÿ' -]+?)\s*$/)).find(Boolean)?.[1];
   return {
     kind: 'payslip',
     year: Number(year),
     ...(name ? { subject: name.replace(/\s+/g, ' ').trim() } : {}),
     ...(employer ? { issuer: employer } : {}),
-    values: { month: Number(month), gross, social: health + pension, dependence, withheld: tax, lrcp },
+    values: { month: Number(month), gross, social: health + pension, dependence, withheld: tax, lrcp, ...(lrcpMonth !== undefined ? { lrcpMonth } : {}), ...(ae !== null && ae >= 0 ? { ae } : {}) },
   };
 }
 

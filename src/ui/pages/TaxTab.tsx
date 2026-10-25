@@ -184,10 +184,11 @@ function Summary({ m, year }: { m: Model; year: number }) {
       )}
       {!inPlan && (pay || provision || r.settlement < 0) && (
         <button type="button" className="button button-primary button-block" disabled={busy} onClick={plan}>
-          {provision ? t('tax.updateProvision', { amount: formatMoney(target), date: formatDate(due) }) : pay ? t('tax.createProvision', { amount: formatMoney(target), date: formatDate(due) }) : t('tax.refundToForecast')}
+          {provision && !pay ? t('tax.provisionToRefund', { name: provision.name, amount: formatMoney(-r.settlement) }) : provision ? t('tax.updateProvision', { amount: formatMoney(target), date: formatDate(due) }) : pay ? t('tax.createProvision', { amount: formatMoney(target), date: formatDate(due) }) : t('tax.refundToForecast')}
         </button>
       )}
       {inPlan && <p className="hint">✓ {t('tax.planUpToDate')}</p>}
+      {provision && !pay && <p className="hint">{t('tax.refundKeepsSaved', { name: provision.name })}</p>}
     </section>
   );
 }
@@ -369,6 +370,7 @@ function Breakdown({ m, setOverride, save }: { m: Model; setOverride: (k: string
               <li className="hint">
                 {t('tax.withheldSplit', { soFar: formatMoney(m.estimate.salaries[p.name]!.withheldSoFar!), ahead: formatMoney(m.estimate.salaries[p.name]!.withheldAhead ?? 0) })}
                 {m.estimate.salaries[p.name]!.payslip && ` ${t('tax.withheldSlip', { month: monthName(`${m.ctx.year}-${String(m.estimate.salaries[p.name]!.payslip!.month).padStart(2, '0')}`), amount: formatMoney(m.estimate.salaries[p.name]!.payslip!.withheld) })}`}
+                {(m.estimate.salaries[p.name]!.payslip?.exempt ?? 0) > 0 && ` ${t('tax.slipExempt', { amount: formatMoney(m.estimate.salaries[p.name]!.payslip!.exempt) })}`}
               </li>
             )}
           </ul>
