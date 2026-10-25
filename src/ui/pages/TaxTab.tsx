@@ -221,7 +221,7 @@ function docSummary(d: TaxDocumentRecord): string {
     case 'salary':
       return t('tax.doc.salaryLine', { gross: e(d.values.gross), withheld: e(d.values.withheld) });
     case 'payslip':
-      return t('tax.doc.payslipLine', { month: monthName(`${d.year}-${String(d.values.month).padStart(2, '0')}`), gross: e(d.values.gross), withheld: e(d.values.withheld) });
+      return t('tax.doc.payslipLine', { issuer: d.issuer ?? '', month: monthName(`${d.year}-${String(d.values.month).padStart(2, '0')}`), gross: e(d.values.gross), withheld: e(d.values.withheld) });
     case 'loan':
       return t('tax.doc.loanLine', { interest: e(d.values.interest), rate: d.values.rate ? (d.values.rate / 100).toFixed(2).replace('.', ',') : '–' });
     case 'return':
@@ -445,18 +445,28 @@ function IncomeParts({ trace }: { trace: SalaryTrace }) {
   return (
     <li>
       <ul className="plain-list tax-parts">
-        {[...groups.entries()].map(([key, g]) => (
-          <li key={key} className="split-row">
-            <span>
-              {key === 'payslip' ? t('tax.partPayslip', { issuer: g.label, month: monthName(g.months[0]!) }) : g.label}
-              <br />
-              <span className="muted">
-                {key === 'payslip' ? (trace.payslip?.exempt ? t('tax.partExempt', { amount: formatMoney(trace.payslip.exempt) }) : t('tax.partFromPayslip')) : t('tax.partNet', { span: span(g.months), net: formatMoney(g.net) })}
+        {[...groups.entries()].flatMap(([key, g]) => {
+          const exempt = key === 'payslip' ? (trace.payslip?.exempt ?? 0) : 0;
+          const rows = [
+            <li key={key} className="split-row">
+              <span>
+                {key === 'payslip' ? t('tax.partPayslip', { issuer: g.label, month: monthName(g.months[0]!) }) : g.label}
+                <br />
+                <span className="muted">{key === 'payslip' ? t('tax.partFromPayslip', { issuer: g.label }) : t('tax.partNet', { span: span(g.months), net: formatMoney(g.net) })}</span>
               </span>
-            </span>
-            <Money cents={g.gross} />
-          </li>
-        ))}
+              <Money cents={g.gross + exempt} />
+            </li>,
+          ];
+          if (exempt) {
+            rows.push(
+              <li key={`${key}:exempt`} className="split-row">
+                <span>{t('tax.partExempt')}</span>
+                <Money cents={-exempt} />
+              </li>,
+            );
+          }
+          return rows;
+        })}
       </ul>
     </li>
   );
