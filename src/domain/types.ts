@@ -352,8 +352,13 @@ export interface TaxSetupPerson {
   homeSavings?: Cents;
 }
 
+/** What a budget line is for the return (D-99): its spending (or income) for the year counts there. */
+export type TaxLineRole = 'insurance' | 'donations' | 'pensionSavings' | 'homeSavings' | 'childcare' | 'otherIncome';
+
 export interface TaxSetup {
   persons: TaxSetupPerson[];
+  /** Budget lines that count on the return, by category id; per-person roles name the person. */
+  lines?: Record<Id, { role: TaxLineRole; person?: string }>;
   /** Children in the household during the year (born in it included): they raise the per-member ceilings. */
   children?: number;
   /** Loans for the main residence (interest deductible within a ceiling). */

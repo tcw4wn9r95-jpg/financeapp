@@ -3,7 +3,7 @@ import p2025 from '../../../tax/lu/2025.json';
 import p2026 from '../../../tax/lu/2026.json';
 import { classTax, type TaxParams } from './lu';
 import { parseTaxDocument } from './documents';
-import { estimateReturn, payerOf, sameName, suggestSetup, type EstimateContext } from './estimate';
+import { estimateReturn, lineYear, payerOf, sameName, suggestLines, suggestSetup, type EstimateContext } from './estimate';
 import { computeReturn, deductionIdeas, homeCeilingPerMember, type ReturnInput } from './return';
 import type { Account, Allocation, BudgetDefault, Category, Provision, TaxDocumentRecord, Transaction } from '../types';
 
@@ -58,6 +58,11 @@ describe('computeReturn', () => {
   it('lists premiums when they beat the lump sum, and caps them per member', () => {
     const x = computeReturn({ ...couple, insurance: f(3_000) }, P25);
     expect(x.special[0]).toMatchObject({ key: 'insurance', amount: e(2 * 672) });
+  });
+  it('takes childcare and domestic help as a flat deduction up to 5,400 €', () => {
+    const x = computeReturn({ ...couple, childcare: f(6_000) }, P25);
+    expect(x.childcare).toMatchObject({ key: 'childcare', amount: e(5_400) });
+    expect(x.taxableIncome).toBe(r.taxableIncome - e(5_400));
   });
   it('suggests unused deductions with what they save', () => {
     const ideas = deductionIdeas(couple, P25);
@@ -243,6 +248,18 @@ describe('estimateReturn', () => {
     const bonusTx = { ...txs[0]!, id: 'big', date: '2026-06-30', amount: e(20_000) };
     const bonusAl = { ...allocs[0]!, id: 'a-big', transactionId: 'big', amount: e(20_000) };
     expect(estimateReturn({ ...ctx, transactions: [...txs, bonusTx], allocations: [...allocs, bonusAl] }).missing).toContain('unusual:Alex');
+  });
+  it('counts a budget line over the whole year: spent so far plus budgeted to December', () => {
+    const ins = { ...stamp, id: 'ins', name: 'Life insurance', groupId: 'fixed', isIncome: false, rolloverMode: 'reset', sortOrder: 9 } as unknown as Category;
+    const tx = { ...stamp, id: 'p-ins', accountId: 'cur', date: '2026-03-02', amount: -e(300), descriptionRaw: 'INSURER', counterparty: 'INSURER' } as unknown as Transaction;
+    const al = { ...stamp, id: 'a-ins', transactionId: 'p-ins', targetType: 'category', targetId: 'ins', amount: -e(300) } as unknown as Allocation;
+    const d = { ...stamp, id: 'd-ins', categoryId: 'ins', monthlyAmount: e(50), effectiveFrom: '2026-01' } as unknown as BudgetDefault;
+    const c2: EstimateContext = { ...ctx, categories: [...ctx.categories, ins], transactions: [...txs, tx], allocations: [...allocs, al], defaults: [...defaults, d], setup: { ...ctx.setup, lines: suggestLines([ins]) } };
+    expect(c2.setup.lines).toEqual({ ins: { role: 'insurance' } });
+    // 300 € paid in March; October's 50 € not spent yet, then November and December.
+    expect(lineYear(c2, 'ins')).toEqual({ actual: e(300), planned: e(150) });
+    const est = estimateReturn(c2);
+    expect(est.input.insurance).toMatchObject({ amount: e(450), source: 'ledger' });
   });
   it('asks for last year’s certificate when there is none', () => {
     expect(estimateReturn({ ...ctx, documents: [] }).missing).toContain('certificate:Alex');

@@ -226,6 +226,11 @@
       "title": "LIR art. 110 no. 2 (complementary pension, employee contributions, up to 1,200 €) and art. 129b (extra-professional allowance, 4,500 € for jointly taxed spouses both earning)",
       "url": "https://impotsdirects.public.lu/fr/legislation/legi.html",
       "verifiedOn": "2026-10-25"
+    },
+    {
+      "title": "ACD A–Z: flat deduction for domestic help, care and childcare — actual costs up to 5,400 € a year (450 € a month)",
+      "url": "https://impotsdirects.public.lu/fr/az/a/abat_forf_dom.html",
+      "verifiedOn": "2026-10-25"
     }
   ],
   "household": {
@@ -261,6 +266,11 @@
     "travel": {
       "perUnit": 99,
       "freeUnits": 4
+    },
+    "childcare": {
+      "note": "Flat deduction for domestic help, care and childcare (art. 127 LIR): actual costs up to 450 € a month and 5,400 € a year, for children under 14 on 1 January.",
+      "max": 5400,
+      "perMonth": 450
     }
   }
 }

@@ -1,7 +1,8 @@
 import { accountBalances, defaultFor } from '../budget';
 import { addMonths, compareMonths, monthOf, monthRange } from '../dates';
-import type { Account, Allocation, BudgetDefault, BudgetOverride, Category, Cents, Id, IsoDate, MonthKey, Provision, TaxDocumentRecord, TaxSetup, TaxSetupPerson, Transaction } from '../types';
+import type { Account, Allocation, BudgetDefault, BudgetOverride, Category, Cents, Id, IsoDate, MonthKey, Provision, TaxDocumentRecord, TaxLineRole, TaxSetup, TaxSetupPerson, Transaction } from '../types';
 import { formatMoney } from '../money';
+import { amountFor, occurrences } from '../plan';
 import type { TaxClass, TaxParams } from './lu';
 import type { Figure, ReturnInput, ReturnPerson } from './return';
 
@@ -96,9 +97,30 @@ export function payerOf(t: Pick<Transaction, 'counterparty' | 'descriptionRaw'>)
   return raw.split(/\s+[—-]\s+|\s{2,}/)[0]!.trim().toUpperCase().slice(0, 40);
 }
 
+/** A budget line counted on the return (D-99): spent so far, and what the budget expects to December. */
+export interface LineTrace {
+  categoryId: Id;
+  name: string;
+  role: TaxLineRole;
+  person?: string;
+  actual: Cents;
+  planned: Cents;
+}
+
+/** A consumer loan whose interest counts with insurance premiums (art. 111). */
+export interface LoanTrace {
+  accountId: Id;
+  name: string;
+  rate: number;
+  interest: Cents;
+  source: Figure['source'];
+}
+
 export interface Estimate {
   input: ReturnInput;
   salaries: Record<string, SalaryTrace>;
+  lines: LineTrace[];
+  consumerLoans: LoanTrace[];
   /** Things the estimate lacks, by key, for the screen to ask about. */
   missing: string[];
 }
@@ -183,6 +205,58 @@ export function salaryForYear(ctx: EstimateContext, categoryIds: readonly Id[], 
   const lastPayer = kept.at(-1)?.payer ?? '';
   const items = [...kept, ...plannedRows.map((r) => ({ ...r, payer: lastPayer }))];
   return { received: taxable, planned, exempt, payers: list, items };
+}
+
+/**
+ * A budget line over the calendar year (D-99): what it spent (or received) up
+ * to today, and what the budget still expects: the rest of this month's
+ * budget, then each month's budget to December; for a provision, the bills
+ * still due this year.
+ */
+export function lineYear(ctx: EstimateContext, categoryId: Id): { actual: Cents; planned: Cents } {
+  const c = ctx.categories.find((x) => x.id === categoryId);
+  const sign = c?.isIncome ? 1 : -1;
+  const byId = new Map(ctx.transactions.map((t) => [t.id, t]));
+  const now = monthOf(ctx.today);
+  let actual = 0;
+  let thisMonth = 0;
+  for (const a of ctx.allocations) {
+    if (a.targetId !== categoryId || (a.targetType !== 'category' && a.targetType !== 'income')) continue;
+    const t = byId.get(a.transactionId);
+    if (!t || !t.date.startsWith(String(ctx.year)) || t.date > ctx.today) continue;
+    actual += sign * a.amount;
+    if (monthOf(t.date) === now) thisMonth += sign * a.amount;
+  }
+  let planned = 0;
+  const provision = ctx.provisions.find((p) => p.categoryId === categoryId);
+  if (provision) {
+    for (const due of occurrences(provision, ctx.today, `${ctx.year}-12-31`)) if (due > ctx.today) planned += amountFor(provision, due);
+  } else if (compareMonths(now, `${ctx.year}-12`) <= 0) {
+    const first = compareMonths(now, `${ctx.year}-01`) < 0 ? `${ctx.year}-01` : now;
+    for (const m of monthRange(first, `${ctx.year}-12`)) {
+      const budget = expected(ctx, categoryId, m);
+      planned += m === now ? Math.max(0, budget - thisMonth) : budget;
+    }
+  }
+  return { actual, planned };
+}
+
+/** Budget lines whose name says what they are for the return. */
+export function suggestLines(categories: readonly Category[]): NonNullable<TaxSetup['lines']> {
+  const rules: [RegExp, TaxLineRole][] = [
+    [/\b111 ?bis\b|pr[ée]voyance|pension (?:plan|contract|savings contract)|altersvorsorge/i, 'pensionSavings'],
+    [/bauspar|[ée]pargne[- ]logement|home[- ]savings/i, 'homeSavings'],
+    [/donat|charit|\bdons?\b|spende/i, 'donations'],
+    [/cr[eè]che|childcare|day ?care|nanny|nounou|maison relais|baby ?sit|garde d.enfant|kinderbetreuung/i, 'childcare'],
+    [/life insurance|assurance[- ]vie|health insurance|mutuelle|\bdkv\b|liability|responsabilit[ée] civile|\bRC\b|accident insurance|lebensversicherung/i, 'insurance'],
+  ];
+  const out: NonNullable<TaxSetup['lines']> = {};
+  for (const c of categories) {
+    if (c.archivedAt || c.isIncome) continue;
+    const role = rules.find(([re]) => re.test(c.name))?.[1];
+    if (role) out[c.id] = { role, ...(role === 'pensionSavings' || role === 'homeSavings' ? { person: '*' } : {}) };
+  }
+  return out;
 }
 
 /** Interest a loan charges over the year: balances from the ledger, then the payments ahead. */
@@ -334,6 +408,18 @@ export function estimateReturn(ctx: EstimateContext): Estimate {
   const salaries: Record<string, SalaryTrace> = {};
   const withOverride = (key: string, f: Figure): Figure => (ov[key] !== undefined ? fig(ov[key]!, 'estimate', 'typed') : f);
 
+  // Budget lines that count on the return, over the whole year (D-99).
+  const lines: LineTrace[] = Object.entries(setup.lines ?? {}).flatMap(([categoryId, l]) => {
+    const c = ctx.categories.find((x) => x.id === categoryId);
+    return c ? [{ categoryId, name: c.name, role: l.role, ...(l.person ? { person: l.person } : {}), ...lineYear(ctx, categoryId) }] : [];
+  });
+  const fromLines = (role: TaxLineRole, person?: string) => {
+    const own = lines.filter((l) => l.role === role && (person === undefined || l.person === person || ((!l.person || l.person === '*') && setup.persons.length > 0)));
+    // A household line ("*", or no one named) is shared equally between the people on the return.
+    return own.reduce((s, l) => s + (person !== undefined && (!l.person || l.person === '*') ? Math.round((l.actual + l.planned) / setup.persons.length) : l.actual + l.planned), 0);
+  };
+  const hasLines = (role: TaxLineRole) => lines.some((l) => l.role === role);
+
   const persons: ReturnPerson[] = setup.persons.map((sp) => {
     const doc = certified(docs, year, sp.name);
     const last = certified(docs, year - 1, sp.name);
@@ -363,8 +449,8 @@ export function estimateReturn(ctx: EstimateContext): Estimate {
       lrcp: withOverride(`lrcp:${sp.name}`, lrcp),
       withheld: withOverride(`withheld:${sp.name}`, withheld),
       ...(travelAmount ? { travel: fig(travelAmount, 'estimate', `${sp.commuteKm} km`) } : {}),
-      ...(sp.pensionSavings ? { pensionSavings: fig(sp.pensionSavings, 'estimate') } : {}),
-      ...(sp.homeSavings ? { homeSavings: fig(sp.homeSavings, 'estimate') } : {}),
+      ...(sp.pensionSavings ? { pensionSavings: fig(sp.pensionSavings, 'estimate') } : hasLines('pensionSavings') && fromLines('pensionSavings', sp.name) ? { pensionSavings: fig(fromLines('pensionSavings', sp.name), 'ledger', 'spent and budgeted to December') } : {}),
+      ...(sp.homeSavings ? { homeSavings: fig(sp.homeSavings, 'estimate') } : hasLines('homeSavings') && fromLines('homeSavings', sp.name) ? { homeSavings: fig(fromLines('homeSavings', sp.name), 'ledger', 'spent and budgeted to December') } : {}),
       ...(young !== undefined ? { young } : {}),
     };
   });
@@ -376,7 +462,7 @@ export function estimateReturn(ctx: EstimateContext): Estimate {
     const end = d.values.balanceEnd ?? 0;
     const match = ctx.accounts
       .filter((a) => a.type === 'loan')
-      .map((a) => ({ a, gap: Math.abs(-(accountBalances([a], ctx.transactions, `${d.year}-12-31`).get(a.id) ?? 0) - end) }))
+      .map((a) => ({ a, gap: Math.abs(-(accountBalances([a], ctx.transactions, `${d.year + 1}-01-01`).get(a.id) ?? 0) - end) }))
       .sort((x, y) => x.gap - y.gap)[0];
     if (match && match.gap <= end * 0.02) return homeLoans.some((h) => h.id === match.a.id);
     return end >= 5_000_000; // a large loan is the home
@@ -390,7 +476,7 @@ export function estimateReturn(ctx: EstimateContext): Estimate {
     for (const loan of homeLoans) {
       const lastDoc = loanDocs
         .filter((d) => d.year === year - 1)
-        .map((d) => ({ d, gap: Math.abs((d.values.balanceEnd ?? 0) + (accountBalances([loan], ctx.transactions, `${year - 1}-12-31`).get(loan.id) ?? 0)) }))
+        .map((d) => ({ d, gap: Math.abs((d.values.balanceEnd ?? 0) + (accountBalances([loan], ctx.transactions, `${year}-01-01`).get(loan.id) ?? 0)) }))
         .sort((x, y) => x.gap - y.gap)[0]?.d;
       const rate = loan.interestRate ?? (lastDoc?.values.rate !== undefined ? lastDoc.values.rate / 100 : undefined);
       if (rate) sum += loanInterest(ctx, loan, rate);
@@ -405,8 +491,33 @@ export function estimateReturn(ctx: EstimateContext): Estimate {
   const lastReturn = docs.find((d) => d.kind === 'return' && d.year === year - 1) ?? docs.filter((d) => d.kind === 'return').sort((a, b) => b.year - a.year)[0];
   const homeSince = setup.homeSince ?? lastReturn?.values.homeSince;
 
-  // Insurance premiums and consumer-loan interest (art. 111): last year's premiums unless typed.
-  const insurance: Figure = setup.insurance !== undefined ? fig(setup.insurance, 'estimate') : lastReturn?.values.insurance !== undefined ? fig(lastReturn.values.insurance, 'lastYear') : fig(0, 'model');
+  // Consumer loans (not the home): their interest counts with insurance premiums (art. 111).
+  const consumerLoans: LoanTrace[] = [];
+  for (const loan of ctx.accounts.filter((a) => a.type === 'loan' && !a.closedAt && !(setup.homeLoanIds ?? []).includes(a.id))) {
+    const owedAt = (day: IsoDate) => -(accountBalances([loan], ctx.transactions, day).get(loan.id) ?? 0);
+    const near = (d: TaxDocumentRecord, day: IsoDate) => Math.abs((d.values.balanceEnd ?? 0) - owedAt(day)) <= Math.max(10_000, (d.values.balanceEnd ?? 0) * 0.02);
+    const doc = loanDocs.find((d) => d.year === year && near(d, `${year}-12-31`));
+    // Last year's closing balance is the balance on 1 January (a loan tracked from then opens with it).
+    const lastDoc = loanDocs.find((d) => d.year === year - 1 && near(d, `${year}-01-01`));
+    const rate = loan.interestRate ?? (lastDoc?.values.rate !== undefined ? lastDoc.values.rate / 100 : undefined);
+    if (doc) consumerLoans.push({ accountId: loan.id, name: loan.name, rate: (doc.values.rate ?? 0) / 100, interest: doc.values.interest ?? 0, source: 'document' });
+    else if (rate) consumerLoans.push({ accountId: loan.id, name: loan.name, rate, interest: loanInterest(ctx, loan, rate), source: 'ledger' });
+  }
+  const loanInterestTotal = consumerLoans.reduce((s, l) => s + l.interest, 0);
+
+  // Insurance premiums (art. 111): typed, else the budget lines for them, else last year's; plus consumer-loan interest.
+  const premiums: Figure =
+    setup.insurance !== undefined
+      ? fig(setup.insurance, 'estimate')
+      : hasLines('insurance')
+        ? fig(fromLines('insurance'), 'ledger', 'spent and budgeted to December')
+        : lastReturn?.values.insurance !== undefined
+          ? fig(lastReturn.values.insurance, 'lastYear')
+          : fig(0, 'model');
+  const insurance: Figure = loanInterestTotal ? { ...premiums, amount: premiums.amount + loanInterestTotal, note: `premiums ${formatMoney(premiums.amount)} + consumer-loan interest ${formatMoney(loanInterestTotal)}` } : premiums;
+  const donations: Figure | undefined = setup.donations ? fig(setup.donations, 'estimate') : hasLines('donations') ? fig(fromLines('donations'), 'ledger', 'spent and budgeted to December') : undefined;
+  const childcare: Figure | undefined = hasLines('childcare') ? fig(fromLines('childcare'), 'ledger', 'spent and budgeted to December') : undefined;
+  const otherIncome: Figure | undefined = hasLines('otherIncome') ? fig(fromLines('otherIncome'), 'ledger', 'received and budgeted to December') : undefined;
 
   // Quarterly advances due for the year: from the documents that fix them, else from the lines they are paid from.
   const schedule: Record<MonthKey, Cents> = {};
@@ -437,10 +548,14 @@ export function estimateReturn(ctx: EstimateContext): Estimate {
       homeInterest: withOverride('homeInterest', homeInterest),
       ...(homeSince ? { homeSince } : {}),
       insurance: withOverride('insurance', insurance),
-      ...(setup.donations ? { donations: fig(setup.donations, 'estimate') } : {}),
+      ...(donations ? { donations: withOverride('donations', donations) } : {}),
+      ...(childcare ? { childcare: withOverride('childcare', childcare) } : {}),
+      ...(otherIncome ? { otherIncome: withOverride('otherIncome', otherIncome) } : {}),
       advances: withOverride('advances', advances),
     },
     salaries,
+    lines,
+    consumerLoans,
     missing,
   };
 }
@@ -480,6 +595,7 @@ export function suggestSetup(h: SetupHints): TaxSetup {
   return {
     persons,
     ...(children ? { children } : {}),
+    lines: suggestLines(h.categories),
     homeLoanIds,
     advanceCategoryIds,
     ...(provision ? { provisionId: provision.id } : {}),

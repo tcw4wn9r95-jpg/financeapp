@@ -85,6 +85,8 @@ export interface TaxParams {
     homeSavings: { young: number; other: number; youngUntilAge: number };
     donations: { min: number; maxShareOfIncome: number };
     travel: { perUnit: number; freeUnits: number };
+    /** Flat deduction for domestic help, care and childcare (art. 127): actual costs up to `max` a year. */
+    childcare?: { max: number; perMonth: number };
   };
   sources: TaxSource[];
 }

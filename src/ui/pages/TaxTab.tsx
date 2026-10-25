@@ -5,7 +5,7 @@ import { parseTaxDocument } from '../../domain/tax/documents';
 import { childLines, estimateReturn, suggestSetup, type Estimate, type EstimateContext, type SalaryTrace } from '../../domain/tax/estimate';
 import { withOverrides, type TaxClass, type TaxParams } from '../../domain/tax/lu';
 import { computeReturn, deductionIdeas, type Figure, type FigureSource, type ReturnResult } from '../../domain/tax/return';
-import type { Cents, Provision, TaxDocumentRecord, TaxProfile, TaxSetup, TaxSetupPerson } from '../../domain/types';
+import type { Cents, Provision, TaxDocumentRecord, TaxLineRole, TaxProfile, TaxSetup, TaxSetupPerson } from '../../domain/types';
 import { monthName, t, type MessageKey } from '../../i18n';
 import { SelectField, TextField } from '../components/fields';
 import { Money } from '../components/Money';
@@ -72,11 +72,12 @@ function useTaxModel(year: number, base: TaxParams): Model {
     const hints = { year, members: members ? members.split('|') : [], categories, accounts, provisions, transactions, allocations, documents: docs };
     const suggested = suggestSetup(hints);
     const setup: TaxSetup =
-      profile?.setup ??
+      (profile?.setup && { ...profile.setup, lines: profile.setup.lines ?? suggested.lines ?? {} }) ??
       (before
         ? {
             persons: before.persons.map((p) => ({ name: p.name, salaryCategoryIds: p.salaryCategoryIds, ...(p.birthYear ? { birthYear: p.birthYear } : {}), ...(p.commuteKm ? { commuteKm: p.commuteKm } : {}), ...(p.payers ? { payers: p.payers } : {}) })),
             ...(before.homeLoanIds ? { homeLoanIds: before.homeLoanIds } : {}),
+            lines: before.lines ?? suggested.lines ?? {},
             ...(before.homeSince ? { homeSince: before.homeSince } : {}),
             ...(before.advanceCategoryIds ? { advanceCategoryIds: before.advanceCategoryIds } : {}),
             ...(suggested.children ? { children: suggested.children } : before.children ? { children: before.children } : {}),
@@ -123,6 +124,7 @@ function TaxYear({ year, params: base }: { year: number; params: TaxParams }) {
       <Missing m={m} />
       <Documents m={m} year={year} />
       <Breakdown m={m} setOverride={setOverride} save={save} />
+      <BudgetLines m={m} save={save} />
       <Ideas m={m} save={save} />
       <Compare m={m} year={year} />
       <Setup m={m} year={year} save={save} />
@@ -395,8 +397,10 @@ function Breakdown({ m, setOverride, save }: { m: Model; setOverride: (k: string
       <h3>{t('tax.computeTitle')}</h3>
       <ul className="plain-list">
         <li className="split-row"><span>{t('tax.netSalaries')}</span><Money cents={r.netSalaries} /></li>
+        {m.estimate.input.otherIncome && <li className="split-row"><span>{t('tax.line.otherIncome')} <SourceBadge source={m.estimate.input.otherIncome.source} /></span><Money cents={m.estimate.input.otherIncome.amount} /></li>}
         <li className="split-row"><span>{t('tax.totalNet')}</span><Money cents={r.totalNetIncome} /></li>
         <li className="split-row"><span>{t('tax.specialTotal')}</span><Money cents={-r.specialTotal} /></li>
+        {r.childcare && <li className="split-row"><span>{t('tax.line.childcare')} <SourceBadge source={r.childcare.source} /></span><Money cents={-r.childcare.amount} /></li>}
         <li className="split-row"><strong>{t('tax.taxableIncome')}</strong><strong><Money cents={r.taxableIncome} /></strong></li>
         {r.allowance > 0 && <li className="split-row"><span>{t('tax.allowance')}</span><Money cents={-r.allowance} /></li>}
         <li className="split-row"><span>{t('tax.taxable')}</span><Money cents={r.scaleIncome} /></li>
@@ -518,6 +522,73 @@ function NumberCommit({ label, hint, value, onCommit }: { label: string; hint?: 
         if (v !== value) onCommit(v);
       }}
     />
+  );
+}
+
+// ------------------------------------------------------------- budget lines
+
+const ROLES: TaxLineRole[] = ['insurance', 'pensionSavings', 'homeSavings', 'donations', 'childcare', 'otherIncome'];
+const PER_PERSON: TaxLineRole[] = ['pensionSavings', 'homeSavings'];
+
+/** Budget lines whose year (spent so far + budgeted to December) counts on the return (D-99). */
+function BudgetLines({ m, save }: { m: Model; save: (s: TaxSetup) => void }) {
+  const categories = useStore('categories');
+  const [adding, setAdding] = useState('');
+  const [role, setRole] = useState<TaxLineRole>('insurance');
+  const lines = m.setup.lines ?? {};
+  const setLine = (id: string, v: { role: TaxLineRole; person?: string } | undefined) => {
+    const next = { ...lines };
+    if (v) next[id] = v;
+    else delete next[id];
+    save({ ...m.setup, lines: next });
+  };
+  const free = categories.filter((c) => !c.archivedAt && !lines[c.id] && !m.setup.persons.some((p) => p.salaryCategoryIds.includes(c.id)));
+  const total = m.estimate.lines.reduce((s, l) => s + l.actual + l.planned, 0);
+  return (
+    <details className="card">
+      <summary><strong>{t('tax.lines')}</strong>{m.estimate.lines.length > 0 && <span className="badge">{formatMoney(total)}</span>}</summary>
+      <p className="hint">{t('tax.linesHint')}</p>
+      <ul className="plain-list">
+        {m.estimate.lines.map((l) => (
+          <li key={l.categoryId}>
+            <div className="split-row">
+              <strong>{l.name}</strong>
+              <Money cents={l.actual + l.planned} />
+            </div>
+            <p className="hint">{t('tax.lineYear', { actual: formatMoney(l.actual), planned: formatMoney(l.planned) })}</p>
+            <div className="tax-edit">
+              <SelectField label={t('tax.lineRole')} value={l.role} onChange={(e) => setLine(l.categoryId, { role: e.target.value as TaxLineRole, ...(PER_PERSON.includes(e.target.value as TaxLineRole) ? { person: l.person ?? '*' } : {}) })}>
+                {ROLES.map((r) => <option key={r} value={r}>{t(`tax.role.${r}` as MessageKey)}</option>)}
+              </SelectField>
+              {PER_PERSON.includes(l.role) && (
+                <SelectField label={t('tax.linePerson')} value={l.person ?? '*'} onChange={(e) => setLine(l.categoryId, { role: l.role, person: e.target.value })}>
+                  <option value="*">{t('tax.shared')}</option>
+                  {m.setup.persons.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+                </SelectField>
+              )}
+              <button type="button" className="button button-quiet button-small" onClick={() => setLine(l.categoryId, undefined)}>{t('common.delete')}</button>
+            </div>
+          </li>
+        ))}
+        {m.estimate.consumerLoans.map((l) => (
+          <li key={l.accountId} className="split-row">
+            <span>{l.name} <SourceBadge source={l.source} /><br /><span className="muted">{t('tax.loanInterest', { rate: String(l.rate).replace('.', ',') })}</span></span>
+            <Money cents={l.interest} />
+          </li>
+        ))}
+      </ul>
+      <div className="tax-edit">
+        <SelectField label={t('tax.addLine')} value={adding} onChange={(e) => setAdding(e.target.value)}>
+          <option value="">{t('tax.chooseLine')}</option>
+          {free.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </SelectField>
+        <SelectField label={t('tax.lineRole')} value={role} onChange={(e) => setRole(e.target.value as TaxLineRole)}>
+          {ROLES.map((r) => <option key={r} value={r}>{t(`tax.role.${r}` as MessageKey)}</option>)}
+        </SelectField>
+        <button type="button" className="button button-small" disabled={!adding} onClick={() => { setLine(adding, { role, ...(PER_PERSON.includes(role) ? { person: '*' } : {}) }); setAdding(''); }}>{t('tax.add')}</button>
+      </div>
+      <p className="hint">{t('tax.rolesHint')}</p>
+    </details>
   );
 }
 

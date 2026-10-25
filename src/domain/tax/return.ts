@@ -53,6 +53,8 @@ export interface ReturnInput {
   /** Insurance premiums and consumer-loan interest (art. 111). */
   insurance: Figure;
   donations?: Figure;
+  /** Domestic help, care and childcare costs (art. 127): a flat deduction up to its ceiling. */
+  childcare?: Figure;
   /** Other net income (positive) or loss (negative). */
   otherIncome?: Figure;
   /** Quarterly advances paid for the year. */
@@ -74,6 +76,8 @@ export interface ReturnResult {
   totalNetIncome: Cents;
   special: ReturnLine[];
   specialTotal: Cents;
+  /** The childcare deduction (extraordinary charges), when there is one. */
+  childcare: ReturnLine | null;
   taxableIncome: Cents;
   allowance: Cents;
   /** Adjusted taxable income rounded down as the scale takes it. */
@@ -164,7 +168,9 @@ export function computeReturn(r: ReturnInput, p: TaxParams): ReturnResult {
     if (hs > 0) special.push({ key: `homeSavings:${person.name}`, amount: hs, source: person.homeSavings!.source });
   }
   const specialTotal = special.reduce((s, l) => s + l.amount, 0);
-  const taxableIncome = Math.max(0, totalNetIncome - specialTotal);
+  const care = hh?.childcare && r.childcare && r.childcare.amount > 0 ? Math.min(r.childcare.amount, ct(hh.childcare.max)) : 0;
+  const childcare: ReturnLine | null = care ? { key: 'childcare', amount: care, source: r.childcare!.source } : null;
+  const taxableIncome = Math.max(0, totalNetIncome - specialTotal - care);
   // Two jointly taxed spouses who both earn get the extra-professional allowance (art. 129b).
   const allowance = r.class === '2' && earners >= 2 ? ct(hh?.extraProfessional ?? 0) : 0;
   const adjusted = Math.max(0, taxableIncome - allowance);
@@ -196,6 +202,7 @@ export function computeReturn(r: ReturnInput, p: TaxParams): ReturnResult {
     totalNetIncome,
     special,
     specialTotal,
+    childcare,
     taxableIncome,
     allowance,
     scaleIncome: ct(scaleIncomeEur),
