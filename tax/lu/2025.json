@@ -211,6 +211,56 @@
       "title": "ACD newsletter 31/12/2024 — home-loan interest ceilings",
       "url": "https://impotsdirects.public.lu/fr/archive/newsletter/2024/nl31122024.html",
       "verifiedOn": "2026-10-10"
+    },
+    {
+      "title": "ACD newsletter 31/12/2024 — RGD of 20 Dec 2024 (Mémorial A 2024 n° 596): home-loan interest fully deductible the year the rental value is fixed and the next, then 4,000 / 3,000 / 2,000 € a year",
+      "url": "https://impotsdirects.public.lu/fr/archive/newsletter/2024/nl31122024.html",
+      "verifiedOn": "2026-10-25"
+    },
+    {
+      "title": "ACD A–Z: home-savings contributions (cotisations d'épargne-logement) — 1,344 € aged 18–40, else 672 €, per household member",
+      "url": "https://impotsdirects.public.lu/fr/az/c/cotis-epargne-logement.html",
+      "verifiedOn": "2026-10-25"
+    },
+    {
+      "title": "LIR art. 110 no. 2 (complementary pension, employee contributions, up to 1,200 €) and art. 129b (extra-professional allowance, 4,500 € for jointly taxed spouses both earning)",
+      "url": "https://impotsdirects.public.lu/fr/legislation/legi.html",
+      "verifiedOn": "2026-10-25"
     }
-  ]
+  ],
+  "household": {
+    "homeInterest": {
+      "note": "Owner-occupied home loan interest (art. 98bis LIR, RGD of 20 Dec 2024): fully deductible in the year the rental value is fixed and the next; then an annual ceiling per household member.",
+      "fullYears": 2,
+      "ceilings": [
+        {
+          "fromYear": 2,
+          "amount": 4000
+        },
+        {
+          "fromYear": 6,
+          "amount": 3000
+        },
+        {
+          "fromYear": 11,
+          "amount": 2000
+        }
+      ]
+    },
+    "lrcpMax": 1200,
+    "extraProfessional": 4500,
+    "homeSavings": {
+      "young": 1344,
+      "other": 672,
+      "youngUntilAge": 40
+    },
+    "donations": {
+      "min": 120,
+      "maxShareOfIncome": 0.2
+    },
+    "travel": {
+      "perUnit": 99,
+      "freeUnits": 4
+    }
+  }
 }

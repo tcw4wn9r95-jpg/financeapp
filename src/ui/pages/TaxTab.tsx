@@ -1,104 +1,34 @@
-import { useMemo, useState, type FormEvent } from 'react';
-import { addMonths, currentMonth, formatDate } from '../../domain/dates';
-import { stamp, systemClock } from '../../domain/ledger';
-import { formatMoneyInput, parseMoney } from '../../domain/money';
-import { computeTax, withOverrides, type TaxClass, type TaxParams } from '../../domain/tax/lu';
-import type { Cents, TaxProfile, TaxProfilePerson } from '../../domain/types';
-import { monthName, t } from '../../i18n';
+import { useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { currentMonth, formatDate, todayIso } from '../../domain/dates';
+import { formatMoney, formatMoneyInput, parseMoney } from '../../domain/money';
+import { parseTaxDocument } from '../../domain/tax/documents';
+import { childLines, estimateReturn, suggestSetup, type Estimate, type EstimateContext, type SalaryTrace } from '../../domain/tax/estimate';
+import { withOverrides, type TaxClass, type TaxParams } from '../../domain/tax/lu';
+import { computeReturn, deductionIdeas, type Figure, type FigureSource, type ReturnResult } from '../../domain/tax/return';
+import type { Cents, Provision, TaxDocumentRecord, TaxProfile, TaxSetup, TaxSetupPerson } from '../../domain/types';
+import { monthName, t, type MessageKey } from '../../i18n';
 import { SelectField, TextField } from '../components/fields';
 import { Money } from '../components/Money';
 import { useToast } from '../components/Toast';
 import { useSettings, useStore, useVault } from '../hooks';
-import { inputOf, TAX_YEARS, taxYears } from '../taxParams';
+import { readImportFile } from '../importActions';
+import { addTaxDocument, createTaxProvision, removeTaxDocument, retargetProvision, saveTaxProfile, saveTaxSetup } from '../taxActions';
+import { TAX_YEARS, taxYears } from '../taxParams';
 
 /**
- * Luxembourg tax projection (PRD F10): what the year's tax should be, what
- * payroll withholding covers, and the refund or payment to expect — which
- * can be posted into the forecast. A projection, not tax advice.
+ * Luxembourg income tax (PRD F10, D-95): the year's return estimated line by
+ * line from the ledger, the budget and the tax documents added, what payroll
+ * withholding and the quarterly advances already cover, and the settlement
+ * expected around June of the next year — which feeds a provision (to pay) or
+ * the forecast (refund). A projection, not tax advice.
  */
 
 const CLASSES: TaxClass[] = ['1', '1a', '2'];
-
-interface Draft {
-  regime: TaxClass;
-  persons: { name: string; grossSalary: string; withheld: string; travel: string; pensionSavings: string }[];
-  householdMembers: string;
-  insurance: string;
-  otherDeductions: string;
-  otherIncome: string;
-  settleMonth: string;
-  inForecast: boolean;
-  singleParent: boolean;
-  overrides: Record<string, string>;
-}
-
-const money = (c: Cents | undefined) => (c ? formatMoneyInput(c) : '');
-const cents = (s: string) => (s.trim() ? parseMoney(s) : 0);
-
-function draftOf(p: TaxProfile | undefined, names: string[], year: number): Draft {
-  const persons: TaxProfilePerson[] = p?.persons ?? names.slice(0, 2).map((name) => ({ name, grossSalary: 0, withheld: 0 }));
-  return {
-    regime: (p?.regime as TaxClass) ?? (names.length >= 2 ? '2' : '1'),
-    persons: (persons.length ? persons : [{ name: t('tax.you'), grossSalary: 0, withheld: 0 }]).map((x) => ({
-      name: x.name,
-      grossSalary: money(x.grossSalary),
-      withheld: money(x.withheld),
-      travel: money(x.travel),
-      pensionSavings: money(x.pensionSavings),
-    })),
-    householdMembers: String(p?.householdMembers ?? Math.max(1, names.length)),
-    insurance: money(p?.insurance),
-    otherDeductions: money(p?.otherDeductions),
-    otherIncome: money(p?.otherIncome),
-    settleMonth: p?.settleMonth ?? `${year + 1}-06`,
-    inForecast: p?.inForecast ?? false,
-    singleParent: p?.singleParent ?? false,
-    overrides: Object.fromEntries(Object.entries(p?.overrides ?? {}).map(([k, v]) => [k, String(v)])),
-  };
-}
-
-function profileOf(d: Draft, year: number, existing: TaxProfile | undefined): TaxProfile | null {
-  const persons: TaxProfilePerson[] = [];
-  for (const x of d.persons) {
-    const gross = cents(x.grossSalary);
-    const withheld = cents(x.withheld);
-    const travel = cents(x.travel);
-    const pension = cents(x.pensionSavings);
-    if (gross === null || withheld === null || travel === null || pension === null) return null;
-    persons.push({ name: x.name, grossSalary: Math.abs(gross), withheld: Math.abs(withheld), ...(travel ? { travel: Math.abs(travel) } : {}), ...(pension ? { pensionSavings: Math.abs(pension) } : {}) });
-  }
-  const [insurance, otherDeductions, otherIncome] = [cents(d.insurance), cents(d.otherDeductions), cents(d.otherIncome)];
-  if (insurance === null || otherDeductions === null || otherIncome === null) return null;
-  const overrides: Record<string, number> = {};
-  for (const [k, v] of Object.entries(d.overrides)) {
-    const n = Number(v.replace(',', '.'));
-    if (v.trim() !== '' && Number.isFinite(n)) overrides[k] = n;
-  }
-  return {
-    ...(existing ?? stamp(systemClock, 'manual')),
-    updatedAt: new Date().toISOString(),
-    year,
-    regime: d.regime,
-    persons,
-    householdMembers: Math.max(1, Number(d.householdMembers) || 1),
-    insurance: Math.abs(insurance),
-    otherDeductions: Math.abs(otherDeductions),
-    otherIncome,
-    withholdingYtd: persons.reduce((s, x) => s + x.withheld, 0),
-    paramsVersion: String(year),
-    overrides,
-    settleMonth: d.settleMonth,
-    inForecast: d.inForecast,
-    ...(d.regime === '1a' && d.singleParent ? { singleParent: true } : {}),
-  };
-}
 
 export function TaxTab() {
   const years = taxYears();
   const thisYear = Number(currentMonth().slice(0, 4));
   const [year, setYear] = useState(years.includes(thisYear) ? thisYear : years[0]!);
-  const profiles = useStore('taxProfiles');
-  const existing = profiles.find((p) => p.year === year);
   if (years.length === 0) return <p className="notice">{t('tax.noParams')}</p>;
   return (
     <>
@@ -106,129 +36,596 @@ export function TaxTab() {
       <SelectField label={t('tax.year')} value={String(year)} onChange={(e) => setYear(Number(e.target.value))}>
         {years.map((y) => <option key={y} value={y}>{y}</option>)}
       </SelectField>
-      <TaxForm key={`${year}:${existing?.id ?? 'new'}`} year={year} params={TAX_YEARS[year]!} existing={existing} />
+      <TaxYear key={year} year={year} params={TAX_YEARS[year]!} />
     </>
   );
 }
 
-function TaxForm({ year, params, existing }: { year: number; params: TaxParams; existing: TaxProfile | undefined }) {
+interface Model {
+  profile: TaxProfile | undefined;
+  setup: TaxSetup;
+  regime: TaxClass;
+  params: TaxParams;
+  ctx: EstimateContext;
+  estimate: Estimate;
+  result: ReturnResult;
+  documents: { profile: TaxProfile; doc: TaxDocumentRecord }[];
+}
+
+function useTaxModel(year: number, base: TaxParams): Model {
+  const settings = useSettings();
+  const profiles = useStore('taxProfiles');
+  const accounts = useStore('accounts');
+  const transactions = useStore('transactions');
+  const allocations = useStore('allocations');
+  const categories = useStore('categories');
+  const defaults = useStore('budgetDefaults');
+  const overrides = useStore('budgetOverrides');
+  const provisions = useStore('provisions');
+  const members = (settings.members ?? []).map((m) => m.name).join('|');
+  return useMemo(() => {
+    const profile = profiles.find((p) => p.year === year);
+    const documents = profiles.flatMap((p) => (p.documents ?? []).map((doc) => ({ profile: p, doc }))).sort((a, b) => b.doc.year - a.doc.year || a.doc.kind.localeCompare(b.doc.kind));
+    const docs = documents.map((d) => d.doc);
+    // A new year starts from last year's setup (who, which lines, which loans), without its estimates.
+    const before = profiles.filter((p) => p.year < year && p.setup).sort((a, b) => b.year - a.year)[0]?.setup;
+    const hints = { year, members: members ? members.split('|') : [], categories, accounts, provisions, transactions, allocations, documents: docs };
+    const suggested = suggestSetup(hints);
+    const setup: TaxSetup =
+      profile?.setup ??
+      (before
+        ? {
+            persons: before.persons.map((p) => ({ name: p.name, salaryCategoryIds: p.salaryCategoryIds, ...(p.birthYear ? { birthYear: p.birthYear } : {}), ...(p.commuteKm ? { commuteKm: p.commuteKm } : {}), ...(p.payers ? { payers: p.payers } : {}) })),
+            ...(before.homeLoanIds ? { homeLoanIds: before.homeLoanIds } : {}),
+            ...(before.homeSince ? { homeSince: before.homeSince } : {}),
+            ...(before.advanceCategoryIds ? { advanceCategoryIds: before.advanceCategoryIds } : {}),
+            ...(suggested.children ? { children: suggested.children } : before.children ? { children: before.children } : {}),
+            ...(suggested.provisionId ? { provisionId: suggested.provisionId } : {}),
+          }
+        : suggested);
+    const regime = (profile?.setup && ['1', '1a', '2'].includes(profile.regime) ? profile.regime : setup.persons.length >= 2 ? '2' : '1') as TaxClass;
+    const params = withOverrides(base, profile?.overrides ?? {});
+    const ctx: EstimateContext = {
+      year,
+      today: todayIso(),
+      regime,
+      params,
+      ...(TAX_YEARS[year - 1] ? { paramsLastYear: TAX_YEARS[year - 1]! } : {}),
+      setup,
+      documents: docs,
+      accounts,
+      transactions,
+      allocations,
+      categories,
+      defaults,
+      overrides,
+      provisions,
+    };
+    const estimate = estimateReturn(ctx);
+    return { profile, setup, regime, params, ctx, estimate, result: computeReturn(estimate.input, params), documents };
+  }, [year, base, profiles, accounts, transactions, allocations, categories, defaults, overrides, provisions, members]);
+}
+
+function TaxYear({ year, params: base }: { year: number; params: TaxParams }) {
+  const vault = useVault();
+  const m = useTaxModel(year, base);
+  const save = (setup: TaxSetup) => saveTaxSetup(vault, year, setup);
+  const setOverride = (key: string, value: Cents | undefined) => {
+    const next = { ...(m.setup.overrides ?? {}) };
+    if (value === undefined) delete next[key];
+    else next[key] = value;
+    return save({ ...m.setup, overrides: next });
+  };
+  return (
+    <>
+      {base.status === 'draft' && <p className="notice" role="note">{t('tax.draft')} {base.note}</p>}
+      <Summary m={m} year={year} />
+      <Missing m={m} />
+      <Documents m={m} year={year} />
+      <Breakdown m={m} setOverride={setOverride} save={save} />
+      <Ideas m={m} save={save} />
+      <Compare m={m} year={year} />
+      <Setup m={m} year={year} save={save} />
+      <Overrides params={base} values={m.profile?.overrides ?? {}} onChange={(overrides) => saveTaxProfile(vault, year, { overrides })} />
+      <Sources params={base} />
+    </>
+  );
+}
+
+// ------------------------------------------------------------- summary
+
+const settleDue = (year: number) => `${year + 1}-06-30`;
+
+function Summary({ m, year }: { m: Model; year: number }) {
   const vault = useVault();
   const notify = useToast();
-  const settings = useSettings();
-  const names = (settings.members ?? []).map((m) => m.name);
-  const [d, setD] = useState<Draft>(() => draftOf(existing, names, year));
-  const profile = useMemo(() => profileOf(d, year, existing), [d, year, existing]);
-  const effective = useMemo(() => (profile ? withOverrides(params, profile.overrides ?? {}) : params), [params, profile]);
-  const result = useMemo(() => (profile ? computeTax(inputOf(profile), effective) : undefined), [profile, effective]);
-  const set = (patch: Partial<Draft>) => setD({ ...d, ...patch });
-  const setPerson = (i: number, patch: Partial<Draft['persons'][number]>) => set({ persons: d.persons.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
-  const months = Array.from({ length: 24 }, (_, i) => addMonths(currentMonth(), i));
-  if (!months.includes(d.settleMonth)) months.unshift(d.settleMonth);
+  const provisions = useStore('provisions');
+  const r = m.result;
+  const pay = r.settlement > 0;
+  const provision = provisions.find((p) => p.id === m.setup.provisionId);
+  const due = settleDue(year);
+  const target = Math.max(0, Math.ceil(r.settlement / 10_000) * 10_000);
+  const inPlan = provision ? provision.amount === target && provision.dueDate === due : !pay && m.profile?.inForecast && m.setup.planned === r.settlement;
+  const [busy, setBusy] = useState(false);
 
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    if (!profile) return notify(t('tax.invalid'), 'error');
-    await vault.put('taxProfiles', profile);
-    notify(t('tax.saved'));
+  async function plan() {
+    setBusy(true);
+    try {
+      let provisionId = provision?.id;
+      if (provision) await retargetProvision(vault, provision, target, due);
+      else if (pay) provisionId = await createTaxProvision(vault, t('tax.provisionName', { year }), target, due, todayIso());
+      await saveTaxSetup(vault, year, { ...m.setup, ...(provisionId ? { provisionId } : {}), planned: r.settlement });
+      await saveTaxProfile(vault, year, { inForecast: !pay, settleMonth: `${year + 1}-06`, regime: m.regime });
+      notify(pay ? t('tax.planned', { amount: formatMoney(target) }) : t('tax.plannedRefund'));
+    } finally {
+      setBusy(false);
+    }
   }
 
-  const label = (l: string) => {
-    const [kind, who] = l.split(':');
-    return who ? t(`tax.line.${kind}` as 'tax.line.social', { name: who }) : t(`tax.line.${kind}` as 'tax.line.other');
-  };
-
   return (
-    <form onSubmit={save} className="form">
-      {params.status === 'draft' && <p className="notice" role="note">{t('tax.draft')} {params.note}</p>}
-      <SelectField label={t('tax.class')} value={d.regime} onChange={(e) => set({ regime: e.target.value as TaxClass, persons: e.target.value === '2' || d.persons.length < 2 ? d.persons : d.persons.slice(0, 1) })} hint={t('tax.classHint')}>
-        {CLASSES.map((c) => <option key={c} value={c}>{t(`tax.class.${c}` as 'tax.class.1')}</option>)}
-      </SelectField>
-      {d.regime === '1a' && (
-        <label className="check">
-          <input type="checkbox" checked={d.singleParent} onChange={(e) => set({ singleParent: e.target.checked })} />
-          {t('tax.singleParent')}
-        </label>
+    <section className="card" aria-labelledby="tax-result">
+      <h2 id="tax-result">{t('tax.result', { year })}</h2>
+      <div className="headline">
+        <span className="muted">{pay ? t('tax.dueAround', { month: monthName(`${year + 1}-06`) }) : t('tax.refundAround', { month: monthName(`${year + 1}-06`) })}</span>
+        <span className={`big-number ${pay ? 'bad' : 'ok'}`}><Money cents={-r.settlement} /></span>
+      </div>
+      <ul className="plain-list">
+        <li className="split-row"><span>{t('tax.liability')}</span><Money cents={r.totalDue} /></li>
+        <li className="split-row"><span>{t('tax.withheldTotal')}</span><Money cents={-r.withheld} /></li>
+        <li className="split-row"><span>{t('tax.advances')} <SourceBadge source={m.estimate.input.advances.source} /></span><Money cents={-r.advances} /></li>
+        <li className="split-row"><strong>{pay ? t('tax.toPay') : t('tax.toGetBack')}</strong><strong><Money cents={-r.settlement} /></strong></li>
+        <li className="split-row"><span>{t('tax.marginal')}</span><span>{(r.marginalRate * 100).toFixed(1).replace('.', ',')} %</span></li>
+      </ul>
+      <p className="hint">{t('tax.settleHint')}</p>
+      {provision && (
+        <p className="hint">
+          {t('tax.inPlanProvision', { name: provision.name, amount: formatMoney(provision.amount), date: formatDate(provision.dueDate) })}
+        </p>
       )}
-      {d.persons.map((x, i) => (
-        <fieldset key={i} className="card">
-          <legend>{x.name}</legend>
-          <TextField label={t('tax.gross')} hint={t('tax.grossHint')} inputMode="decimal" value={x.grossSalary} onChange={(e) => setPerson(i, { grossSalary: e.target.value })} />
-          <TextField label={t('tax.withheld')} hint={t('tax.withheldHint')} inputMode="decimal" value={x.withheld} onChange={(e) => setPerson(i, { withheld: e.target.value })} />
-          <details>
-            <summary>{t('tax.more')}</summary>
-            <TextField label={t('tax.travel')} hint={t('tax.travelHint', { max: params.deductions.travelMax })} inputMode="decimal" value={x.travel} onChange={(e) => setPerson(i, { travel: e.target.value })} />
-            <TextField label={t('tax.pension')} hint={t('tax.pensionHint', { max: params.deductions.pensionSavings })} inputMode="decimal" value={x.pensionSavings} onChange={(e) => setPerson(i, { pensionSavings: e.target.value })} />
-          </details>
-        </fieldset>
-      ))}
-      {d.regime === '2' && d.persons.length < 2 && (
-        <button type="button" className="button button-quiet" onClick={() => set({ persons: [...d.persons, { name: names[d.persons.length] ?? t('tax.partner'), grossSalary: '', withheld: '', travel: '', pensionSavings: '' }] })}>
-          + {t('tax.addPartner')}
+      {!inPlan && (pay || provision || r.settlement < 0) && (
+        <button type="button" className="button button-primary button-block" disabled={busy} onClick={plan}>
+          {provision ? t('tax.updateProvision', { amount: formatMoney(target), date: formatDate(due) }) : pay ? t('tax.createProvision', { amount: formatMoney(target), date: formatDate(due) }) : t('tax.refundToForecast')}
         </button>
       )}
-      <details className="card">
-        <summary>{t('tax.household')}</summary>
-        <TextField label={t('tax.members')} hint={t('tax.membersHint')} inputMode="numeric" value={d.householdMembers} onChange={(e) => set({ householdMembers: e.target.value.replace(/\D/g, '') })} />
-        <TextField label={t('tax.insurance')} hint={t('tax.insuranceHint', { max: params.deductions.insurancePerPerson })} inputMode="decimal" value={d.insurance} onChange={(e) => set({ insurance: e.target.value })} />
-        <TextField label={t('tax.otherDeductions')} hint={t('tax.otherDeductionsHint')} inputMode="decimal" value={d.otherDeductions} onChange={(e) => set({ otherDeductions: e.target.value })} />
-        <TextField label={t('tax.otherIncome')} hint={t('tax.otherIncomeHint')} inputMode="decimal" value={d.otherIncome} onChange={(e) => set({ otherIncome: e.target.value })} />
-      </details>
+      {inPlan && <p className="hint">✓ {t('tax.planUpToDate')}</p>}
+    </section>
+  );
+}
 
-      {result ? (
-        <section className="card" aria-labelledby="tax-result">
-          <h2 id="tax-result">{t('tax.result', { year })}</h2>
-          <div className="headline">
-            <span className="muted">{result.balance >= 0 ? t('tax.refund') : t('tax.due')}</span>
-            <span className={`big-number ${result.balance >= 0 ? 'ok' : 'bad'}`}><Money cents={Math.abs(result.balance)} /></span>
-          </div>
+function Missing({ m }: { m: Model }) {
+  const accounts = useStore('accounts');
+  if (!m.estimate.missing.length) return null;
+  return (
+    <div className="notice" role="note">
+      <ul className="plain-list">
+        {m.estimate.missing.map((k) => {
+          const [kind, what] = k.split(':');
+          const name = kind === 'rate' ? (accounts.find((a) => a.id === what)?.name ?? '') : (what ?? '');
+          return <li key={k}>{t(`tax.missing.${kind}` as MessageKey, { name })}</li>;
+        })}
+      </ul>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------- documents
+
+const KINDS = ['salary', 'loan', 'return', 'assessment', 'advances', 'statement'] as const;
+
+function docSummary(d: TaxDocumentRecord): string {
+  const e = (c: number | undefined) => (c === undefined ? '' : formatMoney(c));
+  switch (d.kind) {
+    case 'salary':
+      return t('tax.doc.salaryLine', { gross: e(d.values.gross), withheld: e(d.values.withheld) });
+    case 'loan':
+      return t('tax.doc.loanLine', { interest: e(d.values.interest), rate: d.values.rate ? (d.values.rate / 100).toFixed(2).replace('.', ',') : '–' });
+    case 'return':
+      return t('tax.doc.returnLine', { n: d.persons?.length ?? 0 });
+    case 'assessment':
+      return t('tax.doc.assessmentLine', { tax: e(d.values.tax), remaining: e(d.values.remaining) });
+    case 'statement':
+      return d.values.refund ? t('tax.doc.refundLine', { amount: e(d.values.refund) }) : t('tax.doc.dueLine', { amount: e(d.values.due) });
+    case 'advances':
+      return Object.entries(d.schedule ?? {}).sort().map(([mo, v]) => `${mo}: ${e(v)}`).join(' · ');
+  }
+}
+
+function Documents({ m, year }: { m: Model; year: number }) {
+  const vault = useVault();
+  const notify = useToast();
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  // This year's documents and last year's (which the estimate learns from).
+  const shown = m.documents.filter((d) => d.doc.year >= year - 1);
+  const older = m.documents.length - shown.length;
+
+  async function add(e: ChangeEvent<HTMLInputElement>) {
+    const files = [...(e.target.files ?? [])];
+    e.target.value = '';
+    if (!files.length) return;
+    setBusy(true);
+    const added: string[] = [];
+    const unknown: string[] = [];
+    for (const file of files) {
+      try {
+        const content = await readImportFile(file);
+        const lines = content.kind === 'pdf' ? content.lines : content.text.split(/\r?\n/);
+        const doc = parseTaxDocument(lines);
+        if (!doc) unknown.push(file.name);
+        else {
+          await addTaxDocument(vault, doc, file.name);
+          added.push(`${t(`tax.kind.${doc.kind}` as MessageKey)} ${doc.year}`);
+        }
+      } catch {
+        unknown.push(file.name);
+      }
+    }
+    setBusy(false);
+    if (added.length) notify(t('tax.docsAdded', { n: added.length }));
+    if (unknown.length) notify(t('tax.docsUnknown', { list: unknown.join(', ') }), 'error');
+  }
+
+  return (
+    <section className="card" aria-labelledby="tax-docs">
+      <h2 id="tax-docs">{t('tax.docs')}</h2>
+      <p className="hint">{t('tax.docsHint', { year, last: year - 1 })}</p>
+      {shown.length > 0 && (
+        <ul className="plain-list">
+          {shown.map(({ profile, doc }) => (
+            <li key={doc.id} className="split-row">
+              <span>
+                <strong>{t(`tax.kind.${doc.kind}` as MessageKey)} {doc.year}</strong>
+                {doc.subject && <span className="muted"> · {doc.subject}</span>}
+                <br />
+                <span className="muted">{docSummary(doc)}</span>
+              </span>
+              <button type="button" className="button button-quiet button-small" aria-label={t('tax.removeDoc', { name: doc.fileName })} onClick={() => removeTaxDocument(vault, profile.id, doc.id)}>
+                {t('common.delete')}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {older > 0 && <p className="hint">{t('tax.olderDocs', { n: older })}</p>}
+      <input ref={input} type="file" accept="application/pdf,.pdf,.txt" multiple hidden onChange={add} />
+      <button type="button" className="button button-block" disabled={busy} onClick={() => input.current?.click()}>
+        {busy ? t('tax.reading') : `+ ${t('tax.addDocs')}`}
+      </button>
+      <p className="hint">{t('tax.docsKinds', { list: KINDS.map((k) => t(`tax.kind.${k}` as MessageKey)).join(', ') })}</p>
+    </section>
+  );
+}
+
+// ------------------------------------------------------------- breakdown
+
+function SourceBadge({ source }: { source: FigureSource | undefined }) {
+  if (!source) return null;
+  return <span className={`badge ${source === 'model' || source === 'estimate' ? 'badge-warn' : ''}`}>{t(`tax.src.${source}` as MessageKey)}</span>;
+}
+
+/** A line of the return; figures that come from an estimate can be typed over. */
+function FigureRow({ label, figure, okey, overridden, onSet, sign = 1 }: { label: string; figure: Figure | { amount: Cents; source?: FigureSource; note?: string }; okey?: string; overridden?: boolean; onSet?: (key: string, v: Cents | undefined) => void; sign?: 1 | -1 }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState('');
+  const commit = () => {
+    const c = parseMoney(text);
+    if (c !== null && okey && onSet) onSet(okey, Math.abs(c));
+    setEditing(false);
+  };
+  return (
+    <li>
+      <div className="split-row">
+        <span>
+          {label} <SourceBadge source={overridden ? 'estimate' : figure.source} />
+        </span>
+        <span className="row-end">
+          <Money cents={sign * figure.amount} />
+          {okey && onSet && !editing && (
+            <button type="button" className="button button-quiet button-small" aria-label={t('tax.editFigure', { name: label })} onClick={() => { setText(formatMoneyInput(figure.amount)); setEditing(true); }}>
+              ✎
+            </button>
+          )}
+        </span>
+      </div>
+      {figure.note && !overridden && <p className="hint">{figure.note}</p>}
+      {editing && (
+        <div className="tax-edit">
+          <TextField label={t('tax.typeFigure')} inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} autoFocus />
+          <button type="button" className="button button-primary button-small" onClick={commit}>{t('common.save')}</button>
+          {overridden && <button type="button" className="button button-quiet button-small" onClick={() => { onSet!(okey!, undefined); setEditing(false); }}>{t('tax.useEstimate')}</button>}
+          <button type="button" className="button button-quiet button-small" onClick={() => setEditing(false)}>{t('common.cancel')}</button>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function lineLabel(key: string): string {
+  const [kind, who] = key.split(':');
+  return t(`tax.line.${kind}` as MessageKey, { name: who ?? '' });
+}
+
+function Breakdown({ m, setOverride, save }: { m: Model; setOverride: (k: string, v: Cents | undefined) => void; save: (s: TaxSetup) => void }) {
+  const r = m.result;
+  const ov = m.setup.overrides ?? {};
+  const row = (key: string, figure: Figure, sign: 1 | -1 = 1) => <FigureRow key={key} label={lineLabel(key)} figure={figure} okey={key} overridden={ov[key] !== undefined} onSet={setOverride} sign={sign} />;
+  return (
+    <details className="card" open>
+      <summary><strong>{t('tax.breakdown')}</strong></summary>
+      <p className="hint">{t('tax.breakdownHint')}</p>
+      {m.estimate.input.persons.map((p, i) => (
+        <section key={p.name}>
+          <h3>{p.name}</h3>
           <ul className="plain-list">
-            <li className="split-row"><span>{t('tax.netIncome')}</span><Money cents={result.netIncome} /></li>
-            {result.deductions.filter((x) => !x.label.startsWith('social') && !x.label.startsWith('professional') && !x.label.startsWith('travel')).map((x) => (
-              <li key={x.label} className="split-row"><span>{label(x.label)}</span><Money cents={-x.amount} /></li>
-            ))}
-            <li className="split-row"><strong>{t('tax.taxable')}</strong><strong><Money cents={result.taxable} /></strong></li>
-            <li className="split-row"><span>{t('tax.incomeTax')}</span><Money cents={result.incomeTax} /></li>
-            <li className="split-row"><span>{t('tax.surcharge')}</span><Money cents={result.surcharge} /></li>
-            {result.credits.map((x) => (
-              <li key={x.label} className="split-row"><span>{label(x.label)}</span><Money cents={-x.amount} /></li>
-            ))}
-            <li className="split-row"><strong>{t('tax.liability')}</strong><strong><Money cents={result.liability} /></strong></li>
-            <li className="split-row"><span>{t('tax.withheldTotal')}</span><Money cents={result.withheld} /></li>
-            <li className="split-row"><span>{t('tax.marginal')}</span><span>{(result.marginalRate * 100).toFixed(1).replace('.', ',')} %</span></li>
+            {row(`gross:${p.name}`, p.gross)}
+            <FigureRow label={lineLabel(`professional:${p.name}`)} figure={{ amount: m.params.deductions.professionalLump * 100, source: 'rule' }} sign={-1} />
+            {p.travel && <FigureRow label={lineLabel(`travel:${p.name}`)} figure={p.travel} sign={-1} />}
+            {row(`social:${p.name}`, p.social, -1)}
+            {row(`lrcp:${p.name}`, p.lrcp, -1)}
+            {row(`withheld:${p.name}`, p.withheld)}
           </ul>
-          <details>
-            <summary>{t('tax.how')}</summary>
-            <ul className="plain-list">
-              {result.deductions.filter((x) => /^(social|professional|travel):/.test(x.label)).map((x) => (
-                <li key={x.label} className="split-row"><span>{label(x.label)}</span><Money cents={-x.amount} /></li>
-              ))}
-            </ul>
-            <p className="hint">{t('tax.howHint')}</p>
-          </details>
+          {m.estimate.salaries[p.name] && <Payers trace={m.estimate.salaries[p.name]!} person={m.setup.persons[i]!} onChange={(person) => save({ ...m.setup, persons: m.setup.persons.map((x, j) => (j === i ? person : x)) })} />}
         </section>
-      ) : (
-        <p className="field-error" role="alert">{t('tax.invalid')}</p>
-      )}
+      ))}
+      <h3>{t('tax.homeTitle')}</h3>
+      <ul className="plain-list">
+        {row('homeInterest', m.estimate.input.homeInterest)}
+        <li className="split-row">
+          <span>{r.homeCeiling === null ? t('tax.homeFull') : t('tax.homeCeiling', { members: m.estimate.input.householdMembers })}</span>
+          <span>{r.homeCeiling === null ? '—' : <Money cents={r.homeCeiling} />}</span>
+        </li>
+        <li className="split-row"><strong>{t('tax.homeDeducted')}</strong><strong><Money cents={r.home.amount} /></strong></li>
+      </ul>
+      <h3>{t('tax.specialTitle')}</h3>
+      <ul className="plain-list">
+        {r.special.map((l) => (
+          <li key={l.key} className="split-row"><span>{lineLabel(l.key)} <SourceBadge source={l.source} /></span><Money cents={-l.amount} /></li>
+        ))}
+      </ul>
+      <h3>{t('tax.computeTitle')}</h3>
+      <ul className="plain-list">
+        <li className="split-row"><span>{t('tax.netSalaries')}</span><Money cents={r.netSalaries} /></li>
+        <li className="split-row"><span>{t('tax.totalNet')}</span><Money cents={r.totalNetIncome} /></li>
+        <li className="split-row"><span>{t('tax.specialTotal')}</span><Money cents={-r.specialTotal} /></li>
+        <li className="split-row"><strong>{t('tax.taxableIncome')}</strong><strong><Money cents={r.taxableIncome} /></strong></li>
+        {r.allowance > 0 && <li className="split-row"><span>{t('tax.allowance')}</span><Money cents={-r.allowance} /></li>}
+        <li className="split-row"><span>{t('tax.taxable')}</span><Money cents={r.scaleIncome} /></li>
+        <li className="split-row"><span>{t('tax.incomeTax')} ({t(`tax.class.${m.regime}` as MessageKey)})</span><Money cents={r.incomeTax} /></li>
+        <li className="split-row"><span>{t('tax.surcharge')}</span><Money cents={r.employmentFund} /></li>
+        {r.credits.map((c) => <li key={c.key} className="split-row"><span>{lineLabel(c.key)}</span><Money cents={-c.amount} /></li>)}
+        <li className="split-row"><strong>{t('tax.liability')}</strong><strong><Money cents={r.totalDue} /></strong></li>
+        <li className="split-row"><span>{t('tax.withheldTotal')}</span><Money cents={-r.withheld} /></li>
+        <li className="split-row"><span>{t('tax.afterWithholding')}</span><Money cents={r.afterWithholding} /></li>
+        {row('advances', m.estimate.input.advances, -1)}
+        <li className="split-row"><strong>{r.settlement > 0 ? t('tax.toPay') : t('tax.toGetBack')}</strong><strong><Money cents={-r.settlement} /></strong></li>
+      </ul>
+    </details>
+  );
+}
 
-      <label className="check">
-        <input type="checkbox" checked={d.inForecast} onChange={(e) => set({ inForecast: e.target.checked })} />
-        {t('tax.inForecast')}
-      </label>
-      {d.inForecast && (
-        <SelectField label={t('tax.settleMonth')} value={d.settleMonth} onChange={(e) => set({ settleMonth: e.target.value })} hint={t('tax.settleHint')}>
-          {months.map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
-        </SelectField>
-      )}
+/** Who paid into the salary lines this year, and which of it is taxable pay. */
+function Payers({ trace, person, onChange }: { trace: SalaryTrace; person: TaxSetupPerson; onChange: (p: TaxSetupPerson) => void }) {
+  return (
+    <details>
+      <summary>{t('tax.payersTitle', { received: formatMoney(trace.received), planned: formatMoney(trace.planned) })}</summary>
+      <p className="hint">{t('tax.payersHint')}{trace.grossPerNet ? ` ${t('tax.grossPerNet', { ratio: trace.grossPerNet.toFixed(2).replace('.', ',') })}` : ''}</p>
+      <ul className="plain-list">
+        {trace.payers.map((p) => (
+          <li key={p.key} className="split-row">
+            <span>
+              {p.key}
+              <br />
+              <span className="muted">{t('tax.payerMeta', { n: p.rows, date: formatDate(p.last) })}</span>
+            </span>
+            <span className="row-end">
+              <Money cents={p.received} />
+              <select aria-label={t('tax.payerTreatment', { name: p.key })} value={p.treatment} onChange={(e) => onChange({ ...person, payers: { ...(person.payers ?? {}), [p.key]: e.target.value as 'taxable' | 'exempt' } })}>
+                <option value="taxable">{t('tax.taxablePay')}</option>
+                <option value="exempt">{t('tax.notPay')}</option>
+              </select>
+            </span>
+          </li>
+        ))}
+      </ul>
+      <MoneyCommit label={t('tax.exemptPay')} hint={t('tax.exemptPayHint')} value={person.exemptPay} onCommit={(v) => onChange({ ...person, ...(v ? { exemptPay: v } : { exemptPay: undefined }) })} />
+      <MoneyCommit label={t('tax.extraGross')} hint={t('tax.extraGrossHint')} value={person.extraGross} onCommit={(v) => onChange({ ...person, ...(v ? { extraGross: v } : { extraGross: undefined }) })} />
+    </details>
+  );
+}
 
-      <Overrides params={params} values={d.overrides} onChange={(overrides) => set({ overrides })} />
-      <button className="button button-primary button-block">{t('common.save')}</button>
-      <Sources params={params} />
-    </form>
+/** A money box saved when it loses focus. */
+function MoneyCommit({ label, hint, value, onCommit }: { label: string; hint?: string; value: Cents | undefined; onCommit: (v: Cents | undefined) => void }) {
+  const [text, setText] = useState(value ? formatMoneyInput(value) : '');
+  const parsed = text.trim() ? parseMoney(text) : null;
+  return (
+    <TextField
+      label={label}
+      {...(hint ? { hint } : {})}
+      inputMode="decimal"
+      value={text}
+      {...(text.trim() && parsed === null ? { error: t('field.moneyInvalid') } : {})}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={() => {
+        if (text.trim() && parsed === null) return;
+        const v = parsed === null ? undefined : Math.abs(parsed);
+        if (v !== value) onCommit(v);
+      }}
+    />
+  );
+}
+
+function NumberCommit({ label, hint, value, onCommit }: { label: string; hint?: string; value: number | undefined; onCommit: (v: number | undefined) => void }) {
+  const [text, setText] = useState(value === undefined ? '' : String(value));
+  return (
+    <TextField
+      label={label}
+      {...(hint ? { hint } : {})}
+      inputMode="numeric"
+      value={text}
+      onChange={(e) => setText(e.target.value.replace(/\D/g, ''))}
+      onBlur={() => {
+        const v = text ? Number(text) : undefined;
+        if (v !== value) onCommit(v);
+      }}
+    />
+  );
+}
+
+// ------------------------------------------------------------- deductions you may be missing
+
+function Ideas({ m, save }: { m: Model; save: (s: TaxSetup) => void }) {
+  const ideas = useMemo(() => deductionIdeas(m.estimate.input, m.params), [m]);
+  const categories = useStore('categories');
+  const transactions = useStore('transactions');
+  const allocations = useStore('allocations');
+  const children = useMemo(() => childLines({ year: m.ctx.year, members: [], categories, accounts: [], provisions: [], transactions, allocations, documents: [] }), [m.ctx.year, categories, transactions, allocations]);
+  const setPerson = (name: string, patch: Partial<TaxSetupPerson>) => save({ ...m.setup, persons: m.setup.persons.map((p) => (p.name === name ? { ...p, ...patch } : p)) });
+  const person = (name: string | undefined) => m.setup.persons.find((p) => p.name === name);
+  return (
+    <details className="card">
+      <summary><strong>{t('tax.ideas')}</strong>{ideas.length > 0 && <span className="badge">{ideas.filter((i) => i.kind !== 'donations').length}</span>}</summary>
+      <p className="hint">{t('tax.ideasHint', { rate: (m.result.marginalRate * 100).toFixed(1).replace('.', ',') })}</p>
+      <ul className="plain-list">
+        <li>
+          <NumberCommit
+            label={t('tax.children')}
+            hint={children.length ? t('tax.childrenFound', { lines: children.map((c) => c.name).join(', ') }) : t('tax.childrenHint')}
+            value={m.setup.children}
+            onCommit={(v) => save({ ...m.setup, ...(v ? { children: v } : { children: undefined }) })}
+          />
+        </li>
+        {ideas.map((i) => {
+          const key = `${i.kind}:${i.person ?? ''}`;
+          const p = person(i.person);
+          const vars = { name: i.person ?? '', max: i.max === null ? '' : formatMoney(i.max), saving: formatMoney(i.saving) };
+          return (
+            <li key={key}>
+              <p>
+                <strong>{t(`tax.idea.${i.kind}` as MessageKey, vars)}</strong>
+                <br />
+                <span className="muted">{t(`tax.idea.${i.kind}Hint` as MessageKey, vars)}</span>
+              </p>
+              {i.kind === 'pensionSavings' && p && <MoneyCommit label={t('tax.paidThisYear')} value={p.pensionSavings} onCommit={(v) => setPerson(p.name, { pensionSavings: v })} />}
+              {i.kind === 'homeSavings' && p && <MoneyCommit label={t('tax.paidThisYear')} value={p.homeSavings} onCommit={(v) => setPerson(p.name, { homeSavings: v })} />}
+              {i.kind === 'travel' && p && <NumberCommit label={t('tax.commuteKm')} value={p.commuteKm} onCommit={(v) => setPerson(p.name, { commuteKm: v })} />}
+              {i.kind === 'insurance' && <MoneyCommit label={t('tax.insurancePaid')} value={m.setup.insurance} onCommit={(v) => save({ ...m.setup, ...(v !== undefined ? { insurance: v } : { insurance: undefined }) })} />}
+              {i.kind === 'donations' && <MoneyCommit label={t('tax.donationsPaid')} value={m.setup.donations} onCommit={(v) => save({ ...m.setup, ...(v ? { donations: v } : { donations: undefined }) })} />}
+            </li>
+          );
+        })}
+      </ul>
+    </details>
+  );
+}
+
+// ------------------------------------------------------------- last year
+
+function Compare({ m, year }: { m: Model; year: number }) {
+  const lastParams = TAX_YEARS[year - 1];
+  const docs = m.ctx.documents;
+  const assessment = docs.find((d) => d.kind === 'assessment' && d.year === year - 1);
+  const rebuilt = useMemo(() => {
+    if (!lastParams || !assessment) return undefined;
+    // The same engine on last year's documents only: a check that it reads them as the administration did.
+    const setup: TaxSetup = { persons: m.setup.persons.map((p) => ({ name: p.name, salaryCategoryIds: p.salaryCategoryIds })), ...(m.setup.homeSince ? { homeSince: m.setup.homeSince } : {}) };
+    const { paramsLastYear: _last, ...ctx } = m.ctx;
+    const est = estimateReturn({ ...ctx, year: year - 1, params: lastParams, setup, documents: docs.filter((d) => d.year === year - 1 || d.kind === 'statement') });
+    return computeReturn(est.input, lastParams);
+  }, [m, year, lastParams, assessment, docs]);
+  if (!assessment || !rebuilt) return null;
+  const statement = docs.find((d) => d.kind === 'statement' && d.year === year - 1);
+  const official = statement ? (statement.values.due ?? 0) - (statement.values.refund ?? 0) : undefined;
+  const rows: [string, Cents | undefined, Cents, Cents][] = [
+    [t('tax.taxableIncome'), assessment.values.taxable, rebuilt.taxableIncome, m.result.taxableIncome],
+    [t('tax.incomeTax'), assessment.values.tax, rebuilt.incomeTax, m.result.incomeTax],
+    [t('tax.surcharge'), assessment.values.fund, rebuilt.employmentFund, m.result.employmentFund],
+    [t('tax.withheldTotal'), assessment.values.withheld, rebuilt.withheld, m.result.withheld],
+    [t('tax.settlementShort'), official, rebuilt.settlement, m.result.settlement],
+  ];
+  const ok = Math.abs((assessment.values.tax ?? 0) - rebuilt.incomeTax) < 100 && (official === undefined || Math.abs(official - rebuilt.settlement) < 100);
+  return (
+    <details className="card">
+      <summary><strong>{t('tax.compare', { last: year - 1 })}</strong> {ok ? <span className="badge">✓ {t('tax.matches')}</span> : <span className="badge badge-warn">{t('tax.differs')}</span>}</summary>
+      <p className="hint">{t('tax.compareHint', { last: year - 1 })}</p>
+      <div className="tax-compare-wrap">
+      <table className="tax-compare">
+        <thead>
+          <tr><th></th><th>{t('tax.colAssessment', { last: year - 1 })}</th><th>{t('tax.colRebuilt')}</th><th>{year}</th></tr>
+        </thead>
+        <tbody>
+          {rows.map(([label, a, b, c]) => (
+            <tr key={label}><th scope="row">{label}</th><td>{a === undefined ? '—' : <Money cents={a} />}</td><td><Money cents={b} /></td><td><Money cents={c} /></td></tr>
+          ))}
+        </tbody>
+      </table>
+      </div>
+    </details>
+  );
+}
+
+// ------------------------------------------------------------- setup
+
+function Setup({ m, year, save }: { m: Model; year: number; save: (s: TaxSetup) => void }) {
+  const vault = useVault();
+  const categories = useStore('categories');
+  const accounts = useStore('accounts');
+  const provisions = useStore('provisions');
+  const income = categories.filter((c) => c.isIncome && !c.archivedAt);
+  const loans = accounts.filter((a) => a.type === 'loan' && !a.closedAt);
+  const spending = categories.filter((c) => !c.isIncome && !c.archivedAt && (c.groupId === 'provisions' || /tax|imp[oô]t|avance|advance/i.test(c.name)));
+  const toggle = (list: readonly string[] | undefined, id: string, on: boolean) => (on ? [...new Set([...(list ?? []), id])] : (list ?? []).filter((x) => x !== id));
+  const setPerson = (i: number, patch: Partial<TaxSetupPerson>) => save({ ...m.setup, persons: m.setup.persons.map((p, j) => (j === i ? { ...p, ...patch } : p)) });
+  const taxProvisions: Provision[] = provisions.filter((p) => !/advance|avance/i.test(p.name));
+  return (
+    <details className="card">
+      <summary><strong>{t('tax.setup')}</strong></summary>
+      <SelectField label={t('tax.class')} value={m.regime} hint={t('tax.classHint')} onChange={(e) => saveTaxProfile(vault, year, { regime: e.target.value as TaxClass, setup: m.setup })}>
+        {CLASSES.map((c) => <option key={c} value={c}>{t(`tax.class.${c}` as MessageKey)}</option>)}
+      </SelectField>
+      {m.setup.persons.map((p, i) => (
+        <fieldset key={i} className="card">
+          <legend>{p.name}</legend>
+          <TextField label={t('tax.personName')} defaultValue={p.name} onBlur={(e) => e.target.value.trim() && e.target.value.trim() !== p.name && setPerson(i, { name: e.target.value.trim() })} />
+          <p className="field-label">{t('tax.salaryLines')}</p>
+          {income.map((c) => (
+            <label key={c.id} className="check">
+              <input type="checkbox" checked={p.salaryCategoryIds.includes(c.id)} onChange={(e) => setPerson(i, { salaryCategoryIds: toggle(p.salaryCategoryIds, c.id, e.target.checked) })} />
+              {c.name}
+            </label>
+          ))}
+          <NumberCommit label={t('tax.birthYear')} hint={t('tax.birthYearHint')} value={p.birthYear} onCommit={(v) => setPerson(i, { birthYear: v })} />
+          <button type="button" className="button button-quiet button-small" onClick={() => save({ ...m.setup, persons: m.setup.persons.filter((_, j) => j !== i) })}>{t('tax.removePerson')}</button>
+        </fieldset>
+      ))}
+      {m.setup.persons.length < 2 && (
+        <button type="button" className="button button-quiet" onClick={() => save({ ...m.setup, persons: [...m.setup.persons, { name: t('tax.partner'), salaryCategoryIds: [] }] })}>+ {t('tax.addPerson')}</button>
+      )}
+      <p className="field-label">{t('tax.homeLoans')}</p>
+      {loans.map((a) => (
+        <label key={a.id} className="check">
+          <input type="checkbox" checked={(m.setup.homeLoanIds ?? []).includes(a.id)} onChange={(e) => save({ ...m.setup, homeLoanIds: toggle(m.setup.homeLoanIds, a.id, e.target.checked) })} />
+          {a.name}
+          {a.interestRate ? <span className="muted"> · {String(a.interestRate).replace('.', ',')} %</span> : null}
+        </label>
+      ))}
+      <NumberCommit label={t('tax.homeSince')} hint={t('tax.homeSinceHint')} value={m.setup.homeSince ?? m.estimate.input.homeSince} onCommit={(v) => save({ ...m.setup, ...(v ? { homeSince: v } : { homeSince: undefined }) })} />
+      <p className="field-label">{t('tax.advanceLines')}</p>
+      {spending.map((c) => (
+        <label key={c.id} className="check">
+          <input type="checkbox" checked={(m.setup.advanceCategoryIds ?? []).includes(c.id)} onChange={(e) => save({ ...m.setup, advanceCategoryIds: toggle(m.setup.advanceCategoryIds, c.id, e.target.checked) })} />
+          {c.name}
+        </label>
+      ))}
+      <SelectField label={t('tax.provision')} hint={t('tax.provisionHint')} value={m.setup.provisionId ?? ''} onChange={(e) => save({ ...m.setup, ...(e.target.value ? { provisionId: e.target.value } : { provisionId: undefined }) })}>
+        <option value="">{t('tax.newProvision')}</option>
+        {taxProvisions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </SelectField>
+    </details>
   );
 }
 
 /** The parameters the projection uses; any value can be overridden for this year. */
-function Overrides({ params, values, onChange }: { params: TaxParams; values: Record<string, string>; onChange: (v: Record<string, string>) => void }) {
+function Overrides({ params, values, onChange }: { params: TaxParams; values: Record<string, number>; onChange: (v: Record<string, number>) => void }) {
   const rows: [string, string, number][] = [
     ...params.scale.map((b, i): [string, string, number] => [`scale.${i}.rate`, t('tax.p.bracket', { from: b.from.toLocaleString('fr-LU') }), b.rate]),
     ['employmentFund.rate', t('tax.p.fund'), params.employmentFund.rate],
@@ -240,7 +637,7 @@ function Overrides({ params, values, onChange }: { params: TaxParams; values: Re
     ['deductions.pensionSavings', t('tax.p.pension'), params.deductions.pensionSavings],
     ['social.ceiling', t('tax.p.ceiling'), params.social.ceiling],
   ];
-  const changed = Object.values(values).filter((v) => v.trim() !== '').length;
+  const changed = Object.keys(values).length;
   return (
     <details className="card">
       <summary>{t('tax.params')}{changed > 0 && ` · ${t('tax.overridden', { n: changed })}`}</summary>
@@ -252,8 +649,16 @@ function Overrides({ params, values, onChange }: { params: TaxParams; values: Re
           hint={t('tax.official', { v: String(value).replace('.', ',') })}
           inputMode="decimal"
           placeholder={String(value).replace('.', ',')}
-          value={values[key] ?? ''}
-          onChange={(e) => onChange({ ...values, [key]: e.target.value })}
+          defaultValue={values[key] === undefined ? '' : String(values[key]).replace('.', ',')}
+          onBlur={(e) => {
+            const v = e.target.value.trim();
+            const n = Number(v.replace(',', '.'));
+            const next = { ...values };
+            if (!v) delete next[key];
+            else if (Number.isFinite(n)) next[key] = n;
+            else return;
+            if (next[key] !== values[key]) onChange(next);
+          }}
         />
       ))}
       {changed > 0 && <button type="button" className="button button-quiet" onClick={() => onChange({})}>{t('tax.resetParams')}</button>}
@@ -267,7 +672,7 @@ function Sources({ params }: { params: TaxParams }) {
       <summary>{t('tax.sources', { year: params.year })}</summary>
       <ul className="plain-list">
         {params.sources.map((s) => (
-          <li key={s.url}>
+          <li key={s.title}>
             <a href={s.url} target="_blank" rel="noreferrer noopener">{s.title}</a>
             <span className="muted"> · {t('tax.verified', { date: formatDate(s.verifiedOn) })}</span>
           </li>

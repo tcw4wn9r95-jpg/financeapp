@@ -77,6 +77,15 @@ export interface TaxParams {
     /** Crédit d'impôt monoparental, by adjusted taxable income (class 1a with a child). */
     singleParent: CreditStep[];
   };
+  /** Household rules used by the full return (D-95). */
+  household?: {
+    homeInterest: { fullYears: number; ceilings: { fromYear: number; amount: number }[] };
+    lrcpMax: number;
+    extraProfessional: number;
+    homeSavings: { young: number; other: number; youngUntilAge: number };
+    donations: { min: number; maxShareOfIncome: number };
+    travel: { perUnit: number; freeUnits: number };
+  };
   sources: TaxSource[];
 }
 

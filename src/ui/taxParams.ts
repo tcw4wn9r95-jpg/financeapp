@@ -38,6 +38,12 @@ export function taxCashItems(profiles: readonly TaxProfile[]): CashItem[] {
   const out: CashItem[] = [];
   for (const profile of profiles) {
     if (!profile.inForecast || !profile.settleMonth) continue;
+    // The full return (D-95): a payment is in its provision; a refund comes in as cash.
+    if (profile.setup) {
+      const planned = profile.setup.planned ?? 0;
+      if (planned < 0) out.push({ date: `${profile.settleMonth}-15`, amount: -planned, label: `Tax ${profile.year}`, kind: 'tax' });
+      continue;
+    }
     const r = projectTax(profile);
     if (!r || r.balance === 0) continue;
     out.push({ date: `${profile.settleMonth}-15`, amount: r.balance, label: `Tax ${profile.year}`, kind: 'tax' });

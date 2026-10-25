@@ -328,6 +328,61 @@ export interface TaxProfile extends BaseRecord {
   inForecast?: boolean;
   /** Class 1a with a child in the household (single-parent credit). */
   singleParent?: boolean;
+  /** How the full return is estimated from the ledger and the budget (D-95). */
+  setup?: TaxSetup;
+  /** Figures read from this year's tax documents (D-95); the files are not kept. */
+  documents?: TaxDocumentRecord[];
+}
+
+/** One person on the return and where the app finds their salary (D-95). */
+export interface TaxSetupPerson {
+  name: string;
+  /** Income lines that receive this person's net salary. */
+  salaryCategoryIds: Id[];
+  /** Taxable pay not received in the accounts (stock vesting, benefits), estimated. */
+  extraGross?: Cents;
+  /** Pay received that is exempt (the legal part of a severance), estimated, net. */
+  exemptPay?: Cents;
+  /** Per payer (from the rows on the salary lines): taxable or not. Default: taxable from 1,000 € a year. */
+  payers?: Record<string, 'taxable' | 'exempt'>;
+  birthYear?: number;
+  /** Distance home–work in km (commuting deduction). */
+  commuteKm?: number;
+  pensionSavings?: Cents;
+  homeSavings?: Cents;
+}
+
+export interface TaxSetup {
+  persons: TaxSetupPerson[];
+  /** Children in the household during the year (born in it included): they raise the per-member ceilings. */
+  children?: number;
+  /** Loans for the main residence (interest deductible within a ceiling). */
+  homeLoanIds?: Id[];
+  /** Year the rental value was fixed (first occupation). */
+  homeSince?: number;
+  /** Budget lines the quarterly advances are paid from. */
+  advanceCategoryIds?: Id[];
+  insurance?: Cents;
+  donations?: Cents;
+  /** Figures typed over the estimate, by key (e.g. "gross:Alex"). */
+  overrides?: Record<string, Cents>;
+  /** The provision the expected settlement feeds. */
+  provisionId?: Id;
+  /** The settlement last put into the plan (positive: to pay; negative: refund). */
+  planned?: Cents;
+}
+
+/** A tax document as read (D-95): kind, year and figures only. */
+export interface TaxDocumentRecord {
+  id: Id;
+  fileName: string;
+  addedAt: string;
+  kind: 'salary' | 'loan' | 'return' | 'assessment' | 'advances' | 'statement';
+  year: number;
+  subject?: string;
+  values: Record<string, number>;
+  schedule?: Record<string, Cents>;
+  persons?: { name: string; values: Record<string, number> }[];
 }
 
 // ------------------------------------------------- import and reconcile
