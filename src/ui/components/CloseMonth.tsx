@@ -4,7 +4,7 @@ import { addMonths, currentMonth } from '../../domain/dates';
 import { formatWholeEuros } from '../../domain/money';
 import { monthsToClose, type CloseDecision, type CloseSourceChoice, type MonthToClose } from '../../domain/monthclose';
 import { monthName, t } from '../../i18n';
-import { closeMonth } from '../actions';
+import { closeMonth, revertCover, revertLeft } from '../actions';
 import { useBudgetInput, useSettings, useStore, useVault } from '../hooks';
 import { Dialog } from './Dialog';
 import { Money } from './Money';
@@ -187,6 +187,8 @@ export function CloseMonthDialog({ onClose, only }: { onClose: () => void; only?
  */
 export function MonthStatus({ month }: { month: string }) {
   const open = useMonthsToClose();
+  const vault = useVault();
+  const notify = useToast();
   const settings = useSettings();
   const categories = useStore('categories');
   const accounts = useStore('accounts');
@@ -225,15 +227,49 @@ export function MonthStatus({ month }: { month: string }) {
                 {c.fromAccountId ? t('cover.fromAccount', { name: accounts.find((a) => a.id === c.fromAccountId)?.name ?? '?' }) : c.fromCategoryId ? t('cover.fromLine', { name: name(c.fromCategoryId) }) : t('cover.fromReady')}
               </span>
             </span>
-            <Money cents={c.amount} />
+            <span className="row-end">
+              <Money cents={c.amount} />
+              <RevertButton
+                label={t('cover.revertOf', { name: name(c.categoryId) })}
+                run={async () => {
+                  const undo = await revertCover(vault, c.id);
+                  notify(t('cover.reverted', { name: name(c.categoryId), month: monthName(c.month) }), 'ok', { label: t('inbox.undo'), run: () => void undo() });
+                }}
+              />
+            </span>
           </li>
         ))}
         {left.map((id) => (
           <li key={id} className="split-row">
             <span>{name(id)} <span className="muted">{t('close.leftNext')}</span></span>
+            <RevertButton
+              label={t('cover.revertOf', { name: name(id) })}
+              run={async () => {
+                const undo = await revertLeft(vault, month, id);
+                notify(t('cover.reverted', { name: name(id), month: monthName(month) }), 'ok', { label: t('inbox.undo'), run: () => void undo() });
+              }}
+            />
           </li>
         ))}
       </ul>
     </details>
+  );
+}
+
+/** Revert a cover or a "left for next month" decision, after a confirmation. */
+export function RevertButton({ label, run }: { label: string; run: () => Promise<void> }) {
+  const [asking, setAsking] = useState(false);
+  if (!asking) {
+    return (
+      <button type="button" className="button button-quiet button-small" aria-label={label} onClick={() => setAsking(true)}>
+        {t('cover.revert')}
+      </button>
+    );
+  }
+  return (
+    <span className="row-end">
+      <button type="button" className="button button-small button-danger" onClick={() => void run().finally(() => setAsking(false))}>{t('cover.revertConfirm')}</button>
+      <button type="button" className="button button-quiet button-small" onClick={() => setAsking(false)}>{t('common.cancel')}</button>
+    </span>
   );
 }

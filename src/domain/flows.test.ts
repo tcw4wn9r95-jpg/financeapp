@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { accountFlows, provisionHistory, provisionsAhead, transferPairs, transferRows } from './flows';
+import { accountBalances } from './budget';
+import { accountFlows, monthCashFlow, provisionHistory, provisionsAhead, transferPairs, transferRows } from './flows';
 import { monthRange } from './dates';
 import { World } from './testkit';
 import type { Provision } from './types';
@@ -124,5 +125,26 @@ describe('checking the receiving side (D-88)', () => {
     w.allocations.push({ id: 'seed', createdAt: '', updatedAt: '', source: 'manual', transactionId: 'x', targetType: 'category', targetId: 'tax', amount: 0, confidence: 1, decidedBy: 'user', reason: '' });
     loose(w, 'bank', '2026-04-24', eur(-50), 'flex');
     expect(check(w)).toEqual([['unchecked', eur(50), undefined]]);
+  });
+});
+
+describe('a month’s net cash flow (D-103)', () => {
+  it('is the change in what the budget accounts hold, with in and out apart', () => {
+    const w = household();
+    const bank = 'bank';
+    w.category('food');
+    w.income('pay');
+    w.earn(bank, '2026-01-25', eur(3000), 'pay');
+    w.spend(bank, '2026-01-12', eur(-400), 'food');
+    const input = w.input();
+    const jan = monthCashFlow(input, '2026-01');
+    // Pay in; food out; the move to the savings account stays home.
+    expect(jan).toEqual({ in: eur(3000), out: eur(400), net: eur(2600) });
+    // February: the 200 € loan payment leaves the budget accounts; the moves between bank and savings do not count.
+    const feb = monthCashFlow(input, '2026-02');
+    expect(feb.net).toBe(eur(-200));
+    const onBudget = input.accounts.filter((a) => a.type !== 'loan');
+    const held = (day: string) => [...accountBalances(onBudget, input.transactions, day).values()].reduce((s, v) => s + v, 0);
+    expect(feb.net).toBe(held('2026-02-28') - held('2026-01-31'));
   });
 });

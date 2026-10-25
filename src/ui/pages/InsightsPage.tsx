@@ -6,7 +6,8 @@ import { analyseSpending, insightKey, SPEND_GROUPS, sumPoints, type CategoryAnal
 import { formatWholeEuros } from '../../domain/money';
 import type { MonthKey, Transaction } from '../../domain/types';
 import { monthName, t, type MessageKey } from '../../i18n';
-import { changeBudgetLine, coverOverspending, saveSettings } from '../actions';
+import { changeBudgetLine, coverOverspending, revertCover, saveSettings } from '../actions';
+import { RevertButton } from '../components/CloseMonth';
 import { MoneyField, SelectField, TextField, useMoneyInput } from '../components/fields';
 import { BarChart, type Bar } from '../components/BarChart';
 import { CategoryTransactions } from '../components/CategoryTransactions';
@@ -283,6 +284,8 @@ export function InsightList({ insights, limit, onDetail }: { insights: Insight[]
 /** Covers made from an account, with the transfers out of that account since (D-88). */
 export function CoverLog({ categoryId }: { categoryId?: string }) {
   const settings = useSettings();
+  const vault = useVault();
+  const notify = useToast();
   const accounts = useStore('accounts');
   const categories = useStore('categories');
   const transactions = useStore('transactions');
@@ -310,7 +313,16 @@ export function CoverLog({ categoryId }: { categoryId?: string }) {
             <li key={c.id}>
               <div className="split-row">
                 <strong>{categories.find((x) => x.id === c.categoryId)?.name ?? '?'}</strong>
-                <Money cents={c.amount} />
+                <span className="row-end">
+                  <Money cents={c.amount} />
+                  <RevertButton
+                    label={t('cover.revertOf', { name: categories.find((x) => x.id === c.categoryId)?.name ?? '?' })}
+                    run={async () => {
+                      const undo = await revertCover(vault, c.id);
+                      notify(t('cover.reverted', { name: categories.find((x) => x.id === c.categoryId)?.name ?? '?', month: monthName(c.month) }), 'ok', { label: t('inbox.undo'), run: () => void undo() });
+                    }}
+                  />
+                </span>
               </div>
               <span className="row-sub">
                 {t('cover.forMonth', { month: monthName(c.month) })} · {formatDate(c.at.slice(0, 10))} · {c.fromAccountId ? t('cover.fromAccount', { name: name(c.fromAccountId) }) : c.fromCategoryId ? t('cover.fromLine', { name: categories.find((x) => x.id === c.fromCategoryId)?.name ?? '?' }) : t('cover.fromReady')}

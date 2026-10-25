@@ -4,8 +4,10 @@ import { addMonths, compareMonths, currentMonth, monthDiff, monthOf } from '../d
 import { provisionSchedule, type CloseEventPlan } from '../domain/plan';
 import { uncoverOverrides, type CloseDecision, type MonthToClose } from '../domain/monthclose';
 import { DEMO_ANCHOR_MONTH, shiftSnapshotMonths } from '../domain/demo';
+import type { LoanLineSuggestion } from '../domain/loanlines';
 import type {
   Account,
+  Allocation,
   BudgetDefault,
   BudgetOverride,
   Category,
@@ -185,6 +187,54 @@ function loanBudgetOps(vault: Vault, record: Account, payment: Cents | undefined
     });
   }
   return ops;
+}
+
+/**
+ * Give a loan its own budget line from its recognised payments (D-101): the
+ * instalment is budgeted from the loan start to its last month, and the
+ * payments are filed to the line (the clean-up then lowers the loan, D-93).
+ */
+export async function makeLoanLine(vault: Vault, s: LoanLineSuggestion): Promise<void> {
+  const loan = vault.get('accounts', s.loanId);
+  if (!loan) return;
+  await saveAccount(
+    vault,
+    {
+      name: loan.name,
+      type: loan.type,
+      institution: loan.institution,
+      ibanLast4: loan.ibanLast4,
+      openingBalance: loan.openingBalance,
+      ...(loan.closedAt ? { closed: true } : {}),
+      ...(loan.owner ? { owner: loan.owner } : {}),
+      ...(loan.matchHints ? { matchHints: loan.matchHints } : {}),
+      ...(loan.openingDate ? { openingDate: loan.openingDate } : {}),
+      ...(loan.interestRate ? { interestRate: loan.interestRate } : {}),
+      monthlyPayment: s.amount,
+      ...(s.lastMonth ? { lastPaymentMonth: s.lastMonth } : {}),
+    },
+    loan,
+  );
+  const categoryId = vault.get('accounts', s.loanId)?.categoryId;
+  if (!categoryId) return;
+  const ops: WriteOp[] = [];
+  const now = new Date().toISOString();
+  const loans = new Set(vault.list('accounts').filter((a) => a.type === 'loan' && a.id !== s.loanId).map((a) => a.id));
+  for (const id of s.rows) {
+    const tx = vault.get('transactions', id);
+    if (!tx) continue;
+    for (const a of vault.list('allocations')) if (a.transactionId === id) ops.push({ type: 'delete', store: 'allocations', id: a.id });
+    // A side the app wrote on another loan for this payment: it lowered the wrong loan.
+    for (const a of vault.list('allocations')) {
+      if (a.targetType !== 'transfer' || a.targetId !== id) continue;
+      const side = vault.get('transactions', a.transactionId);
+      if (!side?.isMirror || !loans.has(side.accountId)) continue;
+      ops.push({ type: 'delete', store: 'allocations', id: a.id }, { type: 'delete', store: 'transactions', id: side.id });
+    }
+    ops.push({ type: 'put', store: 'allocations', record: { ...(stamp(systemClock, 'manual') as Allocation), transactionId: id, targetType: 'category', targetId: categoryId, amount: tx.amount, reason: 'Loan payment (D-101)' } });
+    if (tx.status !== 'reconciled') ops.push({ type: 'put', store: 'transactions', record: { ...tx, status: 'reconciled', updatedAt: now } });
+  }
+  await vault.write(ops);
 }
 
 // ----------------------------------------------------------------- members
@@ -508,6 +558,29 @@ export async function closeMonth(vault: Vault, m: MonthToClose, decisions: reado
     const now = getSettings(vault);
     const ids = new Set(covers.map((c) => c.id));
     await saveSettings(vault, { covers: (now.covers ?? []).filter((c) => !ids.has(c.id)), closedMonths: before.closedMonths ?? [] });
+  };
+}
+
+/**
+ * Revert a cover made by mistake: the line is below zero in that month again,
+ * so the month asks to be closed again. Returns the undo.
+ */
+export async function revertCover(vault: Vault, coverId: Id): Promise<() => Promise<void>> {
+  const cover = (getSettings(vault).covers ?? []).find((c) => c.id === coverId);
+  if (!cover) return async () => {};
+  await saveSettings(vault, { covers: (getSettings(vault).covers ?? []).filter((c) => c.id !== coverId) });
+  return async () => {
+    await saveSettings(vault, { covers: [...(getSettings(vault).covers ?? []), cover] });
+  };
+}
+
+/** Revert "left for the next month" on a closed month's line: it asks again. Returns the undo. */
+export async function revertLeft(vault: Vault, month: MonthKey, categoryId: Id): Promise<() => Promise<void>> {
+  const before = getSettings(vault).closedMonths ?? [];
+  const closed = before.map((x) => (x.month === month ? { ...x, left: x.left.filter((id) => id !== categoryId) } : x)).filter((x) => x.left.length > 0 || x.month !== month);
+  await saveSettings(vault, { closedMonths: closed });
+  return async () => {
+    await saveSettings(vault, { closedMonths: before });
   };
 }
 

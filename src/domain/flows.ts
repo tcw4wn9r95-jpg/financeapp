@@ -1,9 +1,9 @@
-import { computeBudget, type BudgetInput } from './budget';
+import { computeBudget, isOnBudget, type BudgetInput } from './budget';
 import { allBucketWindows, balanceAt, fillBuckets } from './buckets';
 import { addMonths, compareMonths, lastDayOfMonth, monthOf, monthRange } from './dates';
 import { amountFor, occurrences } from './plan';
 import { ownStatementCovers } from './reconcile';
-import type { Cents, EventFund, Id, MonthKey, Provision, Transaction } from './types';
+import type { Allocation, Cents, EventFund, Id, MonthKey, Provision, Transaction } from './types';
 
 /**
  * Money moved between own accounts (D-87): every transfer once, from the
@@ -243,4 +243,41 @@ export function provisionsAhead(input: BudgetInput, provisions: readonly Provisi
     }
     return { month, setAside, due: bills.reduce((s, b) => s + b.amount, 0), bills };
   });
+}
+
+export interface MonthCashFlow {
+  /** Money that came into the budget accounts (pay, refunds, money from loans or outside). */
+  in: Cents;
+  /** Money that left them (spending, loan payments, transfers to off-budget accounts), positive. */
+  out: Cents;
+  net: Cents;
+}
+
+/**
+ * A month's net cash flow on the budget accounts (D-103): every row dated in
+ * the month, leaving out transfers between two budget accounts whose both
+ * sides fall in the month (the money stayed home). The net is the change in
+ * what the budget accounts hold over the month.
+ */
+export function monthCashFlow(input: Pick<BudgetInput, 'accounts' | 'transactions' | 'allocations'>, month: MonthKey): MonthCashFlow {
+  const onBudget = new Set(input.accounts.filter(isOnBudget).map((a) => a.id));
+  const byId = new Map(input.transactions.map((t) => [t.id, t]));
+  const allocs = new Map<Id, Allocation[]>();
+  for (const a of input.allocations) allocs.set(a.transactionId, [...(allocs.get(a.transactionId) ?? []), a]);
+  let inflow = 0;
+  let outflow = 0;
+  for (const t of input.transactions) {
+    if (!onBudget.has(t.accountId) || monthOf(t.date) !== month) continue;
+    const al = allocs.get(t.id) ?? [];
+    // A transfer whose other side is a row on a budget account in the same month: the two cancel out.
+    // Across a month end, or with no other row, it moved the balances that month and counts.
+    const internal = al.length > 0 && al.every((a) => {
+      const other = a.targetType === 'transfer' ? byId.get(a.targetId) : undefined;
+      return !!other && onBudget.has(other.accountId) && monthOf(other.date) === month;
+    });
+    if (internal) continue;
+    if (t.amount > 0) inflow += t.amount;
+    else outflow -= t.amount;
+  }
+  return { in: inflow, out: outflow, net: inflow - outflow };
 }

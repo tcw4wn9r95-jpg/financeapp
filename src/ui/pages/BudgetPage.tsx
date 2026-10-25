@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import type { BudgetMonth, CategoryMonth } from '../../domain/budget';
-import { addMonths, compareMonths, currentMonth, isMonthKey, monthOf } from '../../domain/dates';
+import { addMonths, compareMonths, currentMonth, formatDate, isMonthKey, monthOf } from '../../domain/dates';
+import { transferRows } from '../../domain/flows';
 import { formatMoney, formatMoneyInput, parseMoney } from '../../domain/money';
 import { parseRecurrence } from '../../domain/plan';
 import type { Category, CategoryGroup, MonthKey, Transaction } from '../../domain/types';
@@ -15,6 +16,7 @@ import { Money } from '../components/Money';
 import { MonthNav } from '../components/MonthNav';
 import { ReadyToAssign } from '../components/ReadyToAssign';
 import { CloseMonthBanner, MonthStatus } from '../components/CloseMonth';
+import { LoanLinesBanner } from '../components/LoanLines';
 import { useToast } from '../components/Toast';
 import { useBudgetInput, useBudgetMonth, useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { groupLabel, rolloverLabel } from '../labels';
@@ -110,6 +112,7 @@ export function BudgetPage() {
           <LateAmounts month={month} />
           <ReadyToAssign month={budget} />
           <CloseMonthBanner />
+          <LoanLinesBanner />
           {expense.length === 0 && (
             <p className="notice">
               {t('budget.noCategories')} <a href={href('categories')}>{t('budget.addCategories')}</a>
@@ -245,13 +248,8 @@ function AssignForm({ category, month, m, onClose, onPlan, onOpen }: { category:
     <Dialog open title={t('budget.assignTitle', { name: category.name, month: monthName(month) })} onClose={onClose}>
       {auto && <p className="notice">{t('budget.autoFree')}</p>}
       <form onSubmit={submitOverride} noValidate>
-        <ul className="plain-list facts">
-          <li className="split-row"><span>{t('budget.defaultIs')}</span><Money cents={m.defaultAmount} /></li>
-          {m.carryIn !== 0 && <li className="split-row"><span>{t('budget.carryIn')}</span><Money cents={m.carryIn} /></li>}
-          <li className="split-row"><span>{t('budget.activity')}</span><Money cents={m.activity} /></li>
-          <li className="split-row"><span>{t('budget.available')}</span><strong><Money cents={m.available} /></strong></li>
-          <li className="split-row"><span>{t('categories.rollover')}</span><span>{rolloverLabel(category.rolloverMode)}</span></li>
-        </ul>
+        <LineStatement category={category} month={month} m={m} note={existingNote} />
+        <p className="hint">{t('budget.defaultIs')} <Money cents={m.defaultAmount} /> · {t('categories.rollover')}: {rolloverLabel(category.rolloverMode)}</p>
         <MoneyField label={t('budget.amountFor', { month: monthName(month) })} state={amount} error={cents !== null && cents < 0 ? t('budget.negativeAssign') : undefined} autoFocus />
         <TextField label={t('budget.note')} value={note} onChange={(e) => setNote(e.target.value)} hint={t('budget.noteHint')} />
         <div className="stack">
@@ -280,6 +278,71 @@ function AssignForm({ category, month, m, onClose, onPlan, onOpen }: { category:
       </form>
       <CategoryTransactions categoryId={category.id} month={month} onOpen={onOpen} />
     </Dialog>
+  );
+}
+
+/**
+ * A line's money in one month, entry by entry (D-102): carried in, set aside
+ * (the budget, which is not a bank transaction, so it is written out here),
+ * covers given or lent, spent, and what is left. For a provision, what moved
+ * into the provisions account that month too.
+ */
+function LineStatement({ category, month, m, note }: { category: Category; month: MonthKey; m: CategoryMonth; note: string }) {
+  const settings = useSettings();
+  const categories = useStore('categories');
+  const accounts = useStore('accounts');
+  const transactions = useStore('transactions');
+  const allocations = useStore('allocations');
+  const overrides = useStore('budgetOverrides');
+  const holds = category.groupId === 'provisions' || category.groupId === 'events';
+  const name = (id: string) => categories.find((c) => c.id === id)?.name ?? '?';
+  const accountName = (id: string) => accounts.find((a) => a.id === id)?.name ?? '?';
+  const covers = (settings.covers ?? []).filter((c) => c.month === month && (c.categoryId === category.id || c.fromCategoryId === category.id));
+  const override = overrides.find((o) => o.id === m.overrideId);
+  const pot = settings.provisionsAccountId;
+  const moved = useMemo(() => {
+    if (!holds || !pot) return null;
+    const rows = transferRows({ accounts, transactions, allocations }, month, month).filter((r) => r.month === month);
+    return { in: rows.filter((r) => r.to === pot).reduce((s, r) => s + r.amount, 0), out: rows.filter((r) => r.from === pot).reduce((s, r) => s + r.amount, 0) };
+  }, [holds, pot, accounts, transactions, allocations, month]);
+  return (
+    <section aria-label={t('budget.statement', { month: monthName(month) })}>
+      <h3 className="plan-h">{t('budget.statement', { month: monthName(month) })}</h3>
+      <ul className="plain-list facts">
+        {m.carryIn !== 0 && <li className="split-row"><span>{t('budget.carryIn')}</span><Money cents={m.carryIn} plusSign /></li>}
+        <li className="split-row">
+          <span>
+            {holds ? t('budget.setAsideIn', { month: monthName(month) }) : t('budget.budgetedIn', { month: monthName(month) })}
+            <br />
+            <span className="muted">
+              {override ? t('budget.changedOn', { date: formatDate(override.updatedAt.slice(0, 10)) }) + (note ? ` · ${note}` : '') : t('budget.usualAmount')}
+              {' · '}
+              {t('budget.fromUnplanned')}
+            </span>
+          </span>
+          <Money cents={m.assigned} plusSign />
+        </li>
+        {covers.map((c) => (
+          <li key={c.id} className="split-row">
+            <span>
+              {c.categoryId === category.id ? t('budget.coverIn') : t('budget.coverOut', { name: name(c.categoryId) })}
+              <br />
+              <span className="muted">
+                {formatDate(c.at.slice(0, 10))} · {c.categoryId === category.id ? (c.fromCategoryId ? t('cover.fromLine', { name: name(c.fromCategoryId) }) : c.fromAccountId ? t('cover.fromAccount', { name: accountName(c.fromAccountId) }) : t('cover.fromReady')) : ''}
+              </span>
+            </span>
+            <Money cents={c.categoryId === category.id ? c.amount : -c.amount} plusSign />
+          </li>
+        ))}
+        <li className="split-row"><span>{category.isIncome ? t('budget.received') : t('budget.spentIn')}</span><Money cents={m.activity} plusSign /></li>
+        <li className="split-row"><strong>{t('budget.leftAtEnd')}</strong><strong><Money cents={m.available} /></strong></li>
+      </ul>
+      {moved && (
+        <p className="hint">
+          {t('budget.potMoves', { account: accountName(pot!), in: formatMoney(moved.in), out: formatMoney(moved.out) })}
+        </p>
+      )}
+    </section>
   );
 }
 

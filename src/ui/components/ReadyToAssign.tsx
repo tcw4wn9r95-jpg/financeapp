@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { explainReady, type BudgetMonth } from '../../domain/budget';
 import { addMonths } from '../../domain/dates';
+import { monthCashFlow } from '../../domain/flows';
 import { formatWholeEuros } from '../../domain/money';
 import { monthName, t } from '../../i18n';
 import { useBudgetInput } from '../hooks';
@@ -18,6 +19,7 @@ export function ReadyToAssign({ month, compact = false }: { month: BudgetMonth; 
   const [explain, setExplain] = useState(false);
   const input = useBudgetInput();
   const x = useMemo(() => explainReady(input, month.month), [input, month.month]);
+  const flow = useMemo(() => monthCashFlow(input, month.month), [input, month.month]);
   const rta = month.readyToAssign;
   const state = rta === 0 ? 'zero' : rta > 0 ? 'pos' : 'neg';
   const cash = x?.cash ?? 0;
@@ -57,6 +59,15 @@ export function ReadyToAssign({ month, compact = false }: { month: BudgetMonth; 
             </ul>
           </div>
         )}
+        <div className="cash-flow">
+          <div className="split-row">
+            <span>{t('money.netFlow', { month: monthName(month.month) })}</span>
+            <strong><Money cents={flow.net} plusSign /></strong>
+          </div>
+          <p className="cash-flow-sub">
+            {t('money.flowInOut', { in: formatWholeEuros(flow.in), out: formatWholeEuros(flow.out) })}
+          </p>
+        </div>
         <p className="rta-why">
           <button
             type="button"
