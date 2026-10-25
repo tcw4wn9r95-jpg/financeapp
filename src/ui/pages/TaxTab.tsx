@@ -362,8 +362,8 @@ function Breakdown({ m, setOverride, save }: { m: Model; setOverride: (k: string
         <section key={p.name}>
           <h3>{p.name}</h3>
           <ul className="plain-list">
+            {m.estimate.salaries[p.name]?.rows && ov[`gross:${p.name}`] === undefined && <IncomeParts trace={m.estimate.salaries[p.name]!} person={m.setup.persons.find((x) => x.name === p.name)} />}
             {row(`gross:${p.name}`, p.gross)}
-            {m.estimate.salaries[p.name]?.rows && ov[`gross:${p.name}`] === undefined && <IncomeParts trace={m.estimate.salaries[p.name]!} />}
             <FigureRow label={lineLabel(`professional:${p.name}`)} figure={{ amount: m.params.deductions.professionalLump * 100, source: 'rule' }} sign={-1} />
             {p.travel && <FigureRow label={lineLabel(`travel:${p.name}`)} figure={p.travel} sign={-1} />}
             {row(`social:${p.name}`, p.social, -1)}
@@ -426,7 +426,7 @@ function payerLabel(key: string): string {
 }
 
 /** Where a person's gross pay for the year comes from: the payslip, each payer since, and the months planned. */
-function IncomeParts({ trace }: { trace: SalaryTrace }) {
+function IncomeParts({ trace, person }: { trace: SalaryTrace; person: TaxSetupPerson | undefined }) {
   const groups = new Map<string, { label: string; months: string[]; net: Cents; gross: Cents }>();
   for (const r of trace.rows ?? []) {
     const key = r.source === 'payslip' ? 'payslip' : r.source === 'planned' ? 'planned' : `paid:${r.payer}`;
@@ -442,33 +442,39 @@ function IncomeParts({ trace }: { trace: SalaryTrace }) {
     const b = monthName(sorted.at(-1)!);
     return a === b ? a : `${a.split(' ')[0]} – ${b}`;
   };
+  // Tax-free pay is counted in the year's total first, then taken off: the payslip's, and any typed under Exempt pay.
+  const slipExempt = trace.payslip?.exempt ?? 0;
+  const typedExempt = person?.exemptPay ?? 0;
+  const extra = person?.extraGross ?? 0;
+  const parts: { key: string; label: string; detail?: string; amount: Cents }[] = [...groups.entries()].map(([key, g]) => ({
+    key,
+    label: key === 'payslip' ? t('tax.partPayslip', { issuer: g.label, month: monthName(g.months[0]!) }) : g.label,
+    detail: key === 'payslip' ? t('tax.partFromPayslip', { issuer: g.label }) : t('tax.partNet', { span: span(g.months), net: formatMoney(g.net) }),
+    amount: g.gross + (key === 'payslip' ? slipExempt : 0),
+  }));
+  if (typedExempt) parts.push({ key: 'typedExempt', label: t('tax.partTypedExempt'), amount: typedExempt });
+  if (extra) parts.push({ key: 'extra', label: t('tax.extraGross'), amount: extra });
+  const total = parts.reduce((s, x) => s + x.amount, 0);
+  const exempt = slipExempt + typedExempt;
   return (
-    <li>
-      <ul className="plain-list tax-parts">
-        {[...groups.entries()].flatMap(([key, g]) => {
-          const exempt = key === 'payslip' ? (trace.payslip?.exempt ?? 0) : 0;
-          const rows = [
-            <li key={key} className="split-row">
-              <span>
-                {key === 'payslip' ? t('tax.partPayslip', { issuer: g.label, month: monthName(g.months[0]!) }) : g.label}
+    <>
+      {parts.map((x) => (
+        <li key={x.key} className="split-row tax-part">
+          <span>
+            {x.label}
+            {x.detail && (
+              <>
                 <br />
-                <span className="muted">{key === 'payslip' ? t('tax.partFromPayslip', { issuer: g.label }) : t('tax.partNet', { span: span(g.months), net: formatMoney(g.net) })}</span>
-              </span>
-              <Money cents={g.gross + exempt} />
-            </li>,
-          ];
-          if (exempt) {
-            rows.push(
-              <li key={`${key}:exempt`} className="split-row">
-                <span>{t('tax.partExempt')}</span>
-                <Money cents={-exempt} />
-              </li>,
-            );
-          }
-          return rows;
-        })}
-      </ul>
-    </li>
+                <span className="muted">{x.detail}</span>
+              </>
+            )}
+          </span>
+          <Money cents={x.amount} />
+        </li>
+      ))}
+      <li className="split-row"><strong>{t('tax.totalPay')}</strong><strong><Money cents={total} /></strong></li>
+      {exempt > 0 && <li className="split-row"><span>{t('tax.partExempt')}</span><Money cents={-exempt} /></li>}
+    </>
   );
 }
 
