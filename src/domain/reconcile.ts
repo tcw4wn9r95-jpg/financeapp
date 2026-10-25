@@ -388,6 +388,82 @@ function closeDays(a: string, b: string): number {
   return Math.abs(Date.parse(a) - Date.parse(b)) / 86_400_000;
 }
 
+/**
+ * A payment filed straight to a loan's budget line (by hand, a rule or the
+ * history) must also lower what the loan owes (D-93): the loan side is added,
+ * as when the payment is filed as a transfer to the loan (D-48). A matching
+ * row of the loan's own statement is used when there is one; otherwise the
+ * app writes the loan side, for the capital only when the loan has an
+ * interest rate. Payments before the loan is tracked are already in its
+ * opening balance.
+ */
+export function linkLoanPayments(view: LedgerView, clock: Clock): { changes: Changes; linked: number } {
+  const ch = emptyChanges();
+  const loans = new Map(view.accounts.filter((a) => a.type === 'loan' && a.categoryId).map((a) => [a.categoryId!, a]));
+  if (loans.size === 0) return { changes: ch, linked: 0 };
+  const byId = new Map(view.transactions.map((t) => [t.id, t]));
+  const loanIds = new Set(view.accounts.filter((a) => a.type === 'loan').map((a) => a.id));
+  const REASON = 'Loan repayment (D-93)';
+  // Payments that already have their loan side, and loan rows already linked to something.
+  // Sides written here earlier are recomputed (the interest rate may have changed).
+  const sided = new Set<Id>();
+  const taken = new Set<Id>();
+  const ours = new Map<Id, { side: Transaction; allocation: Allocation }>();
+  for (const a of view.allocations) {
+    if (a.targetType !== 'transfer') continue;
+    taken.add(a.transactionId);
+    const side = byId.get(a.transactionId);
+    if (!side || !loanIds.has(side.accountId)) continue;
+    if (a.reason === REASON && side.isMirror) ours.set(a.targetId, { side, allocation: a });
+    else sided.add(a.targetId);
+  }
+  let linked = 0;
+  // Oldest first, so each payment's interest is worked out on what was owed then.
+  const payments = view.allocations
+    .filter((a) => a.targetType === 'category' && a.amount < 0 && loans.has(a.targetId) && byId.has(a.transactionId))
+    .sort((x, y) => byId.get(x.transactionId)!.date.localeCompare(byId.get(y.transactionId)!.date));
+  const added: Transaction[] = [];
+  const amountNow = new Map<Id, Cents>();
+  /** What the loan owes just before a date (positive). */
+  const owedBefore = (loan: Account, date: string) => {
+    let b = loan.openingBalance;
+    for (const x of [...view.transactions, ...added]) if (x.accountId === loan.id && x.date < date) b += amountNow.get(x.id) ?? x.amount;
+    return Math.max(0, -b);
+  };
+  for (const a of payments) {
+    const loan = loans.get(a.targetId)!;
+    const t = byId.get(a.transactionId)!;
+    if (t.accountId === loan.id || sided.has(t.id)) continue;
+    if (loan.openingDate && t.date < loan.openingDate) continue;
+    // Only the capital part lowers the loan: the month's interest is a cost, not repayment.
+    const interest = loan.interestRate ? Math.round((owedBefore(loan, t.date) * loan.interestRate) / 1200) : 0;
+    const capital = Math.max(0, -a.amount - interest);
+    const mine = ours.get(t.id);
+    if (mine) {
+      if (mine.side.amount === capital) continue;
+      amountNow.set(mine.side.id, capital);
+      ch.putTransactions.push({ ...mine.side, amount: capital, updatedAt: clock.now() });
+      ch.putAllocations.push({ ...mine.allocation, amount: capital, updatedAt: clock.now() });
+      linked++;
+      continue;
+    }
+    if (capital === 0) continue;
+    // The loan's own statement shows the capital (or the whole payment) as one row.
+    const own = view.transactions.find(
+      (x) => x.accountId === loan.id && !x.isMirror && (x.amount === capital || x.amount === -a.amount) && !taken.has(x.id) && Math.abs(Date.parse(x.date) - Date.parse(t.date)) <= 7 * 86_400_000,
+    );
+    const from = view.accounts.find((x) => x.id === t.accountId);
+    const side = own ? { ...own, status: 'reconciled' as const, updatedAt: clock.now() } : { ...makeMirror(clock, t, loan, from, 'manual'), amount: capital };
+    if (own) taken.add(own.id);
+    else added.push(side);
+    sided.add(t.id);
+    ch.putTransactions.push(side);
+    ch.putAllocations.push({ ...stamp(clock, 'manual'), transactionId: side.id, targetType: 'transfer', targetId: t.id, amount: side.amount, confidence: 1, decidedBy: a.decidedBy, reason: REASON });
+    linked++;
+  }
+  return { changes: ch, linked };
+}
+
 /** Classify one transaction. Replaces any earlier classification. */
 export function classify(t: Transaction, how: Classification, view: LedgerView, clock: Clock, decidedBy: Allocation['decidedBy'] = 'user', reason = 'Reviewed in the inbox'): Changes {
   if (t.status === 'locked') throw new ReconcileError('locked');

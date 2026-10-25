@@ -9,6 +9,7 @@ import { DateField, MoneyField, SelectField, TextField, useDateInput, useMoneyIn
 import { Money } from '../components/Money';
 import { formatMoney } from '../../domain/money';
 import { useToast } from '../components/Toast';
+import { cleanUpLedger } from '../importActions';
 import { useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { accountTypeLabel } from '../labels';
 import { href } from '../router';
@@ -43,6 +44,7 @@ export function AccountsPage() {
             {a.ibanLast4 && ` · ••${a.ibanLast4}`}
             {a.openingDate && ` · ${t('accounts.countsFrom', { date: formatDate(a.openingDate) })}`}
             {a.type === 'loan' && a.monthlyPayment ? ` · ${t('accounts.paymentShort', { amount: formatMoney(a.monthlyPayment) })}` : ''}
+            {a.type === 'loan' && a.interestRate ? ` · ${t('accounts.rateShort', { rate: String(a.interestRate).replace('.', ',') })}` : ''}
             {!isOnBudget(a) && <span className="tag">{t('accounts.offBudget')}</span>}
           </p>
           {a.type === 'card' && a.settlementAccountId && (
@@ -105,6 +107,8 @@ export function AccountDialog({ existing, initial, onClose }: {
   const sinceIso = since.trim() ? (sinceInput.iso ?? undefined) : undefined;
   const payment = useMoneyInput(existing?.monthlyPayment);
   const [lastPayment, setLastPayment] = useState(existing?.lastPaymentMonth ?? '');
+  const [rate, setRate] = useState(existing?.interestRate !== undefined ? String(existing.interestRate).replace('.', ',') : '');
+  const rateValue = rate.trim() === '' ? undefined : Number(rate.replace(',', '.'));
   const [closed, setClosed] = useState(!!existing?.closedAt);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -118,6 +122,7 @@ export function AccountDialog({ existing, initial, onClose }: {
     if (last4 && !/^[A-Za-z0-9]{4}$/.test(last4)) return setError(t('accounts.last4Invalid'));
     if (since.trim() && !sinceIso) return setError(t('field.dateInvalid'));
     if (type === 'loan' && !payment.valid) return setError(t('field.moneyInvalid'));
+    if (type === 'loan' && rateValue !== undefined && (!Number.isFinite(rateValue) || rateValue < 0 || rateValue > 30)) return setError(t('accounts.rateInvalid'));
     setBusy(true);
     try {
       const id = await saveAccount(vault, {
@@ -127,8 +132,11 @@ export function AccountDialog({ existing, initial, onClose }: {
         ...(sinceIso ? { openingDate: sinceIso } : {}),
         ...(type === 'loan' && payment.cents ? { monthlyPayment: Math.abs(payment.cents) } : {}),
         ...(type === 'loan' && lastPayment ? { lastPaymentMonth: lastPayment } : {}),
+        ...(type === 'loan' && rateValue ? { interestRate: rateValue } : {}),
         matchHints: hints.split(',').map((h) => h.trim()).filter(Boolean),
       }, existing);
+      // A loan's rate decides how much each payment lowers it (D-93): recompute now.
+      if (type === 'loan') await cleanUpLedger(vault);
       notify(t('accounts.saved', { name: name.trim() }));
       onClose(id);
     } catch {
@@ -173,6 +181,7 @@ export function AccountDialog({ existing, initial, onClose }: {
         {type === 'loan' && (
           <>
             <MoneyField label={t('accounts.payment')} state={payment} hint={t('accounts.paymentHint')} />
+            <TextField label={t('accounts.rate')} value={rate} onChange={(e) => setRate(e.target.value.replace(/[^0-9.,]/g, ''))} hint={t('accounts.rateHint')} inputMode="decimal" autoComplete="off" />
             {!!payment.cents && (
               <SelectField label={t('accounts.lastPayment')} value={lastPayment} onChange={(e) => setLastPayment(e.target.value)} hint={t('accounts.lastPaymentHint')}>
                 <option value="">{t('accounts.lastPaymentUnknown')}</option>

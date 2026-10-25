@@ -47,6 +47,12 @@ export interface Account extends BaseRecord {
    * (`categoryId`) with this amount, and repayments are filed there (D-48).
    */
   monthlyPayment?: Cents;
+  /**
+   * Loans: yearly interest rate in percent (D-93). Of each payment only the
+   * part beyond the month's interest lowers what is owed; the whole payment
+   * still counts in the loan's budget line.
+   */
+  interestRate?: number;
   /** Loans: month of the last instalment; the budgeted amount stops after it. */
   lastPaymentMonth?: MonthKey;
   /** Loans: the budget category the repayments count in. */

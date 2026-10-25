@@ -78,12 +78,14 @@ export type AccountDraft = Pick<Account, 'name' | 'type' | 'institution' | 'iban
   /** Loans: monthly instalment and last instalment month (D-48). */
   monthlyPayment?: Cents;
   lastPaymentMonth?: MonthKey;
+  /** Loans: yearly interest rate in percent (D-93). */
+  interestRate?: number;
 };
 
 /** Create or update an account; returns its id. */
 export async function saveAccount(vault: Vault, draft: AccountDraft, existing?: Account): Promise<Id> {
   const base = existing ?? (stamp(systemClock, 'manual') as Account);
-  const { closed, settlementAccountId, owner, matchHints, openingDate, monthlyPayment, lastPaymentMonth, ...fields } = draft;
+  const { closed, settlementAccountId, owner, matchHints, openingDate, monthlyPayment, lastPaymentMonth, interestRate, ...fields } = draft;
   const record: Account = {
     ...base,
     ...fields,
@@ -99,6 +101,8 @@ export async function saveAccount(vault: Vault, draft: AccountDraft, existing?: 
   else delete record.owner;
   if (openingDate) record.openingDate = openingDate;
   else delete record.openingDate;
+  if (draft.type === 'loan' && interestRate) record.interestRate = interestRate;
+  else delete record.interestRate;
   const hints = (matchHints ?? []).map((h) => h.trim()).filter((h) => h.length >= 3);
   if (hints.length) record.matchHints = hints;
   else delete record.matchHints;

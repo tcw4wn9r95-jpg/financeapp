@@ -1,7 +1,7 @@
 import { BUILT_IN_MAPPINGS, type MappingSpec } from '../domain/import/csv';
 import type { FileContent } from '../domain/import/detect';
 import type { LedgerChanges } from '../domain/import/plan';
-import { cleanUpMirrors, fileSuggestedTransfers, pairOpenTransfers, repairWeakPairs, settleGroupedTransfers, type Changes } from '../domain/reconcile';
+import { cleanUpMirrors, fileSuggestedTransfers, linkLoanPayments, pairOpenTransfers, repairWeakPairs, settleGroupedTransfers, type Changes } from '../domain/reconcile';
 import { stamp, systemClock } from '../domain/ledger';
 import type { BankMapping, Id } from '../domain/types';
 import { pdfToLines, type PdfJsLike } from '../infra/pdf';
@@ -126,8 +126,10 @@ export interface CleanUpResult {
   paired: number;
   /** Rows sent back to the inbox because their automatic pairing looked wrong. */
   reopened: number;
+  /** Loan payments filed to the loan's line that now also lower the loan (D-93). */
+  loans: number;
 }
-let cleaning: Promise<CleanUpResult> = Promise.resolve({ mirrors: 0, paired: 0, reopened: 0 });
+let cleaning: Promise<CleanUpResult> = Promise.resolve({ mirrors: 0, paired: 0, reopened: 0, loans: 0 });
 /**
  * Remove mirrors that duplicate what an account's own statement already shows
  * (D-68), then pair the transfers between own accounts still in the inbox
@@ -147,9 +149,12 @@ export function cleanUpLedger(vault: Vault): Promise<CleanUpResult> {
       if (g.settled > 0) await applyChanges(vault, g.changes);
       const f = fileSuggestedTransfers(ledgerView(vault), systemClock);
       if (f.filed > 0) await applyChanges(vault, f.changes);
-      return { mirrors: m.fixed, paired: p.paired + g.settled + f.filed, reopened: w.reopened };
+      // A payment filed to a loan's line also lowers the loan (D-93).
+      const l = linkLoanPayments(ledgerView(vault), systemClock);
+      if (l.linked > 0) await applyChanges(vault, l.changes);
+      return { mirrors: m.fixed, paired: p.paired + g.settled + f.filed, reopened: w.reopened, loans: l.linked };
     },
-    () => ({ mirrors: 0, paired: 0, reopened: 0 }),
+    () => ({ mirrors: 0, paired: 0, reopened: 0, loans: 0 }),
   );
   return cleaning;
 }
@@ -160,6 +165,7 @@ export function cleanUpMessage(r: CleanUpResult): string | undefined {
     r.paired === 1 ? t('ledger.transferPairedOne') : r.paired > 1 ? t('ledger.transfersPaired', { n: r.paired }) : '',
     r.reopened > 0 ? t('ledger.pairsUndone', { n: r.reopened }) : '',
     r.mirrors === 1 ? t('ledger.mirrorCleanedOne') : r.mirrors > 1 ? t('ledger.mirrorsCleaned', { n: r.mirrors }) : '',
+    r.loans > 0 ? t('ledger.loansLinked', { n: r.loans }) : '',
   ].filter(Boolean);
   return parts.length ? parts.join(' ') : undefined;
 }
