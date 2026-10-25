@@ -418,7 +418,45 @@ function Payers({ trace, person, onChange }: { trace: SalaryTrace; person: TaxSe
   return (
     <details>
       <summary>{t('tax.payersTitle', { received: formatMoney(trace.received), planned: formatMoney(trace.planned) })}</summary>
-      <p className="hint">{t('tax.payersHint')}{trace.grossPerNet ? ` ${t('tax.grossPerNet', { ratio: trace.grossPerNet.toFixed(2).replace('.', ',') })}` : ''}</p>
+      <p className="hint">{t('tax.payersHint')}{trace.grossPerNet && !trace.model ? ` ${t('tax.grossPerNet', { ratio: trace.grossPerNet.toFixed(2).replace('.', ',') })}` : ''}</p>
+      {trace.model && (
+        <p className="hint">
+          {t('tax.modelLine', {
+            month: monthName(`${trace.model.year}-${String(trace.model.month).padStart(2, '0')}`),
+            issuer: trace.model.issuer ?? '',
+            health: pct(trace.model.health),
+            pension: pct(trace.model.pension),
+            dependence: pct(trace.model.dependence),
+            tax: pct(trace.model.taxRate),
+            allowances: formatMoney(trace.model.allowances),
+            after: formatMoney(trace.model.after),
+          })}
+        </p>
+      )}
+      {trace.rows && trace.rows.length > 0 && (
+        <div className="tax-compare-wrap">
+          <table className="tax-compare">
+            <thead>
+              <tr><th>{t('tax.colMonth')}</th><th>{t('tax.colNet')}</th><th>{t('tax.colGross')}</th><th>{t('tax.colSocial')}</th><th>{t('tax.colTax')}</th></tr>
+            </thead>
+            <tbody>
+              {trace.rows.map((r, i) => (
+                <tr key={i} className={r.source === 'planned' ? 'muted' : undefined}>
+                  <th scope="row">
+                    {r.source === 'payslip' ? t('tax.rowPayslip', { month: monthName(r.date.slice(0, 7)) }) : monthName(r.date.slice(0, 7))}
+                    <br />
+                    <span className="muted">{r.source === 'planned' ? t('tax.rowPlanned') : r.payer}</span>
+                  </th>
+                  <td><Money cents={r.net} /></td>
+                  <td><Money cents={r.gross} /></td>
+                  <td><Money cents={r.social + r.dependence} /></td>
+                  <td><Money cents={r.withheld} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <ul className="plain-list">
         {trace.payers.map((p) => (
           <li key={p.key} className="split-row">
@@ -442,6 +480,8 @@ function Payers({ trace, person, onChange }: { trace: SalaryTrace; person: TaxSe
     </details>
   );
 }
+
+const pct = (x: number) => (x * 100).toFixed(2).replace('.', ',');
 
 /** A money box saved when it loses focus. */
 function MoneyCommit({ label, hint, value, onCommit }: { label: string; hint?: string; value: Cents | undefined; onCommit: (v: Cents | undefined) => void }) {

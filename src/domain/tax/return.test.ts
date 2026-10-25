@@ -183,8 +183,9 @@ describe('estimateReturn', () => {
     expect(trace.exempt).toBe(e(80));
     const p = est.input.persons[0]!;
     expect(p.gross.source).toBe('ledger');
-    expect(p.gross.amount).toBe(Math.round(e(36_000) * (60_000 / 44_300)));
-    expect(p.withheld.amount).toBe(Math.round((p.gross.amount * 8_000) / 60_000));
+    // Each payment on its own, rounded to the cent.
+    expect(Math.abs(p.gross.amount - e(36_000) * (60_000 / 44_300))).toBeLessThan(12);
+    expect(Math.abs(p.withheld.amount - (p.gross.amount * 8_000) / 60_000)).toBeLessThan(12);
     expect(est.input.advances.amount).toBe(e(2_000));
   });
   it('uses this year’s certificate as it is once added, and typed figures win', () => {
@@ -193,19 +194,40 @@ describe('estimateReturn', () => {
     expect(est.input.persons[0]!.gross).toMatchObject({ amount: e(50_000), source: 'document' });
     expect(est.input.persons[0]!.withheld.amount).toBe(e(7_500));
   });
-  it('takes January to the payslip’s month from the payslip, and grosses up only what came after', () => {
+  it('turns each payment back into gross pay with one regular payslip as the model', () => {
+    // A month: 4,000 gross; health 3.05 %, pension 8.5 %; 100 € allowance on the tax card; tax 15 % of taxable; 50 € pension after the net.
+    const health = 122;
+    const pension = 340;
+    const dependence = 50;
+    const taxable = 4_000 - health - pension - 100;
+    const tax = Math.round(taxable * 0.15 * 100) / 100;
+    const net = 4_000 - health - pension - dependence - tax;
+    const slip: TaxDocumentRecord = { id: 'm', fileName: 'm.pdf', addedAt: '2026-03-01', kind: 'payslip', year: 2025, subject: 'Alex', issuer: 'ACME SARL', values: { month: 12, gross: e(48_000), social: 0, dependence: 0, withheld: 0, lrcp: e(600), lrcpMonth: e(50), mGross: e(4_000), mHealth: e(health), mPension: e(pension), mDependence: e(dependence), mTaxable: e(taxable), mTax: e(tax), mNet: e(net), mPayable: e(net - 50) } };
+    const est = estimateReturn({ ...ctx, documents: [slip] });
+    const rows = est.salaries.Alex!.rows!;
+    // A payment of exactly the payslip's net payable gives back its gross and tax.
+    const model = est.salaries.Alex!.model!;
+    expect(model.taxRate).toBeCloseTo(0.15, 6);
+    expect(model.allowances).toBe(e(100));
+    expect(rows.every((r) => r.source !== 'payslip')).toBe(true);
+    const r = rows.find((x) => x.date === '2026-01-25')!;
+    // 3,000 € net from ACME, with the 100 € allowance and 50 € after the net, once that month.
+    const k = 1 - (health + pension + dependence) / 4_000 - 0.15 * (1 - (health + pension) / 4_000);
+    expect(r.gross).toBe(Math.round(e(3_000 + 50 - 0.15 * 100) / k));
+    expect(est.input.persons[0]!.lrcp.amount).toBe(e(50 * 12));
+    expect(est.missing).not.toContain('certificate:Alex');
+  });
+  it('takes January to the latest payslip’s month from its year-to-date figures, when one was added', () => {
     const slip: TaxDocumentRecord = { id: 'p5', fileName: 'p.pdf', addedAt: '2026-06-01', kind: 'payslip', year: 2026, subject: 'Alex Example', issuer: 'ACME SARL', values: { month: 5, gross: e(20_000), social: e(2_300), dependence: e(250), withheld: e(2_450), lrcp: 0 } };
     const est = estimateReturn({ ...ctx, documents: [lastYear, slip] });
     const trace = est.salaries.Alex!;
     expect(trace.payslip).toMatchObject({ month: 5, received: e(15_000) });
-    // Net 15,000 after May (5 received + 2 planned × 3,000 … less the 5 in the payslip) at the payslip's ratio.
-    const ratio = 20_000 / (20_000 - 2_300 - 250 - 2_450);
-    const rest = Math.round(e(21_000) * ratio);
+    // After May: 5 received + 2 planned × 3,000 net, grossed up with last year's certificate.
+    const rest = e(21_000) * (60_000 / 44_300);
     const p = est.input.persons[0]!;
-    expect(p.gross.amount).toBe(e(20_000) + rest);
-    expect(p.withheld.amount).toBe(e(2_450) + Math.round((rest * 2_450) / 20_000));
+    expect(Math.abs(p.gross.amount - (e(20_000) + rest))).toBeLessThan(10);
     expect(trace.withheldSoFar! + trace.withheldAhead!).toBe(p.withheld.amount);
-    expect(trace.withheldSoFar).toBe(e(2_450) + Math.round(e(15_000) * ratio * (2_450 / 20_000)));
+    expect(Math.abs(trace.withheldAhead! - e(6_000) * (60_000 / 44_300) * (8_000 / 60_000))).toBeLessThan(5);
   });
   it('takes tax-free pay on the payslip (AE less the complementary pension) out of gross', () => {
     // Final pay: 10,000 € tax free; AE 10,300 € = 10,000 exempt + 6 × 50 € pension.
@@ -213,8 +235,14 @@ describe('estimateReturn', () => {
     const june: TaxDocumentRecord = { id: 'p6', fileName: 'p6.pdf', addedAt: '2026-07-01', kind: 'payslip', year: 2026, subject: 'Alex', values: { month: 6, gross: e(34_000), social: e(2_760), dependence: e(300), withheld: e(2_900), lrcp: 0, ae: e(10_300) } };
     const est = estimateReturn({ ...ctx, documents: [lastYear, may, june] });
     expect(est.salaries.Alex!.payslip).toMatchObject({ month: 6, gross: e(24_000), exempt: e(10_000) });
-    // 300 € to June, then 50 € for each of the four months the employer paid after it.
-    expect(est.input.persons[0]!.lrcp.amount).toBe(e(500));
+    // 300 € to June (6 × 50 € seen on the May payslip); no regular payslip to model the months after.
+    expect(est.input.persons[0]!.lrcp.amount).toBe(e(300));
+  });
+  it('points out a payment over twice the usual pay, which may be partly tax free', () => {
+    expect(estimateReturn(ctx).missing).not.toContain('unusual:Alex');
+    const bonusTx = { ...txs[0]!, id: 'big', date: '2026-06-30', amount: e(20_000) };
+    const bonusAl = { ...allocs[0]!, id: 'a-big', transactionId: 'big', amount: e(20_000) };
+    expect(estimateReturn({ ...ctx, transactions: [...txs, bonusTx], allocations: [...allocs, bonusAl] }).missing).toContain('unusual:Alex');
   });
   it('asks for last year’s certificate when there is none', () => {
     expect(estimateReturn({ ...ctx, documents: [] }).missing).toContain('certificate:Alex');

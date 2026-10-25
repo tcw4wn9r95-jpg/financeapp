@@ -128,6 +128,28 @@ function payslip(lines: readonly string[]): ParsedTaxDocument | null {
   const taxable = labelled(/\bTaxable/);
   const ac = labelled(/\bAC/) ?? 0;
   const ae = taxable !== null ? gross - health - pension - taxable - ac : null;
+  // The month itself, as a model of how a regular pay turns gross into net (D-98).
+  const head = lines.slice(0, at);
+  const last = (re: RegExp) => {
+    const l = head.find((x) => re.test(x));
+    return l ? lastAmount(l) : null;
+  };
+  const sumOf = (re: RegExp) => head.filter((x) => re.test(x)).reduce((s, x) => s + Math.abs(lastAmount(x) ?? 0), 0);
+  const m = {
+    gross: last(/^\s*Total gross|^\s*Brut total|^\s*Total brut/i),
+    health: sumOf(/^\s*(?:Illness|Maladie)[^:]*contributions?|^\s*Cotis\w*\.? maladie/i),
+    pension: sumOf(/^\s*Pension contributions?|^\s*Cotis\w*\.? pension/i),
+    dependence: sumOf(/^\s*Dependence contributions?|^\s*Cotis\w*\.? dépendance/i),
+    taxable: last(/^\s*Taxable salary|^\s*Salaire imposable/i),
+    tax: last(/^\s*(?:Tax|Impôt)\b(?![-\s]*card)/i),
+    net: last(/^\s*Net\s+[\d-]/i),
+    payable: last(/^\s*Net payable|^\s*Net à payer/i),
+  };
+  const regular = has(head, /Monthly gross|Salaire (?:de base|mensuel)/i);
+  const model: Record<string, number> =
+    regular && m.gross && m.taxable !== null && m.tax !== null && m.net !== null && m.payable !== null
+      ? { mGross: m.gross, mHealth: m.health, mPension: m.pension, mDependence: m.dependence, mTaxable: m.taxable, mTax: Math.abs(m.tax), mNet: m.net, mPayable: m.payable }
+      : {};
   const header = /^\s*(?:Payslip|Extra card|Fiche de (?:salaire|paie))\s*/i;
   const employer = lines.find((l) => header.test(l))?.replace(header, '').trim();
   const name = lines.map((l) => l.match(/\b(?:Mr|Mrs|Ms|Mme|Mlle|M\.)\s+([A-Za-zÀ-ÿ' -]+?)\s*$/)).find(Boolean)?.[1];
@@ -136,7 +158,7 @@ function payslip(lines: readonly string[]): ParsedTaxDocument | null {
     year: Number(year),
     ...(name ? { subject: name.replace(/\s+/g, ' ').trim() } : {}),
     ...(employer ? { issuer: employer } : {}),
-    values: { month: Number(month), gross, social: health + pension, dependence, withheld: tax, lrcp, ...(lrcpMonth !== undefined ? { lrcpMonth } : {}), ...(ae !== null && ae >= 0 ? { ae } : {}) },
+    values: { month: Number(month), gross, social: health + pension, dependence, withheld: tax, lrcp, ...(lrcpMonth !== undefined ? { lrcpMonth } : {}), ...(ae !== null && ae >= 0 ? { ae } : {}), ...model },
   };
 }
 
