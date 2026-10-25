@@ -363,6 +363,7 @@ function Breakdown({ m, setOverride, save }: { m: Model; setOverride: (k: string
           <h3>{p.name}</h3>
           <ul className="plain-list">
             {row(`gross:${p.name}`, p.gross)}
+            {m.estimate.salaries[p.name]?.rows && ov[`gross:${p.name}`] === undefined && <IncomeParts trace={m.estimate.salaries[p.name]!} />}
             <FigureRow label={lineLabel(`professional:${p.name}`)} figure={{ amount: m.params.deductions.professionalLump * 100, source: 'rule' }} sign={-1} />
             {p.travel && <FigureRow label={lineLabel(`travel:${p.name}`)} figure={p.travel} sign={-1} />}
             {row(`social:${p.name}`, p.social, -1)}
@@ -414,6 +415,50 @@ function Breakdown({ m, setOverride, save }: { m: Model; setOverride: (k: string
         <li className="split-row"><strong>{r.settlement > 0 ? t('tax.toPay') : t('tax.toGetBack')}</strong><strong><Money cents={-r.settlement} /></strong></li>
       </ul>
     </details>
+  );
+}
+
+/** Public payers named for what they pay. */
+function payerLabel(key: string): string {
+  if (/TR[ÉE]SORERIE DE L.[ÉE]TAT|\bADEM\b/i.test(key)) return t('tax.payerAdem', { name: key });
+  if (/\bCNS\b|CAISSE NATIONALE DE SANT/i.test(key)) return t('tax.payerCns', { name: key });
+  return key;
+}
+
+/** Where a person's gross pay for the year comes from: the payslip, each payer since, and the months planned. */
+function IncomeParts({ trace }: { trace: SalaryTrace }) {
+  const groups = new Map<string, { label: string; months: string[]; net: Cents; gross: Cents }>();
+  for (const r of trace.rows ?? []) {
+    const key = r.source === 'payslip' ? 'payslip' : r.source === 'planned' ? 'planned' : `paid:${r.payer}`;
+    const g = groups.get(key) ?? { label: r.source === 'planned' ? t('tax.partPlanned') : payerLabel(r.payer), months: [], net: 0, gross: 0 };
+    g.months.push(r.date.slice(0, 7));
+    g.net += r.net;
+    g.gross += r.gross;
+    groups.set(key, g);
+  }
+  const span = (months: string[]) => {
+    const sorted = [...months].sort();
+    const a = monthName(sorted[0]!);
+    const b = monthName(sorted.at(-1)!);
+    return a === b ? a : `${a.split(' ')[0]} – ${b}`;
+  };
+  return (
+    <li>
+      <ul className="plain-list tax-parts">
+        {[...groups.entries()].map(([key, g]) => (
+          <li key={key} className="split-row">
+            <span>
+              {key === 'payslip' ? t('tax.partPayslip', { issuer: g.label, month: monthName(g.months[0]!) }) : g.label}
+              <br />
+              <span className="muted">
+                {key === 'payslip' ? (trace.payslip?.exempt ? t('tax.partExempt', { amount: formatMoney(trace.payslip.exempt) }) : t('tax.partFromPayslip')) : t('tax.partNet', { span: span(g.months), net: formatMoney(g.net) })}
+              </span>
+            </span>
+            <Money cents={g.gross} />
+          </li>
+        ))}
+      </ul>
+    </li>
   );
 }
 

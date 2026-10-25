@@ -2768,3 +2768,10 @@ input[type='date']::-webkit-date-and-time-value {
   text-align: left;
   font-weight: 500;
 }
+
+.tax-parts {
+  margin: -0.25rem 0 0.25rem 0.75rem;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--border);
+  font-size: 0.875rem;
+}
