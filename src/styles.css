@@ -2957,3 +2957,47 @@ input[type='date']::-webkit-date-and-time-value {
 .oneoff-total {
   margin: 0.75rem 0 0.25rem;
 }
+
+/* Net cash flow on the money card (D-109) */
+.rta-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.rta-head .rta-label {
+  margin: 0;
+}
+.rta-basis {
+  margin: 0;
+}
+.rta-basis .chip {
+  font-size: 0.78rem;
+  padding: 0.2rem 0.6rem;
+}
+.flow-list {
+  margin: 0.25rem 0 0.5rem;
+  font-variant-numeric: tabular-nums;
+}
+.flow-list > li {
+  padding: 0.3rem 0;
+}
+.flow-total {
+  border-top: 1px solid var(--border-strong);
+  margin-top: 0.15rem;
+}
+.rta-unplanned {
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.rta-unplanned summary {
+  cursor: pointer;
+}
+.rta-unplanned .money {
+  color: inherit;
+  font-weight: 600;
+}

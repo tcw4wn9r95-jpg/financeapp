@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { forecast, heldAhead } from './forecast';
+import { forecast, heldAhead, monthCashPlan } from './forecast';
 import { World } from './testkit';
 import type { Provision } from './types';
 
@@ -55,5 +55,22 @@ describe('forecast (D-105)', () => {
     expect(held.get('2026-08')).toBe(eur(800));
     expect(held.get('2026-12')).toBe(eur(200));
     expect(held.get('2027-01')).toBe(eur(300));
+  });
+});
+
+describe('a month’s net cash flow, planned or at the recent pace (D-109)', () => {
+  const w = household();
+  const input = w.input();
+  const assigned = () => undefined;
+  it('adds income and takes off fixed, variable and provisions as planned', () => {
+    const p = monthCashPlan(input, '2026-07', 'plan', assigned, () => 0);
+    expect(p).toMatchObject({ income: eur(4_000), fixed: eur(1_500), variable: eur(300), provisions: eur(100), net: eur(4_000 - 1_500 - 300 - 100) });
+  });
+  it('at the recent pace, takes what the lines really cost before; months ahead use the last real months', () => {
+    const p = monthCashPlan(input, '2026-07', 'recent', assigned, () => 0);
+    expect(p.variable).toBe(eur(600));
+    expect(p.fixed).toBe(eur(1_500));
+    const ahead = monthCashPlan(input, '2027-03', 'recent', assigned, () => 0, '2026-07');
+    expect(ahead.variable).toBe(eur(600));
   });
 });

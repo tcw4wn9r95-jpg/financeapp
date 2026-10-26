@@ -120,6 +120,71 @@ function history(input: BudgetInput, today: IsoDate): History {
   return h;
 }
 
+/**
+ * What each spending line really cost over the six complete months before
+ * `month` (D-105): fixed lines at their average, the others at their typical
+ * month; only lines with at least three months of spending.
+ */
+export function recentPace(input: BudgetInput, month: MonthKey): Map<Id, Cents> {
+  const h = history(input, lastDayOfMonth(addMonths(month, -1)));
+  const pace = new Map<Id, Cents>();
+  for (const c of input.categories) {
+    if (c.isIncome) continue;
+    const spent = Array.from({ length: SPEND_LOOKBACK }, (_, k) => -(h.actual.get(c.id)?.get(addMonths(month, -(k + 1))) ?? 0));
+    if (spent.filter((x) => x !== 0).length < 3) continue;
+    pace.set(c.id, Math.max(0, c.groupId === 'fixed' ? Math.round(spent.reduce((x, y) => x + y, 0) / spent.length) : median(spent)!));
+  }
+  return pace;
+}
+
+export interface MonthCashPlan {
+  month: MonthKey;
+  basis: 'plan' | 'recent';
+  income: Cents;
+  fixed: Cents;
+  variable: Cents;
+  /** Set aside for provisions that month. */
+  provisions: Cents;
+  /** Trips and one-off expenses budgeted that month. */
+  oneOffs: Cents;
+  invested: Cents;
+  net: Cents;
+  /** Lines counted at their recent pace (the rest at their plan). */
+  paced: number;
+}
+
+/**
+ * A month's net cash flow as planned (D-109): income, then fixed, variable,
+ * provisions (what they set aside), trips and one-offs, investing. On the
+ * plan, each line's budget for the month; at the recent pace, fixed and
+ * variable lines at what they really cost in the six months before (income,
+ * provisions and trips stay at their plan). Income without a plan counts what
+ * came in that month.
+ */
+export function monthCashPlan(input: BudgetInput, month: MonthKey, basis: 'plan' | 'recent', assigned: (id: Id) => Cents | undefined, received: (id: Id) => Cents, current: MonthKey = month): MonthCashPlan {
+  // A month ahead takes the pace of the last six months that happened.
+  const pace = basis === 'recent' ? recentPace(input, month < current ? month : current) : new Map<Id, Cents>();
+  const out: MonthCashPlan = { month, basis, income: 0, fixed: 0, variable: 0, provisions: 0, oneOffs: 0, invested: 0, net: 0, paced: 0 };
+  for (const c of input.categories) {
+    if (c.archivedAt) continue;
+    if (c.isIncome) {
+      out.income += planned(input, c.id, month) ?? received(c.id);
+      continue;
+    }
+    const plan = assigned(c.id) ?? planned(input, c.id, month) ?? 0;
+    const paced = (c.groupId === 'fixed' || c.groupId === 'variable') && pace.has(c.id) ? pace.get(c.id)! : undefined;
+    if (paced !== undefined) out.paced++;
+    const amount = Math.max(0, paced ?? plan);
+    if (c.groupId === 'fixed') out.fixed += amount;
+    else if (c.groupId === 'variable') out.variable += amount;
+    else if (c.groupId === 'provisions') out.provisions += amount;
+    else if (c.groupId === 'events') out.oneOffs += amount;
+    else if (c.groupId === 'investments') out.invested += amount;
+  }
+  out.net = out.income - out.fixed - out.variable - out.provisions - out.oneOffs - out.invested;
+  return out;
+}
+
 function planned(input: BudgetInput, categoryId: Id, month: MonthKey): Cents | undefined {
   const o = overrideFor(input.overrides, categoryId, month);
   if (o) return o.amount;
@@ -165,14 +230,7 @@ export function scheduleItems(f: ForecastInput): CashItem[] {
   };
   const provisionCats = new Set(f.provisions.map((p) => p.categoryId));
   const eventCats = new Set(f.events.map((e) => e.categoryId));
-  // What each spending line really cost over the last six complete months (D-105).
-  const pace = new Map<Id, Cents>();
-  for (const c of budget.categories) {
-    if (c.isIncome) continue;
-    const spent = Array.from({ length: SPEND_LOOKBACK }, (_, k) => -(h.actual.get(c.id)?.get(addMonths(thisMonth, -(k + 1))) ?? 0));
-    if (spent.filter((x) => x !== 0).length < 3) continue;
-    pace.set(c.id, Math.max(0, c.groupId === 'fixed' ? Math.round(spent.reduce((x, y) => x + y, 0) / spent.length) : median(spent)!));
-  }
+  const pace = recentPace(budget, thisMonth);
 
   for (let i = 0; i < f.months; i++) {
     const month = addMonths(thisMonth, i);
