@@ -20,6 +20,7 @@ import { groupLabel } from '../labels';
 import { href, useRoute } from '../router';
 import { periodMonths, ProvisionsTab, TransfersTab } from './InsightsFlows';
 import { TransactionDialog } from './TransactionsPage';
+import { PlanVsActualCard } from '../components/PlanVsActual';
 
 type Period = '6' | '12' | 'year';
 const AHEAD = 6;
@@ -570,6 +571,8 @@ export function InsightsPage() {
             {end && <Tile label={t('insights.yearEnd', { year: end.month.slice(0, 4) })} value={euros(end.projected)} sub={t('insights.vsBudget', { amount: euros(end.budget) })} />}
           </div>
           {n === 0 && <p className="notice">{t('insights.fewMonths')}</p>}
+
+          <PlanVsActualCard points={totals} cats={cats} income={a.income} />
 
           <section className="card" aria-labelledby="ins-h">
             <h2 id="ins-h" className="card-title">{t('insights.title')}</h2>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyseSpending, sumPoints } from './insights';
+import { analyseSpending, monthVariance, sumPoints, type CategoryAnalysis } from './insights';
 import { World } from './testkit';
 import type { Provision } from './types';
 
@@ -163,5 +163,18 @@ describe('provisions plan the bill in the month it goes out (D-94)', () => {
     const a = analyseSpending({ ...w.input(), covers: [{ categoryId: 'food', month: '2026-03', amount: eur(150) }] }, { today: '2026-07-20', from: '2026-01', ahead: 0 });
     const march = a.categories.find((c) => c.category.id === 'food')!.points.find((p) => p.month === '2026-03')!;
     expect([march.budgeted, march.covered, march.spent]).toEqual([eur(400), eur(150), eur(550)]);
+  });
+});
+
+describe('why a month differs from its plan (D-107)', () => {
+  const line = (id: string, budgeted: number, spent: number) =>
+    ({ category: { id, name: id }, group: 'variable', points: [{ month: '2026-09', budgeted, spent, kind: 'past' }] }) as unknown as CategoryAnalysis;
+  it('lists the lines that explain the gap, largest first, and puts the small ones together', () => {
+    const v = monthVariance([line('travel', 10_000, 436_700), line('energy', 19_000, 1_700), line('food', 40_000, 40_500), line('rent', 1_000_000, 1_000_000)], '2026-09');
+    expect(v.planned).toBe(1_069_000);
+    expect(v.spent).toBe(1_478_900);
+    expect(v.lines.map((l) => [l.categoryId, l.diff])).toEqual([['travel', 426_700], ['energy', -17_300]]);
+    // Food (+5 €) and rent (0) are under 1 % of the plan: together.
+    expect(v.rest).toEqual({ count: 2, planned: 1_040_000, spent: 1_040_500, diff: 500 });
   });
 });

@@ -24,6 +24,8 @@
   --focus: #2563eb;
   --series-1: #2a78d6;
   --series-2: #eb6834;
+  --chart-over: #c2281f;
+  --chart-under: #047857;
   --radius: 16px;
   --radius-sm: 10px;
   --tabbar: 64px;
@@ -57,6 +59,8 @@
     --focus: #60a5fa;
     --series-1: #3987e5;
     --series-2: #d95926;
+    --chart-over: #f0564d;
+    --chart-under: #22a06b;
     color-scheme: dark;
   }
 }
@@ -2783,4 +2787,147 @@ input[type='date']::-webkit-date-and-time-value {
   margin: 0.15rem 0 0;
   color: var(--muted);
   font-size: 0.8125rem;
+}
+
+/* Spending against the plan (D-107): plan outlined, spent solid, over the plan marked */
+.pva-plan {
+  fill: var(--surface);
+  stroke: var(--text);
+  stroke-width: 1.5;
+}
+.pva-spent,
+.pva-spent-cap {
+  fill: var(--series-1);
+}
+.pva-over {
+  fill: var(--chart-over);
+}
+.pva-current .pva-spent,
+.pva-current .pva-over {
+  opacity: 0.55;
+}
+.pva-current .pva-plan {
+  stroke-dasharray: 3 2;
+}
+.pva-key {
+  display: inline-block;
+  width: 12px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+.pva-key-plan {
+  border: 1.5px solid var(--text);
+  background: var(--surface);
+}
+.pva-key-spent {
+  background: var(--series-1);
+}
+.pva-key-over {
+  background: var(--chart-over);
+}
+.pva-card {
+  cursor: default;
+}
+.pva-lead {
+  margin: 0 0 0.25rem;
+  font-weight: 550;
+}
+.pva-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0.25rem 0 0.75rem;
+}
+.pva-sentence {
+  margin: 0 0 0.75rem;
+}
+.pva-totals {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+.pva-total-row,
+.pva-diff {
+  display: grid;
+  grid-template-columns: minmax(6rem, 38%) 1fr auto;
+  align-items: center;
+  gap: 0.6rem;
+}
+.pva-total-name {
+  font-weight: 550;
+}
+.pva-total-value,
+.pva-diff-value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.pva-track {
+  display: flex;
+  height: 14px;
+}
+.pva-bar {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+.pva-track .pva-bar:last-child,
+.pva-half .pva-bar {
+  border-radius: 0 4px 4px 0;
+}
+.pva-bar-plan {
+  box-sizing: border-box;
+  border: 1.5px solid var(--text);
+  background: var(--surface);
+  border-radius: 0 4px 4px 0;
+}
+.pva-bar-spent {
+  background: var(--series-1);
+}
+.pva-bar-over {
+  background: var(--chart-over);
+}
+.pva-track .pva-bar-spent + .pva-bar-over {
+  margin-left: 2px;
+}
+.pva-bar-under {
+  background: var(--chart-under);
+  margin-left: auto;
+  border-radius: 4px 0 0 4px !important;
+}
+.pva-diffs > li {
+  padding: 0.5rem 0;
+}
+.pva-diff-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pva-diff-name .muted {
+  font-size: 0.78rem;
+}
+.pva-diverge {
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr;
+  align-items: center;
+  height: 14px;
+}
+.pva-half {
+  display: flex;
+  height: 14px;
+}
+.pva-zero {
+  height: 22px;
+  background: var(--border-strong);
+}
+.pva-worse,
+.pva-better {
+  color: var(--text);
+}
+.pva-left {
+  margin-top: 1rem;
 }

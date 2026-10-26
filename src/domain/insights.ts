@@ -448,3 +448,51 @@ const MONTHLY: readonly InsightKind[] = ['pace', 'carried', 'yearEnd', 'onTrack'
 export function insightKey(i: Pick<Insight, 'kind' | 'categoryId'>, current: MonthKey): string {
   return `${i.kind}:${i.categoryId ?? ''}${MONTHLY.includes(i.kind) ? `:${current}` : ''}`;
 }
+
+export interface VarianceLine {
+  categoryId: Id;
+  name: string;
+  group: SpendGroup;
+  planned: Cents;
+  spent: Cents;
+  /** Spent − planned: positive over the plan, negative under it. */
+  diff: Cents;
+}
+
+export interface MonthVariance {
+  month: MonthKey;
+  kind: PointKind;
+  planned: Cents;
+  spent: Cents;
+  /** The lines that explain most of the gap, largest first. */
+  lines: VarianceLine[];
+  /** All the other lines together, when there are any. */
+  rest: { count: number; planned: Cents; spent: Cents; diff: Cents } | null;
+}
+
+/**
+ * Why a month's spending differs from its plan (D-107): the plan, then each
+ * line's difference, largest first, then what was spent; the small ones are
+ * put together. The plan is the budget (for provisions and trips, the bill in
+ * the month it is paid, D-94); covers are not part of it.
+ */
+export function monthVariance(cats: readonly CategoryAnalysis[], month: MonthKey, top = 6): MonthVariance {
+  const all: VarianceLine[] = [];
+  let kind: PointKind = 'past';
+  for (const c of cats) {
+    const p = c.points.find((x) => x.month === month);
+    if (!p) continue;
+    kind = p.kind;
+    if (p.budgeted === 0 && p.spent === 0) continue;
+    all.push({ categoryId: c.category.id, name: c.category.name, group: c.group, planned: p.budgeted, spent: p.spent, diff: p.spent - p.budgeted });
+  }
+  const planned = all.reduce((s, l) => s + l.planned, 0);
+  const spent = all.reduce((s, l) => s + l.spent, 0);
+  const sorted = [...all].sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+  // A line explains the gap when it moves it by at least 1% of the plan (and 10 €).
+  const floor = Math.max(1000, Math.round(planned * 0.01));
+  const lines = sorted.filter((l) => Math.abs(l.diff) >= floor).slice(0, top);
+  const others = sorted.filter((l) => !lines.includes(l));
+  const rest = others.length ? { count: others.length, planned: others.reduce((s, l) => s + l.planned, 0), spent: others.reduce((s, l) => s + l.spent, 0), diff: others.reduce((s, l) => s + l.diff, 0) } : null;
+  return { month, kind, planned, spent, lines, rest };
+}
