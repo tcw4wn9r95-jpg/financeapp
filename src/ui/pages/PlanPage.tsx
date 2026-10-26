@@ -52,18 +52,18 @@ export function ForecastView({ result, compare, compareName }: { result: Forecas
   const [account, setAccount] = useState('');
   const buffer = settings.minimumBuffer ?? 0;
   const months = result.months;
-  const values = account ? (result.byAccount.get(account) ?? []).map((m) => m.end) : months.map((m) => m.min);
+  const values = account ? (result.byAccount.get(account) ?? []).map((m) => m.end) : months.map((m) => m.free);
   const series: Series[] = [{ name: t('plan.baseline'), color: 'var(--series-1)', values }];
   if (compare) {
     series.push({
       name: compareName ?? t('plan.scenario'),
       color: 'var(--series-2)',
-      values: account ? (compare.byAccount.get(account) ?? []).map((m) => m.end) : compare.months.map((m) => m.min),
+      values: account ? (compare.byAccount.get(account) ?? []).map((m) => m.end) : compare.months.map((m) => m.free),
     });
   }
   const watched = compare ?? result;
   const below = !account && buffer > 0 ? firstBelow(watched.months, buffer) : undefined;
-  const lowest = months.reduce((lo, m) => (m.min < lo.min ? m : lo), months[0]!);
+  const lowest = months.reduce((lo, m) => (m.free < lo.free ? m : lo), months[0]!);
   const onBudget = accounts.filter((a) => a.type !== 'loan' && !a.closedAt);
 
   return (
@@ -72,7 +72,7 @@ export function ForecastView({ result, compare, compareName }: { result: Forecas
         <span className="muted">{t('plan.inMonths', { n: months.length, month: monthName(months.at(-1)!.month) })}</span>
         <span className="big-number"><Money cents={months.at(-1)!.end} /></span>
         <span className="muted">
-          {t('plan.lowest')} <Money cents={lowest.min} /> · {formatDate(lowest.minDate)}
+          {t('plan.lowest')} <Money cents={lowest.free} /> · {monthName(lowest.month)}
         </span>
       </div>
       {buffer > 0 && !account && (
@@ -105,12 +105,15 @@ export function ForecastView({ result, compare, compareName }: { result: Forecas
       </div>
       <details className="card">
         <summary>{t('plan.table')}</summary>
+        <p className="hint">{t('plan.tableHint')}</p>
+        <div className="tax-compare-wrap">
         <table className="table">
           <thead>
             <tr>
               <th scope="col">{t('plan.month')}</th>
               <th scope="col" className="num">{t('plan.in')}</th>
               <th scope="col" className="num">{t('plan.out')}</th>
+              <th scope="col" className="num">{t('plan.fromProvisions')}</th>
               <th scope="col" className="num">{t('plan.end')}</th>
             </tr>
           </thead>
@@ -119,12 +122,14 @@ export function ForecastView({ result, compare, compareName }: { result: Forecas
               <tr key={m.month}>
                 <th scope="row">{monthShort(m.month)}</th>
                 <td className="num"><Money cents={m.inflow} /></td>
-                <td className="num"><Money cents={-m.outflow} /></td>
+                <td className="num"><Money cents={-m.spent} /></td>
+                <td className="num">{m.fromProvisions ? <Money cents={m.fromProvisions} /> : '–'}</td>
                 <td className="num"><Money cents={m.end} /></td>
               </tr>
             ))}
           </tbody>
         </table>
+        </div>
       </details>
     </>
   );

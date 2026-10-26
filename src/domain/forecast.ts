@@ -56,6 +56,14 @@ export interface ForecastMonth {
   outflow: Cents;
   /** Money the provisions and trips should hold at the month end, for bills still to come (D-105). */
   held: Cents;
+  /** Set aside for provisions and trips that month (D-106). */
+  setAside: Cents;
+  /** Bills and trips paid that month out of what was set aside for them (D-106). */
+  fromProvisions: Cents;
+  /** Out as the budget sees it (D-106): spending plus what was set aside; a provisioned bill is not spent again. */
+  spent: Cents;
+  /** Lowest balance of the month less what provisions and trips hold: money not set aside (D-106). */
+  free: Cents;
   /** Spending lines (fixed and variable) that month: the base of an emergency reserve. */
   living: Cents;
 }
@@ -297,7 +305,7 @@ export function forecast(f: ForecastInput): ForecastResult {
     const m = monthOf(d);
     if (!cur || cur.month !== m) {
       if (cur) months.push(cur);
-      cur = { month: m, end: bal, min: bal, minDate: d, inflow: 0, outflow: 0, held: 0, living: 0 };
+      cur = { month: m, end: bal, min: bal, minDate: d, inflow: 0, outflow: 0, held: 0, living: 0, setAside: 0, fromProvisions: 0, spent: 0, free: 0 };
     }
     cur.end = bal;
     if (bal < cur.min) {
@@ -314,8 +322,15 @@ export function forecast(f: ForecastInput): ForecastResult {
     else m.outflow -= it.amount;
     if (it.kind === 'fixed' || it.kind === 'variable') m.living -= it.amount;
   }
-  const held = heldAhead(f, months.map((m) => m.month));
-  for (const m of months) m.held = held.get(m.month) ?? 0;
+  const flow = provisionFlow(f, months.map((m) => m.month));
+  for (const m of months) {
+    const x = flow.get(m.month)!;
+    m.held = x.held;
+    m.setAside = x.setAside;
+    m.fromProvisions = x.paid;
+    m.spent = m.outflow - x.paid + x.setAside;
+    m.free = m.min - x.held;
+  }
 
   // -------------------------------------------------------- per account
   // Each category keeps being paid from the accounts it was paid from in the
@@ -377,11 +392,23 @@ export function forecast(f: ForecastInput): ForecastResult {
  * and trips paid on the way (never below zero). Money in the accounts beyond
  * this, and beyond an emergency reserve, is free.
  */
-/** `months`: consecutive, from this month. */
+/** What the provisions and trips should hold at each month end; `months`: consecutive, from this month. */
 export function heldAhead(f: ForecastInput, months: readonly MonthKey[]): Map<MonthKey, Cents> {
+  return new Map([...provisionFlow(f, months)].map(([m, x]) => [m, x.held]));
+}
+
+/**
+ * Provisions and trips month by month (D-105, D-106): what they hold at the
+ * month end (what they hold today, plus the planned set-aside, less the bills
+ * and trips paid on the way, never below zero), what was set aside that
+ * month, and how much of the bills paid came out of what was set aside (the
+ * rest, when they were short, is new spending). `months`: consecutive, from
+ * this month.
+ */
+export function provisionFlow(f: ForecastInput, months: readonly MonthKey[]): Map<MonthKey, { held: Cents; setAside: Cents; paid: Cents }> {
   const thisMonth = monthOf(f.today);
   const now = computeBudget(f.budget, thisMonth).at(-1);
-  const out = new Map<MonthKey, Cents>(months.map((m) => [m, 0]));
+  const out = new Map(months.map((m) => [m, { held: 0, setAside: 0, paid: 0 }]));
   const lines: { categoryId: Id; bills: { date: IsoDate; amount: Cents }[] }[] = [
     ...f.provisions.map((p) => ({ categoryId: p.categoryId, bills: occurrences(p, `${thisMonth}-01`, lastDayOfMonth(months.at(-1) ?? thisMonth)).filter((d) => d > f.today).map((d) => ({ date: d, amount: p.amount })) })),
     ...f.events.filter((e) => e.status !== 'closed').map((e) => ({ categoryId: e.categoryId, bills: e.targetDate > f.today ? [{ date: e.targetDate, amount: e.targetAmount }] : [] })),
@@ -389,16 +416,25 @@ export function heldAhead(f: ForecastInput, months: readonly MonthKey[]): Map<Mo
   for (const l of lines) {
     let have = Math.max(0, now?.categories.get(l.categoryId)?.available ?? 0);
     for (const m of months) {
-      if (m !== thisMonth) have += planned(f.budget, l.categoryId, m) ?? 0;
-      for (const b of l.bills) if (monthOf(b.date) === m) have -= b.amount;
-      have = Math.max(0, have);
-      out.set(m, (out.get(m) ?? 0) + have);
+      const x = out.get(m)!;
+      if (m !== thisMonth) {
+        const add = planned(f.budget, l.categoryId, m) ?? 0;
+        have += add;
+        x.setAside += add;
+      }
+      for (const b of l.bills) {
+        if (monthOf(b.date) !== m) continue;
+        const fromHeld = Math.min(have, b.amount);
+        x.paid += fromHeld;
+        have -= fromHeld;
+      }
+      x.held += have;
     }
   }
   return out;
 }
 
-/** First month whose lowest balance falls below the buffer. */
+/** First month whose money not set aside falls below the buffer (D-106). */
 export function firstBelow(months: readonly ForecastMonth[], buffer: Cents): ForecastMonth | undefined {
-  return months.find((m) => m.min < buffer);
+  return months.find((m) => m.free < buffer);
 }
