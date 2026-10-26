@@ -26,7 +26,7 @@ export function buildBudgetInput(s: BudgetSources): BudgetInput {
   const base: BudgetInput = {
     startMonth: s.settings.budgetStartMonth,
     // Trips are budgeted by their dated parts (D-54).
-    plans: eventPlans(s.events),
+    plans: eventPlans(s.events, s.allocations, s.transactions),
     categories: s.categories,
     defaults: s.defaults,
     overrides: s.overrides,

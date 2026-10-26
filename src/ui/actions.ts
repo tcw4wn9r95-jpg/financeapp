@@ -789,7 +789,7 @@ export async function deleteProvision(vault: Vault, p: Provision): Promise<void>
 
 export async function saveEvent(
   vault: Vault,
-  draft: Pick<EventFund, 'name' | 'targetAmount' | 'targetDate' | 'subBudgets'> & { startDate: IsoDate },
+  draft: Pick<EventFund, 'name' | 'targetAmount' | 'targetDate' | 'subBudgets'> & { startDate: IsoDate; kind?: 'month'; settled?: boolean },
   existing?: EventFund,
 ): Promise<void> {
   const ops: WriteOp[] = [];

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { budgetForMonth } from './budget';
 import { firstBelow, forecast, recurringTransfers, scheduleItems } from './forecast';
-import { amountFor, eventPlanParts, eventPlans, provisionsMove, provisionsMoveByMonth, eventStatus, monthlySetAside, nextDue, occurrences, planCloseEvent, provisionSchedule, provisionStatus } from './plan';
+import { amountFor, eventPlanParts, eventPlans, oneOffParts, oneOffView, provisionsMove, provisionsMoveByMonth, eventStatus, monthlySetAside, nextDue, occurrences, planCloseEvent, provisionSchedule, provisionStatus } from './plan';
 import { World } from './testkit';
 import type { EventFund, Provision } from './types';
 
@@ -295,6 +295,49 @@ describe('a recurring bill whose amount changes (D-70)', () => {
       { from: '2026-01', amount: 216667 },
       { from: '2026-07', amount: 152500 },
       { from: '2027-01', amount: 166667 },
+    ]);
+  });
+});
+
+describe('one-off expenses for a month (D-108)', () => {
+  const party: EventFund = {
+    ...base, createdAt: '2026-10-01T00:00:00.000Z', id: 'p', name: 'Party', targetAmount: eur(400), targetDate: '2026-12-31', startDate: '2026-12-01',
+    subBudgets: [{ name: 'Food', amount: eur(300) }, { name: 'Drinks', amount: eur(100) }], fundedBalance: 0, status: 'saving', categoryId: 'party', kind: 'month',
+  };
+  function world(e: EventFund) {
+    const w = new World('2026-10');
+    const bank = w.account('bank', 'current', eur(5000));
+    w.category('party', 'events', 'roll');
+    return { w, bank, input: () => ({ ...w.input(), plans: eventPlans([e], w.allocations, w.transactions) }) };
+  }
+  const assigned = (input: ReturnType<ReturnType<typeof world>['input']>, m: string) => budgetForMonth(input, m)!.categories.get('party')!.assigned;
+
+  it('budgets the items in their month, from unplanned money', () => {
+    const { input } = world(party);
+    expect(assigned(input(), '2026-11')).toBe(0);
+    expect(assigned(input(), '2026-12')).toBe(eur(400));
+    expect(budgetForMonth(input(), '2026-12')!.readyToAssign).toBe(eur(5000 - 400));
+  });
+  it('lets what was paid replace an item’s estimate, and counts payments without an item', () => {
+    const { w, bank, input } = world(party);
+    w.entry(bank, '2026-12-20', eur(-350), { kind: 'category', categoryId: 'party' });
+    w.allocations.at(-1)!.subBudget = 'Food';
+    w.entry(bank, '2026-12-21', eur(-20), { kind: 'category', categoryId: 'party' });
+    const v = oneOffView(party, w.allocations, w.transactions);
+    expect(v.items.map((x) => [x.name, x.counts])).toEqual([['Food', eur(350)], ['Drinks', eur(100)]]);
+    expect(v.other.actual).toBe(eur(20));
+    expect(assigned(input(), '2026-12')).toBe(eur(350 + 100 + 20));
+    // Every payment in: the drinks were never bought.
+    const settled = { ...party, settled: true };
+    expect(oneOffView(settled, w.allocations, w.transactions).counts).toBe(eur(370));
+  });
+  it('budgets an item in the month it was paid when that is earlier', () => {
+    const { w, bank } = world(party);
+    w.entry(bank, '2026-11-05', eur(-90), { kind: 'category', categoryId: 'party' });
+    w.allocations.at(-1)!.subBudget = 'Drinks';
+    expect(oneOffParts(oneOffView(party, w.allocations, w.transactions))).toEqual([
+      { key: 'Food', amount: eur(300), start: '2026-12', due: '2026-12' },
+      { key: 'Drinks', amount: eur(90), start: '2026-11', due: '2026-11' },
     ]);
   });
 });

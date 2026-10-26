@@ -1,6 +1,6 @@
 import { computeBudget, type BudgetInput, type PlanPart } from './budget';
 import { addMonths, daysInMonth, monthDiff, monthOf } from './dates';
-import type { Allocation, Cents, EventFund, Id, IsoDate, MonthKey, Provision } from './types';
+import type { Allocation, Cents, EventFund, Id, IsoDate, MonthKey, Provision, Transaction } from './types';
 
 /**
  * Provisions and events (PRD F3, F4). Each one is backed by a budget category
@@ -228,9 +228,73 @@ export function eventPlanParts(e: EventFund): PlanPart[] {
   return parts;
 }
 
-/** Plans for every trip, for the budget engine. */
-export function eventPlans(events: readonly EventFund[]): Map<Id, PlanPart[]> {
-  return new Map(events.map((e) => [e.categoryId, eventPlanParts(e)]));
+/** Plans for every trip and one-off expense, for the budget engine. */
+export function eventPlans(events: readonly EventFund[], allocations: readonly Allocation[] = [], transactions: readonly Pick<Transaction, 'id' | 'date'>[] = []): Map<Id, PlanPart[]> {
+  return new Map(events.map((e) => [e.categoryId, e.kind === 'month' ? oneOffParts(oneOffView(e, allocations, transactions)) : eventPlanParts(e)]));
+}
+
+export interface OneOffItem {
+  name: string;
+  planned: Cents;
+  /** Paid so far, from the payments filed to this item. */
+  actual: Cents;
+  /** What the item counts for: what was paid once anything was, else the estimate (nothing once settled). */
+  counts: Cents;
+  /** The first month a payment for it was filed, when one was. */
+  firstMonth?: MonthKey;
+}
+
+export interface OneOffView {
+  event: EventFund;
+  month: MonthKey;
+  items: OneOffItem[];
+  /** Payments filed to the expense without an item. */
+  other: { actual: Cents; firstMonth?: MonthKey };
+  planned: Cents;
+  actual: Cents;
+  /** What the budget gives it: the items as they count, plus other payments. */
+  counts: Cents;
+}
+
+/**
+ * A one-off expense for one month (D-108): each item counts at its estimate
+ * until a payment is filed to it, then at what was paid (more or less); a
+ * payment filed to the expense without an item counts as paid too. Once
+ * settled, an item never paid counts as nothing.
+ */
+export function oneOffView(e: EventFund, allocations: readonly Allocation[], transactions: readonly Pick<Transaction, 'id' | 'date'>[]): OneOffView {
+  const month = monthOf(e.targetDate);
+  const dates = new Map(transactions.map((t) => [t.id, t.date]));
+  const names = new Set(e.subBudgets.map((sb) => sb.name));
+  const paid = new Map<string, { actual: Cents; first?: MonthKey }>();
+  for (const a of allocations) {
+    if (a.targetType !== 'category' || a.targetId !== e.categoryId) continue;
+    const key = a.subBudget && names.has(a.subBudget) ? a.subBudget : '';
+    const d = dates.get(a.transactionId);
+    const p = paid.get(key) ?? { actual: 0 };
+    p.actual -= a.amount;
+    if (d && (!p.first || monthOf(d) < p.first)) p.first = monthOf(d);
+    paid.set(key, p);
+  }
+  const items: OneOffItem[] = e.subBudgets.map((sb) => {
+    const p = paid.get(sb.name);
+    const actual = p?.actual ?? 0;
+    const counts = p && actual !== 0 ? actual : e.settled ? 0 : sb.amount;
+    return { name: sb.name, planned: sb.amount, actual, counts, ...(p?.first ? { firstMonth: p.first } : {}) };
+  });
+  const o = paid.get('');
+  const other = { actual: o?.actual ?? 0, ...(o?.first ? { firstMonth: o.first } : {}) };
+  const planned = items.reduce((s, x) => s + x.planned, 0);
+  const actual = items.reduce((s, x) => s + x.actual, 0) + other.actual;
+  return { event: e, month, items, other, planned, actual, counts: items.reduce((s, x) => s + Math.max(0, x.counts), 0) + Math.max(0, other.actual) };
+}
+
+/** A one-off expense as budget parts: each in its month, or the month it was first paid when earlier. */
+export function oneOffParts(v: OneOffView): PlanPart[] {
+  const at = (first?: MonthKey) => (first && first < v.month ? first : v.month);
+  const parts: PlanPart[] = v.items.filter((x) => x.counts > 0).map((x) => ({ key: x.name, amount: x.counts, start: at(x.firstMonth), due: at(x.firstMonth) }));
+  if (v.other.actual > 0) parts.push({ key: '', amount: v.other.actual, start: at(v.other.firstMonth), due: at(v.other.firstMonth) });
+  return parts;
 }
 
 export interface CloseEventPlan {

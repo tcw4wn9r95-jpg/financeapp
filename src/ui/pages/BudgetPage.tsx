@@ -17,6 +17,7 @@ import { MonthNav } from '../components/MonthNav';
 import { ReadyToAssign } from '../components/ReadyToAssign';
 import { CloseMonthBanner, MonthStatus } from '../components/CloseMonth';
 import { LoanLinesBanner } from '../components/LoanLines';
+import { MonthOneOffs } from '../components/OneOffs';
 import { useToast } from '../components/Toast';
 import { useBudgetInput, useBudgetMonth, useDocumentTitle, useSettings, useStore, useVault } from '../hooks';
 import { groupLabel, rolloverLabel } from '../labels';
@@ -141,8 +142,7 @@ export function BudgetPage() {
               </section>
             );
           })}
-
-
+          <MonthOneOffs month={month} />
         </>
       )}
       {editing && budget && (

@@ -562,7 +562,7 @@ function Events() {
   const month = currentMonth();
   const bucketsView = useBuckets().views;
   const views = useMemo(
-    () => events.map((e) => eventStatus(e, input, month, allocations)).sort((a, b) => Number(a.event.status === 'closed') - Number(b.event.status === 'closed') || a.event.targetDate.localeCompare(b.event.targetDate)),
+    () => events.filter((e) => e.kind !== 'month').map((e) => eventStatus(e, input, month, allocations)).sort((a, b) => Number(a.event.status === 'closed') - Number(b.event.status === 'closed') || a.event.targetDate.localeCompare(b.event.targetDate)),
     [events, input, month, allocations],
   );
 

@@ -235,7 +235,7 @@ export function scheduleItems(f: ForecastInput): CashItem[] {
     if (e.status === 'closed') continue;
     let spent = 0;
     for (const v of h.actual.get(e.categoryId)?.values() ?? []) spent += -v;
-    const left = e.targetAmount - spent;
+    const left = eventTotal(f, e) - spent;
     if (left > 0) push(e.targetDate < tomorrow ? tomorrow : e.targetDate, -left, e.name, 'event', e.categoryId);
   }
 
@@ -411,7 +411,7 @@ export function provisionFlow(f: ForecastInput, months: readonly MonthKey[]): Ma
   const out = new Map(months.map((m) => [m, { held: 0, setAside: 0, paid: 0 }]));
   const lines: { categoryId: Id; bills: { date: IsoDate; amount: Cents }[] }[] = [
     ...f.provisions.map((p) => ({ categoryId: p.categoryId, bills: occurrences(p, `${thisMonth}-01`, lastDayOfMonth(months.at(-1) ?? thisMonth)).filter((d) => d > f.today).map((d) => ({ date: d, amount: p.amount })) })),
-    ...f.events.filter((e) => e.status !== 'closed').map((e) => ({ categoryId: e.categoryId, bills: e.targetDate > f.today ? [{ date: e.targetDate, amount: e.targetAmount }] : [] })),
+    ...f.events.filter((e) => e.status !== 'closed').map((e) => ({ categoryId: e.categoryId, bills: e.targetDate > f.today ? [{ date: e.targetDate, amount: eventTotal(f, e) }] : [] })),
   ];
   for (const l of lines) {
     let have = Math.max(0, now?.categories.get(l.categoryId)?.available ?? 0);
@@ -432,6 +432,12 @@ export function provisionFlow(f: ForecastInput, months: readonly MonthKey[]): Ma
     }
   }
   return out;
+}
+
+/** What a trip costs; a one-off expense counts its items as estimated or, once paid, as paid (D-108). */
+function eventTotal(f: ForecastInput, e: EventFund): Cents {
+  if (e.kind !== 'month') return e.targetAmount;
+  return (f.budget.plans?.get(e.categoryId) ?? []).reduce((s, p) => s + p.amount, 0);
 }
 
 /** First month whose money not set aside falls below the buffer (D-106). */

@@ -2931,3 +2931,29 @@ input[type='date']::-webkit-date-and-time-value {
 .pva-left {
   margin-top: 1rem;
 }
+
+/* One-off expenses for a month (D-108) */
+.oneoff-card {
+  margin-bottom: 0.75rem;
+}
+.oneoff-items {
+  border: 0;
+  padding: 0;
+  margin: 0.5rem 0;
+}
+.oneoff-items legend {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+.oneoff-item {
+  display: grid;
+  grid-template-columns: 1fr 7.5rem auto;
+  gap: 0.5rem;
+  align-items: end;
+}
+.oneoff-item .field {
+  margin-bottom: 0.5rem;
+}
+.oneoff-total {
+  margin: 0.75rem 0 0.25rem;
+}

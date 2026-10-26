@@ -253,6 +253,10 @@ export interface EventFund extends BaseRecord {
   /** The budget category (group Events) that saves for and pays the event (D-34). */
   categoryId: Id;
   closedAt?: string;
+  /** A one-off expense planned for one month (D-108): its items are budgeted that month, actuals replace them. */
+  kind?: 'month';
+  /** One-off expense: every payment is in; items never paid count as nothing. */
+  settled?: boolean;
 }
 
 export interface RuleConditions {
