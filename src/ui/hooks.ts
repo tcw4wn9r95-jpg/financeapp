@@ -90,7 +90,7 @@ export function useDocumentTitle(title: string): void {
 }
 
 /** The cash forecast from today (plus optional scenario changes and extra items). */
-export function useForecast(months: number, changes?: ScenarioChange[], extra?: CashItem[]): ForecastResult {
+export function useForecast(months: number, changes?: ScenarioChange[], extra?: CashItem[], basis: 'plan' | 'recent' = 'plan'): ForecastResult {
   const budget = useBudgetInput();
   const provisions = useStore('provisions');
   const events = useStore('events');
@@ -98,6 +98,6 @@ export function useForecast(months: number, changes?: ScenarioChange[], extra?: 
   return useMemo(() => {
     // Expected tax refunds or payments the user chose to show (M5).
     const all = [...taxCashItems(taxProfiles), ...(extra ?? [])];
-    return forecast({ today: todayIso(), months, budget, provisions, events, ...(changes ? { changes } : {}), ...(all.length ? { extra: all } : {}) });
-  }, [budget, provisions, events, months, changes, extra, taxProfiles]);
+    return forecast({ today: todayIso(), months, budget, provisions, events, basis, ...(changes ? { changes } : {}), ...(all.length ? { extra: all } : {}) });
+  }, [budget, provisions, events, months, changes, extra, taxProfiles, basis]);
 }

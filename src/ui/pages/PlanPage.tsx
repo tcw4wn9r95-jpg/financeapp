@@ -131,13 +131,120 @@ export function ForecastView({ result, compare, compareName }: { result: Forecas
 }
 
 function Forecast() {
-  const result = useForecast(24);
+  const vault = useVault();
+  const settings = useSettings();
+  const basis = settings.forecastBasis ?? 'plan';
+  const result = useForecast(24, undefined, undefined, basis);
   return (
     <>
+      <div className="chips" role="group" aria-label={t('plan.basis')}>
+        {(['plan', 'recent'] as const).map((b) => (
+          <button key={b} type="button" className="chip" aria-pressed={basis === b} onClick={() => void saveSettings(vault, { forecastBasis: b })}>
+            {t(`plan.basis.${b}` as MessageKey)}
+          </button>
+        ))}
+      </div>
+      <p className="hint">{t(`plan.basisHint.${basis}` as MessageKey)}</p>
       <ForecastView result={result} />
+      <MoneyPurpose result={result} />
       <ChangesAheadCard />
-      <p className="hint">{t('plan.how')} <a href={href('settings', { section: 'budget' })}>{t('plan.setBuffer')}</a></p>
+      <details className="card">
+        <summary>{t('plan.howTitle')}</summary>
+        <ul className="plain-list how-list">
+          <li>{t('plan.how1')}</li>
+          <li>{t('plan.how2')}</li>
+          <li>{t('plan.how3')}</li>
+          <li>{t('plan.how4')}</li>
+          <li>{t('plan.how5')}</li>
+        </ul>
+        <p className="hint"><a href={href('settings', { section: 'budget' })}>{t('plan.setBuffer')}</a></p>
+      </details>
     </>
+  );
+}
+
+/** Typical living costs a month ahead: the middle month of the horizon after this one (D-105). */
+export function typicalLiving(result: ForecastResult): number {
+  const xs = result.months.slice(1).map((m) => m.living).sort((a, b) => a - b);
+  return xs.length ? xs[Math.floor(xs.length / 2)]! : 0;
+}
+
+/**
+ * What the money is for, month by month (D-105): set aside for bills
+ * (provisions and trips), an emergency reserve of some months of living costs,
+ * and what is left: free to invest.
+ */
+function MoneyPurpose({ result }: { result: ForecastResult }) {
+  const vault = useVault();
+  const settings = useSettings();
+  const n = settings.emergencyMonths ?? 6;
+  const living = typicalLiving(result);
+  const reserve = n * living;
+  const rows = result.months.map((m) => ({ month: m.month, end: m.end, held: m.held, reserve, free: m.end - m.held - reserve }));
+  const now = rows[0]!;
+  const last = rows.at(-1)!;
+  const firstFree = rows.find((r) => r.free > 0);
+  const dip = rows.reduce((lo, r) => (r.free < lo.free ? r : lo), rows[0]!);
+  return (
+    <section className="card" aria-labelledby="purpose-h">
+      <h2 id="purpose-h">{t('plan.purpose')}</h2>
+      <SelectField label={t('plan.emergency')} value={String(n)} hint={t('plan.emergencyHint', { living: formatMoney(living) })} onChange={(e) => void saveSettings(vault, { emergencyMonths: Number(e.target.value) })}>
+        {[0, 3, 6, 9, 12].map((k) => <option key={k} value={k}>{k === 0 ? t('plan.noReserve') : t('plan.monthsOf', { n: k, amount: formatMoney(k * living) })}</option>)}
+      </SelectField>
+      <ul className="plain-list">
+        <li className="split-row"><span>{t('plan.cashNow', { month: monthName(now.month) })}</span><Money cents={now.end} /></li>
+        <li className="split-row"><span>{t('plan.forBills')}</span><Money cents={-now.held} /></li>
+        <li className="split-row"><span>{t('plan.reserve', { n })}</span><Money cents={-reserve} /></li>
+        <li className="split-row"><strong>{t('plan.freeNow')}</strong><strong><Money cents={now.free} /></strong></li>
+      </ul>
+      <p className={`action-row ${last.free < 0 ? 'action-row-warn' : ''}`} role="status">
+        <span aria-hidden="true">{last.free < 0 ? '⚠' : '●'}</span>
+        <span>
+          {last.free < 0
+            ? t('plan.neverFree', { n })
+            : now.free > 0
+              ? t('plan.freeGrows', { now: formatMoney(now.free), month: monthName(last.month), last: formatMoney(last.free) })
+              : t('plan.freeFrom', { month: monthName(firstFree!.month), last: formatMoney(last.free), end: monthName(last.month) })}
+          {dip.free < 0 && last.free >= 0 && ` ${t('plan.freeDip', { month: monthName(dip.month), amount: formatMoney(-dip.free) })}`}
+        </span>
+      </p>
+      <LineChart
+        title={t('plan.purposeChart')}
+        labels={rows.map((r) => monthName(r.month))}
+        axisLabels={rows.map((r) => monthShort(r.month))}
+        series={[
+          { name: t('plan.cashEnd'), color: 'var(--series-1)', values: rows.map((r) => r.end) },
+          { name: t('plan.freeLine'), color: 'var(--series-2)', values: rows.map((r) => r.free) },
+        ]}
+        {...(reserve > 0 ? { reference: { value: reserve, label: t('plan.reserveLine') } } : {})}
+      />
+      <details>
+        <summary>{t('plan.table')}</summary>
+        <div className="tax-compare-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th scope="col">{t('plan.month')}</th>
+                <th scope="col" className="num">{t('plan.end')}</th>
+                <th scope="col" className="num">{t('plan.colBills')}</th>
+                <th scope="col" className="num">{t('plan.colFree')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.month}>
+                  <th scope="row">{monthShort(r.month)}</th>
+                  <td className="num"><Money cents={r.end} /></td>
+                  <td className="num"><Money cents={r.held} /></td>
+                  <td className="num"><Money cents={r.free} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+      <p className="hint">{t('plan.purposeHint')}</p>
+    </section>
   );
 }
 

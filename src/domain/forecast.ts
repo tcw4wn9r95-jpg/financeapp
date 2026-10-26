@@ -1,4 +1,4 @@
-import { accountBalances, defaultFor, isOnBudget, overrideFor, type BudgetInput } from './budget';
+import { accountBalances, computeBudget, defaultFor, isOnBudget, overrideFor, type BudgetInput } from './budget';
 import { addDays, addMonths, daysInMonth, lastDayOfMonth, monthOf } from './dates';
 import { occurrences } from './plan';
 import type { Cents, EventFund, Id, IsoDate, MonthKey, Provision, ScenarioChange, Transaction } from './types';
@@ -8,10 +8,14 @@ import type { Cents, EventFund, Id, IsoDate, MonthKey, Provision, ScenarioChange
  *
  * Starts from today's real balances of on-budget accounts and simulates every
  * day of the horizon from the plan (D-35):
- * - expected income per income category (its expected amount, else the
- *   average of the last three complete months) on its usual day of the month;
+ * - expected income per income category: its planned amount; a line with no
+ *   plan only when it is regular (paid in each of the last three complete
+ *   months), at its typical amount, so one-off refunds are not repeated (D-105);
  * - Fixed categories: the assigned amount on their usual day;
  * - Variable categories: the assigned amount spread evenly over the month;
+ * - on the "recent pace" basis (D-105), spending lines at what they really
+ *   cost over the last six complete months instead (fixed: the average;
+ *   variable: the typical month), where there is enough history;
  * - provisions: the full bill on each due date (not the monthly set-aside);
  * - events: what is left to spend, on the event date;
  * - Savings categories: no outflow (the money stays in your accounts);
@@ -39,6 +43,8 @@ export interface ForecastInput {
   events: readonly EventFund[];
   extra?: readonly CashItem[];
   changes?: readonly ScenarioChange[];
+  /** What spending lines cost ahead: the plan (default) or the recent pace (D-105). */
+  basis?: 'plan' | 'recent';
 }
 
 export interface ForecastMonth {
@@ -48,6 +54,10 @@ export interface ForecastMonth {
   minDate: IsoDate;
   inflow: Cents;
   outflow: Cents;
+  /** Money the provisions and trips should hold at the month end, for bills still to come (D-105). */
+  held: Cents;
+  /** Spending lines (fixed and variable) that month: the base of an emergency reserve. */
+  living: Cents;
 }
 
 export interface ForecastResult {
@@ -147,6 +157,14 @@ export function scheduleItems(f: ForecastInput): CashItem[] {
   };
   const provisionCats = new Set(f.provisions.map((p) => p.categoryId));
   const eventCats = new Set(f.events.map((e) => e.categoryId));
+  // What each spending line really cost over the last six complete months (D-105).
+  const pace = new Map<Id, Cents>();
+  for (const c of budget.categories) {
+    if (c.isIncome) continue;
+    const spent = Array.from({ length: SPEND_LOOKBACK }, (_, k) => -(h.actual.get(c.id)?.get(addMonths(thisMonth, -(k + 1))) ?? 0));
+    if (spent.filter((x) => x !== 0).length < 3) continue;
+    pace.set(c.id, Math.max(0, c.groupId === 'fixed' ? Math.round(spent.reduce((x, y) => x + y, 0) / spent.length) : median(spent)!));
+  }
 
   for (let i = 0; i < f.months; i++) {
     const month = addMonths(thisMonth, i);
@@ -163,8 +181,9 @@ export function scheduleItems(f: ForecastInput): CashItem[] {
       if (c.isIncome) {
         let expected = planned(budget, c.id, month);
         if (expected === undefined) {
+          // No plan: only a regular income continues (paid in each of the last three months), at its typical amount.
           const recent = [1, 2, 3].map((k) => h.actual.get(c.id)?.get(addMonths(thisMonth, -k)) ?? 0);
-          expected = Math.round(recent.reduce((s, x) => s + x, 0) / 3);
+          expected = recent.every((x) => x > 0) ? median(recent)! : 0;
         }
         const amount = isCurrent ? Math.max(0, expected - done) : expected;
         if (amount <= 0) continue;
@@ -175,14 +194,15 @@ export function scheduleItems(f: ForecastInput): CashItem[] {
       }
       if (c.groupId === 'savings') continue;
       if (provisionCats.has(c.id) || eventCats.has(c.id)) continue;
-      const assigned = planned(budget, c.id, month) ?? 0;
+      const assigned = f.basis === 'recent' ? (pace.get(c.id) ?? planned(budget, c.id, month) ?? 0) : (planned(budget, c.id, month) ?? 0);
       if (assigned <= 0) continue;
       const amount = isCurrent ? Math.max(0, assigned + done) : assigned; // done is negative spending
       if (amount <= 0) continue;
       if (c.groupId === 'fixed' || c.groupId === 'provisions' || c.groupId === 'investments') {
         let date = dateIn(month, usual ?? 1);
         if (date < firstDay) date = firstDay;
-        push(date, -amount, c.name, 'fixed', c.id);
+        // Money invested leaves the accounts but is not a living cost.
+        push(date, -amount, c.name, c.groupId === 'investments' ? 'transfer' : 'fixed', c.id);
       } else {
         // Spread evenly; the remainder goes on the first day so cents add up.
         const per = Math.floor(amount / dayCount);
@@ -277,7 +297,7 @@ export function forecast(f: ForecastInput): ForecastResult {
     const m = monthOf(d);
     if (!cur || cur.month !== m) {
       if (cur) months.push(cur);
-      cur = { month: m, end: bal, min: bal, minDate: d, inflow: 0, outflow: 0 };
+      cur = { month: m, end: bal, min: bal, minDate: d, inflow: 0, outflow: 0, held: 0, living: 0 };
     }
     cur.end = bal;
     if (bal < cur.min) {
@@ -292,7 +312,10 @@ export function forecast(f: ForecastInput): ForecastResult {
     if (!m) continue;
     if (it.amount > 0) m.inflow += it.amount;
     else m.outflow -= it.amount;
+    if (it.kind === 'fixed' || it.kind === 'variable') m.living -= it.amount;
   }
+  const held = heldAhead(f, months.map((m) => m.month));
+  for (const m of months) m.held = held.get(m.month) ?? 0;
 
   // -------------------------------------------------------- per account
   // Each category keeps being paid from the accounts it was paid from in the
@@ -346,6 +369,33 @@ export function forecast(f: ForecastInput): ForecastResult {
   }
 
   return { start, days, months, items, byAccount };
+}
+
+/**
+ * What the provisions and trips should hold at each month end (D-105): what
+ * they hold today, plus what the plan sets aside each month, less the bills
+ * and trips paid on the way (never below zero). Money in the accounts beyond
+ * this, and beyond an emergency reserve, is free.
+ */
+/** `months`: consecutive, from this month. */
+export function heldAhead(f: ForecastInput, months: readonly MonthKey[]): Map<MonthKey, Cents> {
+  const thisMonth = monthOf(f.today);
+  const now = computeBudget(f.budget, thisMonth).at(-1);
+  const out = new Map<MonthKey, Cents>(months.map((m) => [m, 0]));
+  const lines: { categoryId: Id; bills: { date: IsoDate; amount: Cents }[] }[] = [
+    ...f.provisions.map((p) => ({ categoryId: p.categoryId, bills: occurrences(p, `${thisMonth}-01`, lastDayOfMonth(months.at(-1) ?? thisMonth)).filter((d) => d > f.today).map((d) => ({ date: d, amount: p.amount })) })),
+    ...f.events.filter((e) => e.status !== 'closed').map((e) => ({ categoryId: e.categoryId, bills: e.targetDate > f.today ? [{ date: e.targetDate, amount: e.targetAmount }] : [] })),
+  ];
+  for (const l of lines) {
+    let have = Math.max(0, now?.categories.get(l.categoryId)?.available ?? 0);
+    for (const m of months) {
+      if (m !== thisMonth) have += planned(f.budget, l.categoryId, m) ?? 0;
+      for (const b of l.bills) if (monthOf(b.date) === m) have -= b.amount;
+      have = Math.max(0, have);
+      out.set(m, (out.get(m) ?? 0) + have);
+    }
+  }
+  return out;
 }
 
 /** First month whose lowest balance falls below the buffer. */

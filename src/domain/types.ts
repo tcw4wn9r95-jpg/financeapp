@@ -479,6 +479,10 @@ export interface Settings {
   members?: Member[];
   /** Forecast: warn about the first month the cash total falls below this. */
   minimumBuffer?: Cents;
+  /** Months of living costs kept as an emergency reserve in the forecast (D-105); default 6. */
+  emergencyMonths?: number;
+  /** What the forecast's spending is based on (D-105). */
+  forecastBasis?: 'plan' | 'recent';
   /** History matches at or above this confidence are applied without review (default 0.92). */
   autoApplyThreshold?: number;
   /** Savings account where the money for provisions and trips is kept (D-55). */
