@@ -333,16 +333,16 @@ const SUGGESTED: [string, CategoryGroup, RolloverMode, boolean][] = [
   ['Salary', 'fixed', 'reset', true],
   ['Other income', 'fixed', 'reset', true],
   ['Rent or mortgage', 'fixed', 'reset', false],
-  ['Energy', 'fixed', 'roll', false],
+  ['Energy', 'fixed', 'reset', false],
   ['Phone & internet', 'fixed', 'reset', false],
-  ['Insurance', 'fixed', 'roll', false],
+  ['Insurance', 'fixed', 'reset', false],
   ['Loan repayments', 'fixed', 'reset', false],
-  ['Groceries', 'variable', 'roll', false],
-  ['Eating out', 'variable', 'roll', false],
-  ['Transport', 'variable', 'roll', false],
-  ['Health', 'variable', 'roll', false],
-  ['Clothing', 'variable', 'roll', false],
-  ['Fun money', 'variable', 'sweep', false],
+  ['Groceries', 'variable', 'reset', false],
+  ['Eating out', 'variable', 'reset', false],
+  ['Transport', 'variable', 'reset', false],
+  ['Health', 'variable', 'reset', false],
+  ['Clothing', 'variable', 'reset', false],
+  ['Fun money', 'variable', 'reset', false],
   ['Emergency fund', 'savings', 'roll', false],
   ['Retirement savings', 'savings', 'roll', false],
   ['Investments', 'investments', 'reset', false],
@@ -362,6 +362,24 @@ const SUGGESTED: [string, CategoryGroup, RolloverMode, boolean][] = [
  * covers those gaps); on provisions and trips, which still carry, they become
  * cover records.
  */
+/**
+ * Fixed and variable lines stop rolling their leftovers over (D-111), once:
+ * each month starts from its own plan and what is left goes back to unplanned
+ * money. Provisions, trips and savings keep what they hold.
+ */
+export async function stopSpendingRollover(vault: Vault): Promise<number> {
+  const settings = getSettings(vault);
+  if (settings.spendingReset) return 0;
+  const now = new Date().toISOString();
+  const ops: WriteOp[] = vault
+    .list('categories')
+    .filter((c) => !c.isIncome && (c.groupId === 'fixed' || c.groupId === 'variable') && c.rolloverMode !== 'reset')
+    .map((c): WriteOp => ({ type: 'put', store: 'categories', record: { ...c, rolloverMode: 'reset', updatedAt: now } }));
+  ops.push({ type: 'put', store: 'settings', record: { ...settings, spendingReset: true, updatedAt: now } });
+  await vault.write(ops);
+  return ops.length - 1;
+}
+
 export async function migrateCovers(vault: Vault): Promise<number> {
   const settings = getSettings(vault);
   if (settings.coversOwn) return 0;

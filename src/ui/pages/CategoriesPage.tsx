@@ -111,7 +111,8 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
   const [name, setName] = useState(existing?.name ?? '');
   const [isIncome] = useState(existing?.isIncome ?? preset.isIncome);
   const [groupId, setGroupId] = useState<CategoryGroup>(existing?.groupId ?? preset.groupId);
-  const [mode, setMode] = useState<RolloverMode>(existing?.rolloverMode ?? 'roll');
+  // Spending lines start each month from their plan (D-111); money held for later rolls.
+  const [mode, setMode] = useState<RolloverMode>(existing?.rolloverMode ?? (preset.groupId === 'fixed' || preset.groupId === 'variable' ? 'reset' : 'roll'));
   // Income paid at the end of a month for the next one (D-74).
   const [forNext, setForNext] = useState(!!existing?.nextMonthFromDay);
   // From which month's payment it counts in the next month (D-92): the month you got a month ahead.

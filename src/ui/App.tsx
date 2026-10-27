@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { t, type MessageKey } from '../i18n';
-import { ensureInvestments, migrateCovers } from './actions';
+import { ensureInvestments, migrateCovers, stopSpendingRollover } from './actions';
 import { cleanUpLedger, cleanUpMessage } from './importActions';
 import { useToast } from './components/Toast';
 import { UpdateBanner } from './components/UpdateBanner';
@@ -68,6 +68,8 @@ function Shell() {
     void ensureInvestments(vault);
     // Covers kept apart from the budget (D-94), once.
     void migrateCovers(vault);
+    // Spending lines no longer roll over (D-111), once.
+    void stopSpendingRollover(vault);
     // Duplicated transfer sides from before D-68 (and any since) are removed on unlock.
     void cleanUpLedger(vault).then((r) => {
       const msg = cleanUpMessage(r);

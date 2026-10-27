@@ -483,6 +483,8 @@ export interface Settings {
   members?: Member[];
   /** Forecast: warn about the first month the cash total falls below this. */
   minimumBuffer?: Cents;
+  /** Spending lines no longer roll their leftovers over (D-111), once. */
+  spendingReset?: boolean;
   /** Months of living costs kept as an emergency reserve in the forecast (D-105); default 6. */
   emergencyMonths?: number;
   /** What the forecast's spending is based on (D-105). */
