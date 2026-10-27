@@ -65,6 +65,37 @@ export function nextDue(p: Pick<Provision, 'dueDate' | 'recurrence'>, today: Iso
   return occurrences(p, today, addMonthsToDate(today, 12 * 50))[0] ?? p.dueDate;
 }
 
+export interface HeldPlan {
+  /** The next bill and its amount. */
+  due: IsoDate;
+  amountDue: Cents;
+  /** This month's set-aside that brings the provision to what it holds (can be below zero: money goes back). */
+  thisMonth: Cents;
+  /** Each month from next month to the bill. */
+  monthly: Cents;
+  monthsLeft: number;
+  /** After the bill, the usual schedule of the next cycles (recurring provisions). */
+  after: { from: MonthKey; amount: Cents }[];
+}
+
+/**
+ * A provision told what it already holds (D-110): this month's set-aside
+ * becomes whatever brings it there (from what it carried in), and the rest of
+ * the next bill is spread evenly over the months from next month to the bill.
+ */
+export function heldPlan(p: Pick<Provision, 'amount' | 'dueDate' | 'recurrence' | 'amountChanges'>, held: Cents, carryIn: Cents, month: MonthKey): HeldPlan {
+  const due = nextDue(p, `${month}-01`);
+  const amountDue = amountFor(p, due);
+  const dueMonth = monthOf(due);
+  const monthsLeft = compareMonthKeys(dueMonth, month) > 0 ? monthDiff(addMonths(month, 1), dueMonth) + 1 : 0;
+  const monthly = monthsLeft > 0 ? Math.max(0, Math.ceil((amountDue - held) / monthsLeft)) : 0;
+  const nextStart = addMonths(dueMonth, 1);
+  const after = parseRecurrence(p.recurrence) ? provisionSchedule({ ...p, startDate: `${nextStart}-01` }, nextStart) : [{ from: nextStart, amount: 0 }];
+  return { due, amountDue, thisMonth: held - carryIn, monthly, monthsLeft, after };
+}
+
+const compareMonthKeys = (a: MonthKey, b: MonthKey) => (a < b ? -1 : a > b ? 1 : 0);
+
 /**
  * Monthly set-aside so the money is there by the due month:
  * (amount − already set aside) spread over the months left, this month included.

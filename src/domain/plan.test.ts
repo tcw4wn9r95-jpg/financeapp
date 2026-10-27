@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { budgetForMonth } from './budget';
 import { firstBelow, forecast, recurringTransfers, scheduleItems } from './forecast';
-import { amountFor, eventPlanParts, eventPlans, oneOffParts, oneOffView, provisionsMove, provisionsMoveByMonth, eventStatus, monthlySetAside, nextDue, occurrences, planCloseEvent, provisionSchedule, provisionStatus } from './plan';
+import { amountFor, eventPlanParts, eventPlans, heldPlan, oneOffParts, oneOffView, provisionsMove, provisionsMoveByMonth, eventStatus, monthlySetAside, nextDue, occurrences, planCloseEvent, provisionSchedule, provisionStatus } from './plan';
 import { World } from './testkit';
 import type { EventFund, Provision } from './types';
 
@@ -339,5 +339,22 @@ describe('one-off expenses for a month (D-108)', () => {
       { key: 'Food', amount: eur(300), start: '2026-12', due: '2026-12' },
       { key: 'Drinks', amount: eur(90), start: '2026-11', due: '2026-11' },
     ]);
+  });
+});
+
+describe('a provision told what it already holds (D-110)', () => {
+  const tax = { amount: eur(10_000), dueDate: '2027-04-30', recurrence: '' };
+  it('spreads the rest of the bill from next month to the bill', () => {
+    // Holds 6,000 € in October (it carried in 5,000 €): October sets aside 1,000 €, then 4,000 € over Nov–Apr.
+    const p = heldPlan(tax, eur(6_000), eur(5_000), '2026-10');
+    expect(p).toMatchObject({ due: '2027-04-30', amountDue: eur(10_000), thisMonth: eur(1_000), monthsLeft: 6, monthly: Math.ceil(eur(4_000) / 6) });
+    expect(p.after).toEqual([{ from: '2027-05', amount: 0 }]);
+  });
+  it('gives money back when it holds less than it carried, and continues a yearly bill afterwards', () => {
+    const yearly = { amount: eur(1_200), dueDate: '2027-03-15', recurrence: 'FREQ=YEARLY;INTERVAL=1' };
+    const p = heldPlan(yearly, eur(200), eur(500), '2026-11');
+    expect(p.thisMonth).toBe(eur(-300));
+    expect(p.monthly).toBe(Math.ceil(eur(1_000) / 4));
+    expect(p.after[0]).toEqual({ from: '2027-04', amount: eur(100) });
   });
 });

@@ -3001,3 +3001,18 @@ input[type='date']::-webkit-date-and-time-value {
   color: inherit;
   font-weight: 600;
 }
+
+/* Budget rows lead with the plan (D-110) */
+.row-end-label {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-align: right;
+}
+.gap-over {
+  color: var(--text);
+  font-weight: 600;
+}
+.gap-under {
+  color: var(--muted);
+}
