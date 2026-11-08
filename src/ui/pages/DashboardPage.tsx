@@ -1,20 +1,24 @@
 import { useMemo } from 'react';
-import { accountBalances, invested, isOnBudget } from '../../domain/budget';
+import { invested } from '../../domain/budget';
 import { compareMonths, currentMonth, formatDate, todayIso } from '../../domain/dates';
 import { eventStatus, provisionStatus } from '../../domain/plan';
-import { LineChart } from '../components/LineChart';
-import { CATEGORY_GROUPS, type CategoryGroup } from '../../domain/types';
 import { monthName, t } from '../../i18n';
 import { Money } from '../components/Money';
 import { ReadyToAssign } from '../components/ReadyToAssign';
-import { useBuckets, useBudgetInput, useBudgetMonth, useDocumentTitle, useForecast, useSettings, useStore } from '../hooks';
+import { useBuckets, useBudgetInput, useBudgetMonth, useDocumentTitle, useSettings, useStore } from '../hooks';
 import { href } from '../router';
-import { groupLabel } from '../labels';
 import { Icon } from '../components/Icon';
+import { LogCard } from './LogPage';
 import { CloseMonthBanner } from '../components/CloseMonth';
 import { InsightList, useDismissed, useSpendingAnalysis } from './InsightsPage';
 
 const BACKUP_NAG_DAYS = 7;
+
+/** Morning, afternoon or evening, by the clock. */
+function greetingKey(): 'home.morning' | 'home.afternoon' | 'home.evening' {
+  const h = new Date().getHours();
+  return h < 12 ? 'home.morning' : h < 18 ? 'home.afternoon' : 'home.evening';
+}
 
 export function DashboardPage() {
   useDocumentTitle(t('nav.dashboard'));
@@ -22,17 +26,13 @@ export function DashboardPage() {
   const settings = useSettings();
   const budget = useBudgetMonth(month);
   const accounts = useStore('accounts');
-  const categories = useStore('categories');
   const transactions = useStore('transactions');
   const inbox = transactions.filter((tx) => tx.status === 'new' || tx.status === 'suggested').length;
-  const balances = useMemo(() => accountBalances(accounts, transactions, todayIso()), [accounts, transactions]);
-  const open = accounts.filter((a) => !a.closedAt);
-  const cash = open.filter(isOnBudget).reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
 
   const budgetInput = useBudgetInput();
   const analysis = useSpendingAnalysis('6');
   const dismissed = useDismissed();
-  const topInsights = analysis.insights.filter((i) => i.severity !== 'info' && i.kind !== 'unfiled' && !dismissed.isDismissed(i)).slice(0, 3);
+  const topInsights = analysis.insights.filter((i) => i.severity !== 'info' && i.kind !== 'unfiled' && !dismissed.isDismissed(i)).slice(0, 2);
   const inv = useMemo(() => invested(budgetInput, month), [budgetInput, month]);
   const provisions = useStore('provisions');
   const events = useStore('events');
@@ -42,42 +42,22 @@ export function DashboardPage() {
   const provAccount = accounts.find((a) => a.id === settings.provisionsAccountId);
   const moveLeft = provAccount && summary.toMove > 0 ? { name: provAccount.name, left: summary.toMove } : null;
 
-  const tripPct = (id: string) => {
-    const b = bucketView.get(id);
-    return b && b.target > 0 ? Math.max(0, Math.min(100, Math.round((b.loaded / b.target) * 100))) : 0;
-  };
-
   const lastBackup = settings.lastBackupAt ? new Date(settings.lastBackupAt) : null;
   const backupDue = !lastBackup || Date.now() - lastBackup.getTime() > BACKUP_NAG_DAYS * 86_400_000;
 
-  const byGroup = useMemo(() => {
-    const rows = new Map<CategoryGroup, { assigned: number; spent: number; available: number }>();
-    if (!budget) return rows;
-    for (const c of categories) {
-      if (c.isIncome) continue;
-      const m = budget.categories.get(c.id);
-      if (!m) continue;
-      const r = rows.get(c.groupId) ?? { assigned: 0, spent: 0, available: 0 };
-      r.assigned += m.assigned;
-      r.spent += -m.activity;
-      r.available += m.available;
-      rows.set(c.groupId, r);
-    }
-    return rows;
-  }, [budget, categories]);
-
   const input = useBudgetInput();
   const allocations = useStore('allocations');
-  const fc = useForecast(4);
-  const days90 = fc.days.slice(0, 91);
-  const low90 = days90.reduce((lo, d) => (d.balance < lo.balance ? d : lo), days90[0]!);
   const provisionRows = useMemo(() => provisions.map((p) => provisionStatus(p, input, month, todayIso())).sort((a, b) => a.nextDue.localeCompare(b.nextDue)), [provisions, input, month]);
   const eventRows = useMemo(() => events.filter((e) => e.status !== 'closed').map((e) => eventStatus(e, input, month, allocations)), [events, input, month, allocations]);
-  const linked = new Set([...provisions.map((p) => p.categoryId), ...events.map((e) => e.categoryId)]);
 
-  const funds = categories
-    .filter((c) => !c.isIncome && !c.archivedAt && (c.groupId === 'provisions' || c.groupId === 'events' || c.groupId === 'savings'))
-    .sort((a, b) => CATEGORY_GROUPS.indexOf(a.groupId) - CATEGORY_GROUPS.indexOf(b.groupId) || a.sortOrder - b.sortOrder);
+  // The next bills: provisions and trips by due date, with what they hold (D-113).
+  const coming = [
+    ...provisionRows.map((r) => ({ id: r.provision.id, name: r.provision.name, date: r.nextDue, amount: r.provision.amount, held: bucketView.get(r.provision.categoryId)?.level ?? 0, kind: 'provisions' })),
+    ...eventRows.map((v) => ({ id: v.event.id, name: v.event.name, date: v.event.targetDate, amount: v.event.targetAmount, held: bucketView.get(v.event.categoryId)?.level ?? 0, kind: 'events' })),
+  ]
+    .filter((c) => c.date >= todayIso())
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(0, 3);
 
   if (compareMonths(month, settings.budgetStartMonth) < 0) {
     return (
@@ -90,12 +70,16 @@ export function DashboardPage() {
 
   return (
     <>
-      <h1 className="visually-hidden">{t('nav.dashboard')}</h1>
+      <header className="home-head">
+        <p className="home-date">{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+        <h1>{t(greetingKey())}</h1>
+      </header>
       {budget && (
         <a className="hero-link" href={href(`budget/${month}`)} aria-label={t('dashboard.openBudget')}>
           <ReadyToAssign month={budget} />
         </a>
       )}
+      <LogCard />
 
       <CloseMonthBanner />
       {inbox > 0 && (
@@ -140,119 +124,25 @@ export function DashboardPage() {
         </section>
       )}
 
-      {open.length > 0 && budget && (
-        <section className="group" aria-labelledby="cash90-h">
+      {coming.length > 0 && (
+        <section className="group" aria-labelledby="coming-h">
           <div className="group-head">
-            <h2 id="cash90-h">{t('dashboard.next90')}</h2>
-            <a className="muted" href={href('plan')}>{t('dashboard.toPlan')}</a>
-          </div>
-          <div className="card">
-            <p className="split-row">
-              <span className="muted">{t('dashboard.in90', { date: formatDate(days90.at(-1)!.date) })}</span>
-              <strong><Money cents={days90.at(-1)!.balance} /></strong>
-            </p>
-            <p className="split-row">
-              <span className="muted">{t('dashboard.low90', { date: formatDate(low90.date) })}</span>
-              <span className={settings.minimumBuffer && low90.balance < settings.minimumBuffer ? 'bad' : ''}>
-                {settings.minimumBuffer && low90.balance < settings.minimumBuffer ? '⚠ ' : ''}
-                <Money cents={low90.balance} />
-              </span>
-            </p>
-            <LineChart
-              title={t('dashboard.next90')}
-              labels={days90.map((d) => formatDate(d.date))}
-              axisLabels={days90.map((d) => formatDate(d.date).slice(0, 5))}
-              series={[{ name: t('dashboard.cash'), color: 'var(--series-1)', values: days90.map((d) => d.balance) }]}
-              height={150}
-              {...(settings.minimumBuffer ? { reference: { value: settings.minimumBuffer, label: t('plan.buffer') } } : {})}
-            />
-          </div>
-        </section>
-      )}
-
-      <section className="group" aria-labelledby="cash-h">
-        <div className="group-head">
-          <h2 id="cash-h">{t('dashboard.accounts')}</h2>
-          <span className="muted"><Money cents={cash} /></span>
-        </div>
-        {open.length === 0 ? (
-          <p className="muted"><a href={href('accounts')}>{t('dashboard.addAccount')}</a></p>
-        ) : (
-          <ul className="rows">
-            {open.map((a) => (
-              <li key={a.id}>
-                <a className="row-button" href={href('transactions', { account: a.id })}>
-                  <span className="row-main">
-                    <span className="row-title">{a.name}</span>
-                    {!isOnBudget(a) && <span className="row-sub">{t('accounts.offBudget')}</span>}
-                  </span>
-                  <span className="row-end"><Money cents={balances.get(a.id) ?? 0} className="row-amount" /></span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {budget && byGroup.size > 0 && (
-        <section className="group" aria-labelledby="bva-h">
-          <div className="group-head">
-            <h2 id="bva-h">{t('dashboard.budgetVsActual', { month: monthName(month) })}</h2>
+            <h2 id="coming-h">{t('home.comingUp')}</h2>
+            <a className="muted" href={href('plan', { tab: 'provisions' })}>{t('home.allProvisions')}</a>
           </div>
           <ul className="rows">
-            {CATEGORY_GROUPS.filter((g) => byGroup.has(g)).map((g) => {
-              const r = byGroup.get(g)!;
-              const pct = r.assigned > 0 ? Math.round((r.spent / r.assigned) * 100) : r.spent > 0 ? 100 : 0;
-              return (
-                <li key={g} className="row-static">
-                  <span className="row-main">
-                    <span className="row-title">{groupLabel(g)}</span>
-                    <span className="row-sub">
-                      <Money cents={r.spent} /> {t('dashboard.of')} <Money cents={r.assigned} />
-                    </span>
-                    <Meter percent={pct} label={t('budget.percentSpent', { pct })} />
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
-
-      {(provisionRows.length > 0 || eventRows.length > 0 || (budget && funds.length > 0)) && (
-        <section className="group" aria-labelledby="funds-h">
-          <div className="group-head">
-            <h2 id="funds-h">{t('dashboard.funds')}</h2>
-            <a className="muted" href={href('plan', { tab: 'provisions' })}>{t('dashboard.toPlan')}</a>
-          </div>
-          <ul className="rows">
-            {provisionRows.map((r) => (
-              <li key={r.provision.id} className="row-static">
-                <span className="row-main">
-                  <span className="row-title">{r.provision.name}</span>
-                  <span className="row-sub">{t('dashboard.due', { date: formatDate(r.nextDue) })} · <Money cents={r.provision.amount} /></span>
-                  <span className="row-bar" aria-hidden="true"><span style={{ width: `${bucketView.get(r.provision.categoryId)?.percent ?? 0}%` }} /></span>
+            {coming.map((c) => (
+              <li key={c.id} className={`row-static coming kind-${c.kind}`}>
+                <span className="coming-date" aria-hidden="true">
+                  <b>{c.date.slice(8, 10)}</b>
+                  <span>{monthName(c.date.slice(0, 7)).slice(0, 3)}</span>
                 </span>
-                <span className="row-end"><Money cents={bucketView.get(r.provision.categoryId)?.level ?? 0} className="row-amount" /></span>
-              </li>
-            ))}
-            {eventRows.map((v) => (
-              <li key={v.event.id} className="row-static">
-                <span className="row-main">
-                  <span className="row-title">{v.event.name}</span>
-                  <span className="row-sub">{formatDate(v.event.targetDate)} · {t('dashboard.funded', { pct: tripPct(v.event.categoryId) })}</span>
-                  <span className="row-bar" aria-hidden="true"><span style={{ width: `${tripPct(v.event.categoryId)}%` }} /></span>
-                </span>
-                <span className="row-end"><Money cents={bucketView.get(v.event.categoryId)?.level ?? 0} className="row-amount" /></span>
-              </li>
-            ))}
-            {budget && funds.filter((c) => !linked.has(c.id)).map((c) => (
-              <li key={c.id} className="row-static">
                 <span className="row-main">
                   <span className="row-title">{c.name}</span>
-                  <span className="row-sub">{groupLabel(c.groupId)}</span>
+                  <span className="row-sub">{formatDate(c.date)} · {c.held >= c.amount ? t('home.covered') : t('home.holds', { pct: c.amount > 0 ? Math.round((Math.max(0, c.held) / c.amount) * 100) : 0 })}</span>
+                  <span className="row-bar" aria-hidden="true"><span style={{ width: `${c.amount > 0 ? Math.min(100, Math.round((Math.max(0, c.held) / c.amount) * 100)) : 0}%` }} /></span>
                 </span>
-                <span className="row-end"><Money cents={budget.categories.get(c.id)?.available ?? 0} className="row-amount" /></span>
+                <span className="row-end"><Money cents={c.amount} className="row-amount" /></span>
               </li>
             ))}
           </ul>

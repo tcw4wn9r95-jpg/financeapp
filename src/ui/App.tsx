@@ -20,14 +20,16 @@ import { ScenariosTab } from './pages/ScenariosTab';
 import { TaxTab } from './pages/TaxTab';
 import { LockScreen, RecoveryKeyStep } from './pages/LockScreen';
 import { SettingsPage } from './pages/SettingsPage';
+import { LogPage, LogSheet } from './pages/LogPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 
 const NAV = [
   ['', 'nav.dashboard', 'home'],
   ['budget', 'nav.budget', 'budget'],
-  ['inbox', 'nav.inbox', 'inbox'],
   ['plan', 'nav.plan', 'chart'],
   ['insights', 'nav.insights', 'insights'],
+  ['log', 'nav.log', 'receipt'],
+  ['inbox', 'nav.inbox', 'inbox'],
   ['transactions', 'nav.transactions', 'list'],
   ['import', 'nav.import', 'upload'],
   ['accounts', 'nav.accounts', 'bank'],
@@ -36,8 +38,8 @@ const NAV = [
   ['settings', 'nav.settings', 'settings'],
 ] as const satisfies readonly (readonly [string, MessageKey, IconName])[];
 
-/** On phones the first five sit in the bottom bar; the rest live under "More". */
-const PRIMARY = new Set(['', 'budget', 'inbox', 'plan', 'insights']);
+/** Four sections sit in the tab bar around the centre "log a spend" button (D-113); the rest live under "More". */
+const PRIMARY = new Set(['', 'budget', 'plan', 'insights']);
 
 export function App() {
   const vault = useVault();
@@ -84,7 +86,8 @@ function Shell() {
   }, [section]);
 
   const badge = inboxCount > 0 && <span className="nav-count" aria-label={t('nav.inboxCount', { n: inboxCount })}>{inboxCount}</span>;
-  const moreActive = section === 'more' || !PRIMARY.has(section);
+  const moreActive = section === 'more';
+  const [logging, setLogging] = useState(false);
 
   return (
     <div className="shell">
@@ -93,31 +96,42 @@ function Shell() {
       </a>
       <header className="topbar">
         <a className="brand" href={href('')}>
-          <img src="./icon.svg" alt="" width="26" height="26" />
+          <img src="./icon.svg" alt="" width="28" height="28" />
           <span>{t('app.short')}</span>
         </a>
-        <button type="button" className="icon-button" onClick={() => vault.lock()} aria-label={t('nav.lock')}>
-          <Icon name="lock" />
-        </button>
+        <div className="topbar-actions">
+          <a className="icon-button" href={href('inbox')} aria-label={t('nav.inbox')} aria-current={section === 'inbox' ? 'page' : undefined}>
+            <span className="tab-icon">
+              <Icon name="inbox" size={20} />
+              {badge}
+            </span>
+          </a>
+          <a className="icon-button" href={href('more')} aria-label={t('nav.more')} aria-current={moreActive ? 'page' : undefined}>
+            <Icon name="grid" size={20} />
+          </a>
+        </div>
       </header>
       <main id="main" ref={mainRef} tabIndex={-1}>
         {section === 'more' ? <MorePage /> : <Page section={section} />}
       </main>
       <nav className="tabbar" aria-label={t('nav.label')}>
-        {NAV.filter(([path]) => PRIMARY.has(path)).map(([path, key, icon]) => (
+        {NAV.filter(([path]) => PRIMARY.has(path)).flatMap(([path, key, icon], i) => [
+          ...(i === 2
+            ? [
+                <button key="log" type="button" className="tab-log" onClick={() => setLogging(true)} aria-label={t('log.add')}>
+                  <Icon name="plus" size={28} />
+                </button>,
+              ]
+            : []),
           <a key={path} href={href(path)} aria-current={section === path ? 'page' : undefined}>
             <span className="tab-icon">
               <Icon name={icon} size={22} />
-              {path === 'inbox' && badge}
             </span>
             <span>{t(key)}</span>
-          </a>
-        ))}
-        <a href={href('more')} aria-current={moreActive ? 'page' : undefined}>
-          <span className="tab-icon"><Icon name="more" size={22} /></span>
-          <span>{t('nav.more')}</span>
-        </a>
+          </a>,
+        ])}
       </nav>
+      {logging && <LogSheet onClose={() => setLogging(false)} />}
     </div>
   );
 }
@@ -171,6 +185,8 @@ function Page({ section }: { section: string }) {
       return <CategoriesPage />;
     case 'settings':
       return <SettingsPage />;
+    case 'log':
+      return <LogPage />;
     default:
       return <DashboardPage />;
   }

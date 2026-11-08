@@ -532,6 +532,19 @@ export interface Cover {
   at: string;
 }
 
+/**
+ * A spend logged by hand as it happens (D-112): a running tracker for the
+ * month, never part of the ledger or the budget, which come from statements.
+ */
+export interface LogEntry extends BaseRecord {
+  /** When it was logged (local date and time, "YYYY-MM-DDTHH:mm"). */
+  at: string;
+  /** Positive: money spent. */
+  amount: Cents;
+  categoryId: Id;
+  note?: string;
+}
+
 // ------------------------------------------------------------------ stores
 
 export interface StoreRecords {
@@ -547,6 +560,7 @@ export interface StoreRecords {
   trainingExamples: TrainingExample;
   scenarios: Scenario;
   taxProfiles: TaxProfile;
+  logEntries: LogEntry;
   statements: Statement;
   importBatches: ImportBatch;
   bankMappings: BankMapping;
@@ -569,6 +583,7 @@ export const STORE_NAMES: readonly StoreName[] = [
   'trainingExamples',
   'scenarios',
   'taxProfiles',
+  'logEntries',
   'statements',
   'importBatches',
   'bankMappings',

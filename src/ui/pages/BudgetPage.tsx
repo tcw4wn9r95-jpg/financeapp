@@ -126,7 +126,7 @@ export function BudgetPage() {
             const rows = cats.map((c) => [c, budget.categories.get(c.id)!] as const);
             const planned = rows.reduce((s, [, m]) => s + m.assigned, 0);
             return (
-              <section key={g} className="group" aria-labelledby={`g-${g}`}>
+              <section key={g} className={`group kind-${g}`} aria-labelledby={`g-${g}`}>
                 <div className="group-head">
                   <h2 id={`g-${g}`}>{groupLabel(g)}</h2>
                   <span className="muted">
@@ -409,7 +409,7 @@ function IncomeSection({ month, budget, onPlan }: { month: MonthKey; budget: Bud
   const income = categories.filter((c) => c.isIncome && !c.archivedAt).sort((a, b) => a.sortOrder - b.sortOrder);
   const expected = (id: string) => overrides.find((o) => o.categoryId === id && o.month === month)?.amount ?? defaultFor(defaults, id, month)?.monthlyAmount ?? 0;
   return (
-    <section className="group" aria-labelledby="income-h">
+    <section className="group kind-income" aria-labelledby="income-h">
       <div className="group-head">
         <h2 id="income-h">{t('budget.incomeTitle')}</h2>
         <button type="button" className="link-button muted" onClick={() => setShowIncome(true)}>

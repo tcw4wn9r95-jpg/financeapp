@@ -40,9 +40,12 @@ export function ReadyToAssign({ month, compact = false }: { month: BudgetMonth; 
     [input, month, basis],
   );
   const tone = plan.net === 0 ? 'zero' : plan.net > 0 ? 'pos' : 'neg';
-  const row = (label: string, amount: Cents, sign: 1 | -1) => (
-    <li className="split-row"><span>{label}</span><Money cents={sign * amount} plusSign={sign > 0} /></li>
+  const row = (label: string, amount: Cents, sign: 1 | -1, kind: string) => (
+    <li className="split-row"><span><span className="flow-key" style={{ background: `var(--g-${kind})` }} aria-hidden="true" />{label}</span><Money cents={sign * amount} plusSign={sign > 0} /></li>
   );
+  // Where the income goes, as one bar (D-113): each kind in its colour, what is left in the card's own tint.
+  const parts: [string, Cents][] = [['fixed', plan.fixed], ['variable', plan.variable], ['provisions', plan.provisions], ['events', plan.oneOffs], ['savings', plan.invested]];
+  const base = Math.max(plan.income, parts.reduce((s, [, v]) => s + v, 0), 1);
   return (
     <>
       <section className={`rta rta-${tone} ${compact ? 'rta-compact' : ''}`} aria-labelledby="rta-label">
@@ -72,13 +75,16 @@ export function ReadyToAssign({ month, compact = false }: { month: BudgetMonth; 
         <p className="rta-amount">
           <Money cents={plan.net} plusSign />
         </p>
+        <div className="flow-bar" aria-hidden="true">
+          {parts.filter(([, v]) => v > 0).map(([k, v]) => <span key={k} style={{ flex: v / base, background: `var(--g-${k})` }} />)}
+        </div>
         <ul className="plain-list flow-list">
-          {row(t('flow.income'), plan.income, 1)}
-          {row(t('flow.fixed'), plan.fixed, -1)}
-          {row(t('flow.variable'), plan.variable, -1)}
-          {row(t('flow.provisions'), plan.provisions, -1)}
-          {plan.oneOffs > 0 && row(t('flow.oneOffs'), plan.oneOffs, -1)}
-          {plan.invested > 0 && row(t('flow.invested'), plan.invested, -1)}
+          {row(t('flow.income'), plan.income, 1, 'income')}
+          {row(t('flow.fixed'), plan.fixed, -1, 'fixed')}
+          {row(t('flow.variable'), plan.variable, -1, 'variable')}
+          {row(t('flow.provisions'), plan.provisions, -1, 'provisions')}
+          {plan.oneOffs > 0 && row(t('flow.oneOffs'), plan.oneOffs, -1, 'events')}
+          {plan.invested > 0 && row(t('flow.invested'), plan.invested, -1, 'savings')}
           <li className="split-row flow-total"><strong>{t('flow.net')}</strong><strong><Money cents={plan.net} plusSign /></strong></li>
         </ul>
         <p className="cash-flow-sub">{basis === 'recent' ? t('flow.recentHint', { n: plan.paced }) : t('flow.planHint')}</p>

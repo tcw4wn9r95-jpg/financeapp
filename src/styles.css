@@ -4,31 +4,52 @@
 
 :root {
   -webkit-text-size-adjust: 100%;
-  --bg: #fafaf9;
+  /* Design 2026 (D-113): a soft lavender ground, white cards, indigo for
+     actions, and one colour per kind of money, the same on every screen. */
+  --bg: #f5f4fb;
   --surface: #ffffff;
-  --surface-2: #f4f4f2;
-  --surface-3: #ececea;
-  --border: #ebebe8;
-  --border-strong: #d4d4d0;
-  --text: #111113;
-  --muted: #6b6b70;
-  --faint: #9b9ba0;
-  --ink: #111113;
+  --surface-2: #f0eef8;
+  --surface-3: #e7e4f3;
+  --border: #e9e7f3;
+  --border-strong: #d4d1e6;
+  --text: #17162a;
+  --muted: #5d5b74;
+  --faint: #8a88a3;
+  --ink: #4f46e5;
   --ink-text: #ffffff;
+  --hero: #312e81;
+  --hero-text: #ffffff;
+  --hero-muted: #c7c6f5;
   --pos: #047857;
-  --pos-bg: #ecfdf5;
+  --pos-bg: #e7f8f0;
   --neg: #c2281f;
-  --neg-bg: #fdf1f0;
+  --neg-bg: #fdf0ef;
   --warn: #9a5b06;
-  --warn-bg: #fff8eb;
-  --focus: #2563eb;
-  --series-1: #2a78d6;
-  --series-2: #eb6834;
+  --warn-bg: #fff6e6;
+  --focus: #4f46e5;
+  --series-1: #4f46e5;
+  --series-2: #ea580c;
   --chart-over: #c2281f;
   --chart-under: #047857;
-  --radius: 16px;
-  --radius-sm: 10px;
-  --tabbar: 64px;
+  /* Kinds of money (validated for colour blindness and contrast, D-113). */
+  --g-income: #15803d;
+  --g-fixed: #4f46e5;
+  --g-variable: #ea580c;
+  --g-provisions: #0d9488;
+  --g-events: #b45309;
+  --g-savings: #0284c7;
+  --g-income-bg: #e6f6ec;
+  --g-fixed-bg: #ebeafd;
+  --g-variable-bg: #fff0e6;
+  --g-provisions-bg: #e2f6f3;
+  --g-events-bg: #fbf0e1;
+  --g-savings-bg: #e3f2fb;
+  --shadow: 0 1px 2px rgba(23, 22, 42, 0.05), 0 4px 16px rgba(49, 46, 129, 0.06);
+  --shadow-lift: 0 10px 28px rgba(49, 46, 129, 0.14);
+  --radius: 22px;
+  --radius-sm: 14px;
+  --tabbar: 72px;
+  --display: 'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', 'Inter Variable', system-ui, sans-serif;
   color-scheme: light;
   font-family: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 15px;
@@ -39,28 +60,45 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0b0b0c;
-    --surface: #141416;
-    --surface-2: #1b1b1e;
-    --surface-3: #242428;
-    --border: #232327;
-    --border-strong: #34343a;
-    --text: #f4f4f5;
-    --muted: #a1a1aa;
-    --faint: #71717a;
-    --ink: #f4f4f5;
-    --ink-text: #0b0b0c;
+    --bg: #0e0d16;
+    --surface: #181724;
+    --surface-2: #211f30;
+    --surface-3: #2a283c;
+    --border: #26243a;
+    --border-strong: #3a3754;
+    --text: #f3f2fa;
+    --muted: #a9a7c2;
+    --faint: #7c7a96;
+    --ink: #6d6ff0;
+    --ink-text: #ffffff;
+    --hero: #24216b;
+    --hero-text: #ffffff;
+    --hero-muted: #c3c2f2;
     --pos: #34d399;
     --pos-bg: #0d241b;
     --neg: #f87171;
     --neg-bg: #2a1514;
     --warn: #fbbf24;
     --warn-bg: #2a2010;
-    --focus: #60a5fa;
-    --series-1: #3987e5;
-    --series-2: #d95926;
+    --focus: #8b8cf7;
+    --series-1: #6d6ff0;
+    --series-2: #e2600c;
     --chart-over: #f0564d;
     --chart-under: #22a06b;
+    --g-income: #1b9a4c;
+    --g-fixed: #6d6ff0;
+    --g-variable: #e2600c;
+    --g-provisions: #0e9488;
+    --g-events: #c08406;
+    --g-savings: #1489c9;
+    --g-income-bg: #12261a;
+    --g-fixed-bg: #1f1e44;
+    --g-variable-bg: #2c1a0e;
+    --g-provisions-bg: #0f2624;
+    --g-events-bg: #2a200c;
+    --g-savings-bg: #0f2231;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-lift: 0 10px 28px rgba(0, 0, 0, 0.5);
     color-scheme: dark;
   }
 }
@@ -3015,4 +3053,631 @@ input[type='date']::-webkit-date-and-time-value {
 }
 .gap-under {
   color: var(--muted);
+}
+
+/* =====================================================================
+   Design 2026 (D-113). A colourful, calm layer over the base styles:
+   - a lavender ground with white cards that float on a soft shadow;
+   - Plus Jakarta Sans for headings and amounts, Inter for reading;
+   - indigo for every action, a deep indigo hero card for the month;
+   - one colour per kind of money (income, fixed, variable, provisions,
+     trips, savings), used as dots, bars and tints, always with a label;
+   - a floating tab bar with a centre button to log a spend.
+   ===================================================================== */
+
+h1,
+h2,
+.dialog-head h2,
+.big-number,
+.rta-amount,
+.row-amount,
+.tile-value,
+.headline .big-number {
+  font-family: var(--display);
+}
+h1 {
+  font-size: 1.85rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+h2 {
+  font-size: 1.08rem;
+  font-weight: 750;
+  letter-spacing: -0.015em;
+}
+.big-number {
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+/* Cards float: no hairline, a soft shadow. */
+.card,
+.rows,
+.rta,
+.oneoff-card {
+  border: 0;
+  box-shadow: var(--shadow);
+}
+.card {
+  border-radius: var(--radius);
+}
+.rows {
+  border-radius: var(--radius);
+}
+.rows > li + li {
+  border-top-color: var(--surface-2);
+}
+
+/* Buttons and chips: rounded, indigo for the action. */
+.button {
+  min-height: 44px;
+  border-radius: var(--radius-sm);
+  font-weight: 650;
+}
+.button-primary {
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--ink) 28%, transparent);
+}
+.button:not(.button-primary):not(.button-quiet):not(.button-danger) {
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.chip {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+}
+.chip[aria-pressed='true'],
+.chip[aria-current],
+.chip-on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--ink-text);
+}
+.tabs {
+  background: var(--surface-3);
+  border-radius: 14px;
+}
+.tabs a[aria-current='page'] {
+  border-radius: 11px;
+  box-shadow: var(--shadow);
+}
+input[type='text'],
+input[type='password'],
+input[type='date'],
+input:not([type]),
+input[inputmode],
+select {
+  border-color: var(--border-strong);
+  border-radius: var(--radius-sm);
+  min-height: 48px;
+}
+.notice {
+  border-radius: var(--radius-sm);
+}
+
+/* Top bar: the page's own colour, no line. */
+.topbar {
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  border-bottom: 0;
+  height: 60px;
+}
+.brand {
+  font-family: var(--display);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.topbar-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.topbar .icon-button {
+  border: 0;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  border-radius: 14px;
+  width: 44px;
+  height: 44px;
+}
+
+/* Floating tab bar with the centre "log a spend" button. */
+.tabbar {
+  inset: auto 0.75rem calc(0.75rem + env(safe-area-inset-bottom)) 0.75rem;
+  max-width: 576px;
+  height: var(--tabbar);
+  padding-bottom: 0;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: center;
+  border: 0;
+  border-radius: 26px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: var(--shadow-lift);
+}
+@media (min-width: 600px) {
+  .tabbar {
+    left: 50%;
+    right: auto;
+    width: 576px;
+    transform: translateX(-50%);
+    border: 0;
+  }
+}
+.tabbar a {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--faint);
+}
+.tabbar a[aria-current='page'] {
+  color: var(--ink);
+  font-weight: 750;
+}
+.tab-log {
+  justify-self: center;
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+  margin-top: -30px;
+  border: 0;
+  border-radius: 22px;
+  background: var(--ink);
+  color: var(--ink-text);
+  box-shadow: 0 12px 24px color-mix(in srgb, var(--ink) 40%, transparent);
+  cursor: pointer;
+}
+.tab-log:active {
+  transform: scale(0.96);
+}
+main {
+  padding-bottom: calc(var(--tabbar) + 3rem + env(safe-area-inset-bottom));
+}
+
+/* The month card is the hero: deep indigo, white type. */
+.rta {
+  background: var(--hero);
+  color: var(--hero-text);
+  border-radius: 26px;
+}
+.rta .rta-label,
+.rta .cash-flow-sub,
+.rta .rta-unplanned,
+.rta .rta-why,
+.rta .link-button {
+  color: var(--hero-muted);
+}
+.rta .money,
+.rta-pos .money,
+.rta-zero .money,
+.rta-neg .money {
+  color: var(--hero-text);
+}
+.rta .flow-list > li {
+  border-color: color-mix(in srgb, var(--hero-text) 14%, transparent);
+}
+.rta .flow-total {
+  border-top-color: color-mix(in srgb, var(--hero-text) 30%, transparent);
+}
+.rta .chip {
+  background: color-mix(in srgb, var(--hero-text) 12%, transparent);
+  border-color: transparent;
+  color: var(--hero-text);
+}
+.rta .chip[aria-pressed='true'] {
+  background: var(--hero-text);
+  color: var(--hero);
+}
+.rta .rta-message {
+  background: color-mix(in srgb, var(--hero-text) 12%, transparent);
+  color: var(--hero-text);
+}
+.rta .rta-unplanned {
+  border-top-color: color-mix(in srgb, var(--hero-text) 18%, transparent);
+}
+.flow-key {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+.flow-bar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  margin: 0.25rem 0 0.75rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--hero-text) 12%, transparent);
+}
+.flow-bar span {
+  display: block;
+}
+
+/* Kinds of money: each group carries its colour. */
+.kind-income { --gc: var(--g-income); --gc-bg: var(--g-income-bg); }
+.kind-fixed { --gc: var(--g-fixed); --gc-bg: var(--g-fixed-bg); }
+.kind-variable { --gc: var(--g-variable); --gc-bg: var(--g-variable-bg); }
+.kind-provisions { --gc: var(--g-provisions); --gc-bg: var(--g-provisions-bg); }
+.kind-events { --gc: var(--g-events); --gc-bg: var(--g-events-bg); }
+.kind-savings,
+.kind-investments { --gc: var(--g-savings); --gc-bg: var(--g-savings-bg); }
+.group-head h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--display);
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: var(--text);
+}
+.group[class*='kind-'] .group-head h2::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  background: var(--gc);
+}
+.group[class*='kind-'] .row-bar > span {
+  background: var(--gc);
+}
+.row-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.row-bar-over > span {
+  background: var(--chart-over) !important;
+}
+.row-amount {
+  font-weight: 800;
+}
+
+/* Dialogs: a sheet with a handle on phones. */
+.dialog {
+  border: 0;
+  border-radius: 26px;
+}
+.dialog::backdrop {
+  background: rgb(23 22 42 / 0.45);
+}
+@media (max-width: 559px) {
+  .dialog,
+  .dialog-wide {
+    border-radius: 26px 26px 0 0;
+  }
+  .dialog-head::before {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    width: 40px;
+    height: 5px;
+    margin-left: -20px;
+    border-radius: 999px;
+    background: var(--border-strong);
+  }
+}
+
+/* Spending log (D-112) */
+.log-sheet {
+  display: grid;
+  gap: 1rem;
+}
+.log-when {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.log-amount {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0;
+}
+.log-amount input {
+  width: 9ch;
+  min-height: 0;
+  border: 0 !important;
+  box-shadow: none !important;
+  background: transparent;
+  text-align: right;
+  font-family: var(--display);
+  font-size: 3.2rem !important;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  padding: 0;
+}
+.log-amount span {
+  font-family: var(--display);
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+.log-lines {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.log-lines legend {
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 650;
+  color: var(--muted);
+}
+.log-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.log-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0 0.85rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.log-chip[aria-pressed='true'] {
+  border: 2px solid var(--gc, var(--ink));
+  background: var(--gc-bg, var(--surface-2));
+  font-weight: 750;
+}
+.log-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--gc, var(--ink));
+}
+.log-more {
+  border-style: dashed;
+  color: var(--ink);
+}
+.log-context {
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  border-radius: 14px;
+  background: var(--surface-2);
+  font-size: 0.875rem;
+}
+.log-save {
+  min-height: 54px;
+  font-family: var(--display);
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+.log-total {
+  display: block;
+  margin: 0.15rem 0 0.5rem;
+}
+.log-total .big-number {
+  font-size: 2rem;
+}
+.log-chart {
+  margin: 0.5rem 0;
+}
+.log-chart svg {
+  width: 100%;
+  height: 150px;
+  display: block;
+}
+.log-line {
+  fill: none;
+  stroke: var(--g-variable);
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.log-pace {
+  stroke: var(--text);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 5;
+  vector-effect: non-scaling-stroke;
+}
+.log-projection {
+  stroke: var(--g-variable);
+  stroke-width: 2;
+  stroke-dasharray: 2 5;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.log-now {
+  fill: var(--g-variable);
+  stroke: var(--surface);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.log-key {
+  display: inline-block;
+  width: 16px;
+  height: 0;
+  margin-right: 6px;
+  vertical-align: middle;
+  border-top: 3px solid var(--g-variable);
+}
+.log-key-pace {
+  border-top: 2px dashed var(--text);
+}
+.log-key-proj {
+  border-top: 3px dotted var(--g-variable);
+}
+.log-chart .chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.log-verdict {
+  margin: 0;
+  font-weight: 600;
+}
+.log-bars {
+  display: grid;
+  gap: 0.9rem;
+}
+.log-bars li {
+  display: grid;
+  gap: 0.35rem;
+}
+.log-bar,
+.log-meter {
+  position: relative;
+  display: block;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.log-bar > span,
+.log-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--gc, var(--g-variable));
+}
+.log-bar-over > span {
+  background: var(--chart-over);
+}
+.log-meter {
+  height: 12px;
+  overflow: visible;
+  margin: 0.4rem 0;
+}
+.log-meter i {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: 20px;
+  background: var(--text);
+}
+.log-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 0.75rem 0.65rem 1rem;
+}
+.log-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--gc-bg, var(--surface-2));
+  color: var(--gc, var(--text));
+  font-family: var(--display);
+  font-weight: 800;
+}
+.log-entry .icon-button {
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+}
+.log-day {
+  margin-bottom: 1rem;
+}
+.log-home {
+  display: grid;
+  gap: 0.25rem;
+  color: inherit;
+  text-decoration: none;
+}
+.log-home-title {
+  font-family: var(--display);
+  font-size: 1.05rem;
+}
+.home-head {
+  margin: 0.25rem 0 1rem;
+}
+.home-head h1 {
+  margin: 0;
+}
+.home-date {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.topbar a.icon-button {
+  text-decoration: none;
+}
+.topbar a.icon-button[aria-current='page'] {
+  color: var(--ink);
+}
+.topbar .tab-icon .nav-count {
+  top: -10px;
+  left: 12px;
+  background: var(--g-variable);
+}
+.hero-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+.coming {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+.coming-date {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 46px;
+  height: 50px;
+  border-radius: 14px;
+  background: var(--gc-bg, var(--surface-2));
+  color: var(--gc, var(--text));
+  line-height: 1.05;
+}
+.coming-date b {
+  font-family: var(--display);
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+.coming-date span {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.coming .row-bar > span {
+  background: var(--gc);
+}
+
+.rta summary,
+.rta .rta-unplanned summary {
+  color: var(--hero-muted);
+}
+.topbar {
+  background: color-mix(in srgb, var(--bg) 96%, transparent);
+}
+.log-amount input {
+  width: 7ch;
+  text-align: center;
+}
+.more-list a > .icon:first-child,
+.more-list button > .icon:first-child {
+  box-sizing: content-box;
+  padding: 8px;
+  border-radius: 12px;
+  background: var(--g-fixed-bg);
+  color: var(--ink);
+}
+.topbar {
+  background: var(--bg);
 }
