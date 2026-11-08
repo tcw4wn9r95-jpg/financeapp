@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { forecast, heldAhead, monthCashPlan } from './forecast';
+import { nextBills } from './plan';
 import { World } from './testkit';
 import type { Provision } from './types';
 
@@ -34,7 +35,8 @@ const provision = { id: 'p', name: 'Tax', amount: eur(1_000), dueDate: '2026-12-
 
 describe('forecast (D-105)', () => {
   const w = household();
-  const base = { today: '2026-07-01', months: 12, budget: w.input(), provisions: [provision], events: [] };
+  // As the app builds it: provisions capped at their next bill (D-114).
+  const base = { today: '2026-07-01', months: 12, budget: { ...w.input(), nextBills: nextBills([provision], '2026-01', '2027-12') }, provisions: [provision], events: [] };
 
   it('does not repeat a one-off income that has no plan', () => {
     const r = forecast(base);

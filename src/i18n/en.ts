@@ -1323,6 +1323,8 @@ export const en = {
   'home.allProvisions': 'All provisions',
   'home.covered': 'covered',
   'home.holds': '{pct} % set aside',
+  'categories.keepsMoney': 'Provisions and trips always keep their money from month to month: it is there when the bill comes.',
+  'categories.keepsShort': 'Keeps its money',
   'loanLine.title': '{name} has no budget line',
   'loanLine.body': 'It is paid by “{payee}”, {amount} a month: {n} payments since {from}, filed as {where}. As its own line it is budgeted like a mortgage, the payments count there, and they lower what the loan owes.',
   'loanLine.last': 'What it owed at the start makes {month} the last payment.',

@@ -2,7 +2,7 @@ import type { BudgetInput } from '../domain/budget';
 import { freeSavingsByMonth } from '../domain/buckets';
 import { addMonths, currentMonth } from '../domain/dates';
 import { eventPlans, nextBills } from '../domain/plan';
-import type { Account, Allocation, BudgetDefault, BudgetOverride, Category, EventFund, Provision, Settings, Transaction } from '../domain/types';
+import type { Account, Allocation, BudgetDefault, BudgetOverride, Category, Cents, EventFund, Id, MonthKey, Provision, Settings, Transaction } from '../domain/types';
 
 export interface BudgetSources {
   settings: Settings;
@@ -22,6 +22,12 @@ export interface BudgetSources {
  * fund), that category holds whatever the account has beyond what provisions
  * and trips need (D-75), so Ready to assign shows only money free to spend.
  */
+function heldTargets(rows: readonly { categoryId: Id; month: MonthKey; held: Cents }[]): Map<Id, Map<MonthKey, Cents>> {
+  const out = new Map<Id, Map<MonthKey, Cents>>();
+  for (const r of rows) out.set(r.categoryId, (out.get(r.categoryId) ?? new Map()).set(r.month, r.held));
+  return out;
+}
+
 export function buildBudgetInput(s: BudgetSources): BudgetInput {
   const base: BudgetInput = {
     startMonth: s.settings.budgetStartMonth,
@@ -36,6 +42,8 @@ export function buildBudgetInput(s: BudgetSources): BudgetInput {
     ...(s.settings.sweepTargetCategoryId ? { sweepTargetCategoryId: s.settings.sweepTargetCategoryId } : {}),
     // Overspending covered, kept apart from the budget (D-94).
     ...(s.settings.covers?.length ? { covers: s.settings.covers } : {}),
+    // What provisions were told they hold (D-115).
+    ...(s.settings.provisionHeld?.length ? { heldTargets: heldTargets(s.settings.provisionHeld) } : {}),
     // A provision that holds its next bill stops taking money (D-114).
     ...(s.provisions.length ? { nextBills: nextBills(s.provisions, s.settings.budgetStartMonth, addMonths(currentMonth(), 36)) } : {}),
   };

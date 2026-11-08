@@ -465,21 +465,27 @@ export function heldAhead(f: ForecastInput, months: readonly MonthKey[]): Map<Mo
  */
 export function provisionFlow(f: ForecastInput, months: readonly MonthKey[]): Map<MonthKey, { held: Cents; setAside: Cents; paid: Cents }> {
   const thisMonth = monthOf(f.today);
-  const now = computeBudget(f.budget, thisMonth).at(-1);
+  // What the budget sets aside each month comes from the budget itself (D-115): defaults, trip plans,
+  // what a provision was told it holds, one-month changes, and the cap at the next bill.
+  const ahead = computeBudget(f.budget, months.at(-1) ?? thisMonth);
+  const byMonth = new Map(ahead.map((b) => [b.month, b]));
+  const now = byMonth.get(thisMonth);
   const out = new Map(months.map((m) => [m, { held: 0, setAside: 0, paid: 0 }]));
-  const lines: { categoryId: Id; capped: boolean; bills: { date: IsoDate; amount: Cents }[] }[] = [
-    ...f.provisions.map((p) => ({ categoryId: p.categoryId, capped: true, bills: occurrences(p, `${thisMonth}-01`, lastDayOfMonth(months.at(-1) ?? thisMonth)).filter((d) => d > f.today).map((d) => ({ date: d, amount: p.amount })) })),
-    ...f.events.filter((e) => e.status !== 'closed').map((e) => ({ categoryId: e.categoryId, capped: false, bills: e.targetDate > f.today ? [{ date: e.targetDate, amount: eventTotal(f, e) }] : [] })),
+  const lines: { categoryId: Id; provision: boolean; bills: { date: IsoDate; amount: Cents }[] }[] = [
+    ...f.provisions.map((p) => ({ categoryId: p.categoryId, provision: true, bills: occurrences(p, `${thisMonth}-01`, lastDayOfMonth(months.at(-1) ?? thisMonth)).filter((d) => d > f.today).map((d) => ({ date: d, amount: p.amount })) })),
+    ...f.events.filter((e) => e.status !== 'closed').map((e) => ({ categoryId: e.categoryId, provision: false, bills: e.targetDate > f.today ? [{ date: e.targetDate, amount: eventTotal(f, e) }] : [] })),
   ];
   for (const l of lines) {
     let have = Math.max(0, now?.categories.get(l.categoryId)?.available ?? 0);
     for (const m of months) {
       const x = out.get(m)!;
       if (m !== thisMonth) {
-        // A provision that already holds its next bill takes nothing more (D-114).
-        const next = l.bills.find((b) => monthOf(b.date) >= m);
-        const plan = planned(f.budget, l.categoryId, m) ?? 0;
-        const add = next && l.capped ? Math.min(plan, Math.max(0, next.amount - have)) : plan;
+        // The budget does not see bills ahead being paid: for a provision, its planned amount is
+        // capped here at what it still misses for its next bill (D-114); a month changed by hand,
+        // and a trip's plan, stand as the budget has them.
+        const cm = byMonth.get(m)?.categories.get(l.categoryId);
+        const next = l.provision ? l.bills.find((b) => monthOf(b.date) >= m) : undefined;
+        const add = Math.max(0, cm && next && !cm.overrideId ? Math.min(cm.defaultAmount, Math.max(0, next.amount - have)) : (cm?.assigned ?? 0));
         have += add;
         x.setAside += add;
       }

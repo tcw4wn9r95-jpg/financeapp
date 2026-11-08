@@ -67,6 +67,11 @@ export interface BudgetInput {
    * bill it stops taking money; a month changed by hand keeps its amount.
    */
   nextBills?: ReadonlyMap<Id, ReadonlyMap<MonthKey, Cents>>;
+  /**
+   * What a provision was told it holds in a month, that month's set-aside
+   * included (D-115): it is assigned whatever brings it there.
+   */
+  heldTargets?: ReadonlyMap<Id, ReadonlyMap<MonthKey, Cents>>;
 }
 
 /**
@@ -360,7 +365,9 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       // A provision that already holds its next bill takes nothing more (D-114).
       const bill = input.nextBills?.get(c.id)?.get(month);
       const planned = bill !== undefined ? Math.min(defaultAmount, Math.max(0, bill - carryIn)) : defaultAmount;
-      const assigned = ovr ? ovr.amount : target !== undefined ? target - carryIn - catActivity - covered : planned;
+      // Told what it holds this month (D-115): this month's set-aside brings it there, before any spending.
+      const held = input.heldTargets?.get(c.id)?.get(month);
+      const assigned = ovr ? ovr.amount : held !== undefined ? held - carryIn - covered : target !== undefined ? target - carryIn - catActivity - covered : planned;
       const available = carryIn + assigned + covered + catActivity;
       assignedTotal += assigned;
       coveredTotal += covered;
@@ -370,7 +377,9 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       let returnedToReady = 0;
       let sweptOut = 0;
       let uncovered = 0;
-      const mode = c.rolloverMode === 'sweep' && (!sweepTarget || sweepTarget === c.id) ? 'roll' : c.rolloverMode;
+      // Provisions and trips hold money for a bill: they always keep it, whatever the line's setting (D-115).
+      const holds = c.groupId === 'provisions' || c.groupId === 'events';
+      const mode = holds ? 'roll' : c.rolloverMode === 'sweep' && (!sweepTarget || sweepTarget === c.id) ? 'roll' : c.rolloverMode;
       if (available < 0 && c.groupId !== 'provisions' && c.groupId !== 'events') {
         // Overspending is never carried into the line's next month (D-89): what was not
         // covered when the month closed comes out of the next month's Ready to assign.

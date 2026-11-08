@@ -483,6 +483,10 @@ export interface Settings {
   members?: Member[];
   /** Forecast: warn about the first month the cash total falls below this. */
   minimumBuffer?: Cents;
+  /** What provisions were told they hold, by line and month (D-115). */
+  provisionHeld?: { categoryId: Id; month: MonthKey; held: Cents }[];
+  /** Provisions and trips set back to keep their money, and held overrides converted (D-115), once. */
+  provisionsKeep?: boolean;
   /** Spending lines no longer roll their leftovers over (D-111), once. */
   spendingReset?: boolean;
   /** Months of living costs kept as an emergency reserve in the forecast (D-105); default 6. */

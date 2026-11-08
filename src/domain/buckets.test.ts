@@ -20,6 +20,8 @@ function household() {
   w.setDefault('ins', eur(200)); // 1,200 by June
   w.setDefault('ins', eur(100), '2026-07'); // then the yearly cycle
   w.setDefault('tax', eur(200), '2026-07'); // 1,200 by December
+  // The June insurance bill is paid from the current account and filed to its line.
+  w.spend(bank, '2026-06-15', eur(1200), 'ins');
   const windows = (m: string) => [provisionWindow(prov(), m), provisionWindow(taxProv(), m)];
   return { w, bank, flex, windows };
 }

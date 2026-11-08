@@ -104,7 +104,11 @@ export function fillBuckets(
     if (w.target > 0) planned = Math.min(planned, w.target);
     // A refund filed to the bucket's category lands where it was paid, not in the provisions account.
     const spent = Math.max(0, -net);
-    return { w, planned, spent, plannedThisMonth, claim: Math.max(0, planned - spent) };
+    // What the line holds is what the budget says it holds (D-115): set-asides, what it was told it
+    // holds, covers and changes by hand alike; one figure for the budget and the provisions tab.
+    const holds = months.at(-1)?.categories.get(w.categoryId)?.available;
+    const claim = holds !== undefined ? Math.max(0, holds) : Math.max(0, planned - spent);
+    return { w, planned: claim + spent, spent, plannedThisMonth, claim };
   });
 
   const balance = accountId ? balanceAt(input, accountId, month) : 0;

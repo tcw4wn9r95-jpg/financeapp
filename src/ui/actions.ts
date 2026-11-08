@@ -2,7 +2,7 @@ import { backdateDefaults, defaultFor } from '../domain/budget';
 import { buildManualEntry, stamp, systemClock, type ManualEntry } from '../domain/ledger';
 import { addMonths, compareMonths, currentMonth, monthDiff, monthOf } from '../domain/dates';
 import { heldPlan, provisionSchedule, type CloseEventPlan } from '../domain/plan';
-import { formatMoney } from '../domain/money';
+import { formatMoney, parseMoney } from '../domain/money';
 import { uncoverOverrides, type CloseDecision, type MonthToClose } from '../domain/monthclose';
 import { DEMO_ANCHOR_MONTH, shiftSnapshotMonths } from '../domain/demo';
 import type { LoanLineSuggestion } from '../domain/loanlines';
@@ -805,17 +805,44 @@ export async function setProvisionHeld(vault: Vault, p: Provision, held: Cents, 
   const plan = heldPlan(p, held, carryIn, month);
   const now = new Date().toISOString();
   const ops: WriteOp[] = [];
-  const note = t('budget.heldNote', { amount: formatMoney(held) });
-  const existing = vault.list('budgetOverrides').find((o) => o.categoryId === p.categoryId && o.month === month);
-  ops.push({ type: 'put', store: 'budgetOverrides', record: existing ? { ...existing, amount: plan.thisMonth, note, updatedAt: now } : { ...(stamp(systemClock, 'manual') as BudgetOverride), categoryId: p.categoryId, month, amount: plan.thisMonth, note } });
-  // Later one-month changes are dropped: the new plan replaces them.
-  for (const o of vault.list('budgetOverrides')) if (o.categoryId === p.categoryId && o.month > month) ops.push({ type: 'delete', store: 'budgetOverrides', id: o.id });
+  // What it holds is kept as such (D-115): the budget fills the line to it, whatever came before.
+  const settings = getSettings(vault);
+  const rows = (settings.provisionHeld ?? []).filter((r) => r.categoryId !== p.categoryId || r.month < month);
+  rows.push({ categoryId: p.categoryId, month, held });
+  ops.push({ type: 'put', store: 'settings', record: { ...settings, provisionHeld: rows, updatedAt: now } });
+  // Its own one-month changes from this month on give way to it.
+  for (const o of vault.list('budgetOverrides')) if (o.categoryId === p.categoryId && o.month >= month) ops.push({ type: 'delete', store: 'budgetOverrides', id: o.id });
   for (const d of vault.list('budgetDefaults')) if (d.categoryId === p.categoryId && compareMonths(d.effectiveFrom, month) > 0) ops.push({ type: 'delete', store: 'budgetDefaults', id: d.id });
   const step = (from: MonthKey, monthlyAmount: Cents): WriteOp => ({ type: 'put', store: 'budgetDefaults', record: { ...(stamp(systemClock, 'manual') as BudgetDefault), categoryId: p.categoryId, monthlyAmount, effectiveFrom: from } });
   if (plan.monthsLeft > 0) ops.push(step(addMonths(month, 1), plan.monthly));
   for (const a of plan.after) ops.push(step(a.from, a.amount));
   ops.push({ type: 'put', store: 'provisions', record: { ...p, monthlyContribution: plan.monthly, updatedAt: now } });
   await vault.write(ops);
+}
+
+/**
+ * Once (D-115): provisions and trips keep their money again, whatever their
+ * line's carry-over setting, and the "already set aside" amounts written as
+ * one-month changes become what the line holds that month.
+ */
+export async function keepProvisionMoney(vault: Vault): Promise<number> {
+  const settings = getSettings(vault);
+  if (settings.provisionsKeep) return 0;
+  const now = new Date().toISOString();
+  const ops: WriteOp[] = [];
+  const holding = new Set(vault.list('categories').filter((c) => c.groupId === 'provisions' || c.groupId === 'events').map((c) => c.id));
+  for (const c of vault.list('categories')) if (holding.has(c.id) && c.rolloverMode !== 'roll') ops.push({ type: 'put', store: 'categories', record: { ...c, rolloverMode: 'roll', updatedAt: now } });
+  const rows = [...(settings.provisionHeld ?? [])];
+  for (const o of vault.list('budgetOverrides')) {
+    const m = o.note.match(/^Brought to (.+?) already set aside$/);
+    const held = m ? parseMoney(m[1]!.replace('€', '').trim()) : null;
+    if (!holding.has(o.categoryId) || held === null) continue;
+    rows.push({ categoryId: o.categoryId, month: o.month, held });
+    ops.push({ type: 'delete', store: 'budgetOverrides', id: o.id });
+  }
+  ops.push({ type: 'put', store: 'settings', record: { ...settings, provisionHeld: rows, provisionsKeep: true, updatedAt: now } });
+  await vault.write(ops);
+  return ops.length - 1;
 }
 
 export async function deleteProvision(vault: Vault, p: Provision): Promise<void> {

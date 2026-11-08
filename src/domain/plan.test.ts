@@ -394,3 +394,24 @@ describe('a provision stops taking money once it holds its next bill (D-114)', (
     expect(budgetForMonth(input, '2026-04')!.categories.get('tax')!.assigned).toBe(eur(100));
   });
 });
+
+describe('provisions keep their money; what they hold is a target (D-115)', () => {
+  function world(mode: 'roll' | 'reset') {
+    const w = new World('2026-01');
+    w.account('bank', 'current', eur(5_000));
+    w.category('tax', 'provisions', mode);
+    w.setDefault('tax', eur(100));
+    return w;
+  }
+  it('keeps what it set aside even when its line is set not to carry over', () => {
+    const w = world('reset');
+    expect(budgetForMonth(w.input(), '2026-03')!.categories.get('tax')!.available).toBe(eur(300));
+  });
+  it('is filled to what it was told it holds, whatever came before, and goes on from there', () => {
+    const w = world('roll');
+    const input = { ...w.input(), heldTargets: new Map([['tax', new Map([['2026-03', eur(750)]])]]) };
+    // January and February gave 200; March brings it to 750; April adds the usual 100.
+    expect(budgetForMonth(input, '2026-03')!.categories.get('tax')!).toMatchObject({ assigned: eur(550), available: eur(750) });
+    expect(budgetForMonth(input, '2026-04')!.categories.get('tax')!.available).toBe(eur(850));
+  });
+});

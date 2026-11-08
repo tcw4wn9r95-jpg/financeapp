@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { t, type MessageKey } from '../i18n';
-import { ensureInvestments, migrateCovers, stopSpendingRollover } from './actions';
+import { ensureInvestments, keepProvisionMoney, migrateCovers, stopSpendingRollover } from './actions';
 import { cleanUpLedger, cleanUpMessage } from './importActions';
 import { useToast } from './components/Toast';
 import { UpdateBanner } from './components/UpdateBanner';
@@ -68,10 +68,15 @@ function Shell() {
   const notify = useToast();
   useEffect(() => {
     void ensureInvestments(vault);
-    // Covers kept apart from the budget (D-94), once.
-    void migrateCovers(vault);
-    // Spending lines no longer roll over (D-111), once.
-    void stopSpendingRollover(vault);
+    // One after the other: each rewrites the settings record.
+    void (async () => {
+      // Covers kept apart from the budget (D-94), once.
+      await migrateCovers(vault);
+      // Spending lines no longer roll over (D-111), once.
+      await stopSpendingRollover(vault);
+      // Provisions and trips keep their money (D-115), once.
+      await keepProvisionMoney(vault);
+    })();
     // Duplicated transfer sides from before D-68 (and any since) are removed on unlock.
     void cleanUpLedger(vault).then((r) => {
       const msg = cleanUpMessage(r);

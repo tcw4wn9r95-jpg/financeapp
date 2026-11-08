@@ -62,7 +62,7 @@ export function CategoriesPage() {
                       {c.name}
                     </button>
                     <span className="muted">
-                      {rolloverLabel(c.rolloverMode)}
+                      {c.groupId === 'provisions' || c.groupId === 'events' ? t('categories.keepsShort') : rolloverLabel(c.rolloverMode)}
                       {c.rolloverMode === 'sweep' && sweepTarget && ` → ${sweepTarget.name}`}
                       {' · '}
                       <Money cents={defaultFor(defaults, c.id, month)?.monthlyAmount ?? 0} />
@@ -130,7 +130,8 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
     const changedDefault = amount.cents !== null && amount.cents !== current && !(current === undefined && amount.cents === 0);
     try {
       await saveCategory(vault, {
-        name: name.trim(), groupId, rolloverMode: isIncome ? 'reset' : mode, isIncome,
+        // Provisions and trips always keep their money (D-115).
+        name: name.trim(), groupId, rolloverMode: isIncome ? 'reset' : groupId === 'provisions' || groupId === 'events' ? 'roll' : mode, isIncome,
         ...(isIncome && forNext ? { nextMonthFromDay: NEXT_MONTH_FROM_DAY, ...(nextStart ? { nextMonthStart: nextStart } : {}) } : {}),
         ...(changedDefault || until ? { monthlyDefault: amount.cents ?? current ?? 0, fromMonth } : {}),
         ...(until ? { untilMonth: until } : {}),
@@ -159,6 +160,9 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
             <SelectField label={t('categories.group')} value={groupId} onChange={(e) => setGroupId(e.target.value as CategoryGroup)}>
               {CATEGORY_GROUPS.map((g) => <option key={g} value={g}>{groupLabel(g)}</option>)}
             </SelectField>
+            {groupId === 'provisions' || groupId === 'events' ? (
+              <p className="hint">{t('categories.keepsMoney')}</p>
+            ) : (
             <fieldset className="radio-list">
               <legend>{t('categories.rollover')}</legend>
               {MODES.map((m) => (
@@ -170,6 +174,7 @@ function CategoryDialog({ existing, preset, onClose }: { existing: Category | un
                 </label>
               ))}
             </fieldset>
+            )}
             {mode === 'sweep' && !settings.sweepTargetCategoryId && <p className="notice notice-warn">⚠ {t('categories.noSweepTarget')}</p>}
           </>
         )}
