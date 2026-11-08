@@ -50,11 +50,14 @@ describe('forecast (D-105)', () => {
   });
   it('counts what provisions hold for bills still to come, and lets it go when the bill is paid', () => {
     const held = heldAhead(base, ['2026-07', '2026-08', '2026-09', '2026-10', '2026-11', '2026-12', '2027-01']);
-    // 7 months × 100 € set aside by July, 100 € more each month, the 1,000 € bill paid in December.
+    // 7 months × 100 € set aside by July, 100 € more each month until it holds the 1,000 € bill
+    // (October), nothing more after that (D-114); the bill is paid in December.
     expect(held.get('2026-07')).toBe(eur(700));
     expect(held.get('2026-08')).toBe(eur(800));
-    expect(held.get('2026-12')).toBe(eur(200));
-    expect(held.get('2027-01')).toBe(eur(300));
+    expect(held.get('2026-10')).toBe(eur(1_000));
+    expect(held.get('2026-11')).toBe(eur(1_000));
+    expect(held.get('2026-12')).toBe(0);
+    expect(held.get('2027-01')).toBe(eur(100));
   });
 });
 

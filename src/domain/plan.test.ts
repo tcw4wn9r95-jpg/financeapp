@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { budgetForMonth } from './budget';
 import { firstBelow, forecast, recurringTransfers, scheduleItems } from './forecast';
-import { amountFor, eventPlanParts, eventPlans, heldPlan, oneOffParts, oneOffView, provisionsMove, provisionsMoveByMonth, eventStatus, monthlySetAside, nextDue, occurrences, planCloseEvent, provisionSchedule, provisionStatus } from './plan';
+import { amountFor, eventPlanParts, eventPlans, heldPlan, nextBills, oneOffParts, oneOffView, provisionsMove, provisionsMoveByMonth, eventStatus, monthlySetAside, nextDue, occurrences, planCloseEvent, provisionSchedule, provisionStatus } from './plan';
 import { World } from './testkit';
 import type { EventFund, Provision } from './types';
 
@@ -356,5 +356,41 @@ describe('a provision told what it already holds (D-110)', () => {
     expect(p.thisMonth).toBe(eur(-300));
     expect(p.monthly).toBe(Math.ceil(eur(1_000) / 4));
     expect(p.after[0]).toEqual({ from: '2027-04', amount: eur(100) });
+  });
+});
+
+describe('a provision stops taking money once it holds its next bill (D-114)', () => {
+  const tax = { ...base, id: 'tx', name: 'Tax', amount: eur(1_000), dueDate: '2026-12-31', recurrence: '', fundedBalance: 0, monthlyContribution: eur(100), categoryId: 'tax' } as Provision;
+  function world() {
+    const w = new World('2026-01');
+    w.account('bank', 'current', eur(5_000));
+    w.category('tax', 'provisions', 'roll');
+    w.setDefault('tax', eur(100));
+    return { w, input: () => ({ ...w.input(), nextBills: nextBills([tax], '2026-01', '2027-12') }) };
+  }
+  it('takes only what is missing, then nothing', () => {
+    const { input } = world();
+    // Ten months of 100 € make the 1,000 €: November and December take nothing.
+    expect(budgetForMonth(input(), '2026-10')!.categories.get('tax')!.assigned).toBe(eur(100));
+    expect(budgetForMonth(input(), '2026-11')!.categories.get('tax')!.assigned).toBe(0);
+    expect(budgetForMonth(input(), '2026-12')!.categories.get('tax')!.available).toBe(eur(1_000));
+  });
+  it('fills only the gap when more was put in, and a month changed by hand keeps its amount', () => {
+    const { w, input } = world();
+    w.override('tax', '2026-03', eur(750));
+    // Jan 100 + Feb 100 + Mar 750 = 950: April takes the 50 € left, then nothing.
+    expect(budgetForMonth(input(), '2026-03')!.categories.get('tax')!.assigned).toBe(eur(750));
+    expect(budgetForMonth(input(), '2026-04')!.categories.get('tax')!.assigned).toBe(eur(50));
+    expect(budgetForMonth(input(), '2026-05')!.categories.get('tax')!.assigned).toBe(0);
+  });
+  it('saves again for the next bill of a recurring provision once a bill is paid', () => {
+    const q = { ...tax, amount: eur(300), dueDate: '2026-03-10', recurrence: 'FREQ=MONTHLY;INTERVAL=3' } as Provision;
+    const w = new World('2026-01');
+    const bank = w.account('bank', 'current', eur(5_000));
+    w.category('tax', 'provisions', 'roll');
+    w.setDefault('tax', eur(100));
+    w.spend(bank, '2026-03-10', eur(300), 'tax');
+    const input = { ...w.input(), nextBills: nextBills([q], '2026-01', '2027-12') };
+    expect(budgetForMonth(input, '2026-04')!.categories.get('tax')!.assigned).toBe(eur(100));
   });
 });

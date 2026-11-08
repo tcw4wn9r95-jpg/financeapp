@@ -259,6 +259,26 @@ export function eventPlanParts(e: EventFund): PlanPart[] {
   return parts;
 }
 
+/**
+ * The next bill of each provision from each month on (D-114), for the budget
+ * engine: from the month the provision starts saving to `through`. A month
+ * after the last bill of a one-off provision has none.
+ */
+export function nextBills(provisions: readonly Provision[], from: MonthKey, through: MonthKey): Map<Id, Map<MonthKey, Cents>> {
+  const out = new Map<Id, Map<MonthKey, Cents>>();
+  for (const p of provisions) {
+    const bills = occurrences(p, `${from}-01`, addMonthsToDate(`${through}-28`, 12 * 3));
+    const byMonth = new Map<MonthKey, Cents>();
+    let i = 0;
+    for (let m = from; m <= through; m = addMonths(m, 1)) {
+      while (i < bills.length && monthOf(bills[i]!) < m) i++;
+      if (i < bills.length) byMonth.set(m, amountFor(p, bills[i]!));
+    }
+    out.set(p.categoryId, byMonth);
+  }
+  return out;
+}
+
 /** Plans for every trip and one-off expense, for the budget engine. */
 export function eventPlans(events: readonly EventFund[], allocations: readonly Allocation[] = [], transactions: readonly Pick<Transaction, 'id' | 'date'>[] = []): Map<Id, PlanPart[]> {
   return new Map(events.map((e) => [e.categoryId, e.kind === 'month' ? oneOffParts(oneOffView(e, allocations, transactions)) : eventPlanParts(e)]));

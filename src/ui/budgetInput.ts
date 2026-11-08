@@ -1,7 +1,7 @@
 import type { BudgetInput } from '../domain/budget';
 import { freeSavingsByMonth } from '../domain/buckets';
-import { currentMonth } from '../domain/dates';
-import { eventPlans } from '../domain/plan';
+import { addMonths, currentMonth } from '../domain/dates';
+import { eventPlans, nextBills } from '../domain/plan';
 import type { Account, Allocation, BudgetDefault, BudgetOverride, Category, EventFund, Provision, Settings, Transaction } from '../domain/types';
 
 export interface BudgetSources {
@@ -36,6 +36,8 @@ export function buildBudgetInput(s: BudgetSources): BudgetInput {
     ...(s.settings.sweepTargetCategoryId ? { sweepTargetCategoryId: s.settings.sweepTargetCategoryId } : {}),
     // Overspending covered, kept apart from the budget (D-94).
     ...(s.settings.covers?.length ? { covers: s.settings.covers } : {}),
+    // A provision that holds its next bill stops taking money (D-114).
+    ...(s.provisions.length ? { nextBills: nextBills(s.provisions, s.settings.budgetStartMonth, addMonths(currentMonth(), 36)) } : {}),
   };
   const savingsId = s.settings.sweepTargetCategoryId;
   const accountId = s.settings.provisionsAccountId;

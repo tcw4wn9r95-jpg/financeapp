@@ -467,16 +467,19 @@ export function provisionFlow(f: ForecastInput, months: readonly MonthKey[]): Ma
   const thisMonth = monthOf(f.today);
   const now = computeBudget(f.budget, thisMonth).at(-1);
   const out = new Map(months.map((m) => [m, { held: 0, setAside: 0, paid: 0 }]));
-  const lines: { categoryId: Id; bills: { date: IsoDate; amount: Cents }[] }[] = [
-    ...f.provisions.map((p) => ({ categoryId: p.categoryId, bills: occurrences(p, `${thisMonth}-01`, lastDayOfMonth(months.at(-1) ?? thisMonth)).filter((d) => d > f.today).map((d) => ({ date: d, amount: p.amount })) })),
-    ...f.events.filter((e) => e.status !== 'closed').map((e) => ({ categoryId: e.categoryId, bills: e.targetDate > f.today ? [{ date: e.targetDate, amount: eventTotal(f, e) }] : [] })),
+  const lines: { categoryId: Id; capped: boolean; bills: { date: IsoDate; amount: Cents }[] }[] = [
+    ...f.provisions.map((p) => ({ categoryId: p.categoryId, capped: true, bills: occurrences(p, `${thisMonth}-01`, lastDayOfMonth(months.at(-1) ?? thisMonth)).filter((d) => d > f.today).map((d) => ({ date: d, amount: p.amount })) })),
+    ...f.events.filter((e) => e.status !== 'closed').map((e) => ({ categoryId: e.categoryId, capped: false, bills: e.targetDate > f.today ? [{ date: e.targetDate, amount: eventTotal(f, e) }] : [] })),
   ];
   for (const l of lines) {
     let have = Math.max(0, now?.categories.get(l.categoryId)?.available ?? 0);
     for (const m of months) {
       const x = out.get(m)!;
       if (m !== thisMonth) {
-        const add = planned(f.budget, l.categoryId, m) ?? 0;
+        // A provision that already holds its next bill takes nothing more (D-114).
+        const next = l.bills.find((b) => monthOf(b.date) >= m);
+        const plan = planned(f.budget, l.categoryId, m) ?? 0;
+        const add = next && l.capped ? Math.min(plan, Math.max(0, next.amount - have)) : plan;
         have += add;
         x.setAside += add;
       }

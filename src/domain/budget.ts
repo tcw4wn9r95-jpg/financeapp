@@ -61,6 +61,12 @@ export interface BudgetInput {
    * the budget so the plan still shows what was planned.
    */
   covers?: readonly { categoryId: Id; month: MonthKey; amount: Cents; fromCategoryId?: Id }[];
+  /**
+   * Provisions (D-114): the next bill from each month on. A provision is never
+   * given more than what it still misses for that bill, so once it holds the
+   * bill it stops taking money; a month changed by hand keeps its amount.
+   */
+  nextBills?: ReadonlyMap<Id, ReadonlyMap<MonthKey, Cents>>;
 }
 
 /**
@@ -351,7 +357,10 @@ export function computeBudget(input: BudgetInput, throughMonth: MonthKey): Budge
       const catActivity = act.byCategory.get(c.id) ?? 0;
       const target = input.availableTargets?.get(c.id)?.get(month);
       const covered = coveredIn.get(`${month}|${c.id}`) ?? 0;
-      const assigned = ovr ? ovr.amount : target !== undefined ? target - carryIn - catActivity - covered : defaultAmount;
+      // A provision that already holds its next bill takes nothing more (D-114).
+      const bill = input.nextBills?.get(c.id)?.get(month);
+      const planned = bill !== undefined ? Math.min(defaultAmount, Math.max(0, bill - carryIn)) : defaultAmount;
+      const assigned = ovr ? ovr.amount : target !== undefined ? target - carryIn - catActivity - covered : planned;
       const available = carryIn + assigned + covered + catActivity;
       assignedTotal += assigned;
       coveredTotal += covered;
